@@ -1,0 +1,39 @@
+# Format code
+
+name: Format
+
+# Controls when the action will run. Triggers the workflow on push or pull request
+on:
+  pull_request:
+
+jobs:
+  format:
+    name: "format"
+    runs-on: ubuntu-slim
+    permissions:
+      # Give the default GITHUB_TOKEN read permissions for just this repository
+      contents: read
+      # Allow updating the PR with comments
+      pull-requests: write
+
+    steps:
+      - name: 'PR commits + 1'
+        run: echo "PR_FETCH_DEPTH=$(( ${{ github.event.pull_request.commits }} + 1 ))" >> "${GITHUB_ENV}"
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: ${{ env.PR_FETCH_DEPTH }}
+      - name: 'Fetch the other branch with enough history for a common merge-base commit'
+        run: |
+          git fetch origin ${{ github.event.pull_request.base.sha }}
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: '3.14'
+      - uses: pre-commit/action@v3.0.1
+        id: formatCheck
+        with:
+          extra_args: --from-ref ${{ github.event.pull_request.base.sha }} --to-ref ${{ github.event.pull_request.head.sha }}
+      - uses: reviewdog/action-suggester@2558ba17e65a9039e73764a73009fc05fef28a46 # v1.24.3
+        if: always()
+        with:
+          tool_name: pre-commit
