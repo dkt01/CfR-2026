@@ -1,3 +1,4 @@
+#include <Servo.h>
 #include <SoftwareSerial.h>
 
 #include <XBee.h>
@@ -8,7 +9,10 @@ Rx16Response rx16 = Rx16Response();
 Tx16Request tx16 = Tx16Request();
 uint8_t offboardTxPayload[8] = {};
 uint8_t onboardRxPayload[16] = {};
-uint8_t onboardTxPayload[10] = {};
+uint8_t onboardTxPayload[14] = {};
+
+Servo throttle;
+Servo steering;
 
 const unsigned long commsTimeout_ms = 200;
 
@@ -83,7 +87,7 @@ bool deserialize(Mode &val, uint8_t **data) {
   return retVal;
 }
 
-bool serialize(uint8_t &val, uint8_t **buffer) {
+bool serialize(const uint8_t &val, uint8_t **buffer) {
   uint8_t digits = 1;
   uint8_t tempVal = val;
   if (val >= 100) {
@@ -93,11 +97,23 @@ bool serialize(uint8_t &val, uint8_t **buffer) {
   }
   while (digits > 0) {
     --digits;
-    const uint8_t digitMultiplier = pow(10, digits);
+    uint8_t digitMultiplier;
+    switch (digits) {
+    case 0:
+      digitMultiplier = 1;
+      break;
+    case 1:
+      digitMultiplier = 10;
+      break;
+    case 2:
+      digitMultiplier = 100;
+      break;
+    }
     uint8_t newDigit =
         (tempVal - (tempVal % digitMultiplier)) / digitMultiplier;
     tempVal -= (newDigit * digitMultiplier);
     **buffer = '0' + newDigit;
+    ++(*buffer);
   }
   **buffer = ',';
   ++(*buffer);
@@ -191,19 +207,20 @@ typedef struct {
   Mode MODE{Mode::ESTOP};
   uint8_t BATTERY_LEVEL{255};
 
-  bool serialize(uint8_t **buffer, uint8_t bufferSize) {
+  bool serialize(uint8_t *buffer, uint8_t bufferSize) {
     // Need enough space for max size values with comma delimiter and trailing
     // '\n' and '\0'
     if (bufferSize < 8) {
       return false;
     }
 
-    ::serialize(MODE, buffer);
-    ::serialize(BATTERY_LEVEL, buffer);
-    **buffer = '\n';
-    ++(*buffer);
-    **buffer = '\0';
-    ++(*buffer);
+    ::serialize(MODE, &buffer);
+    ::serialize(BATTERY_LEVEL, &buffer);
+    *buffer = '\n';
+    ++(buffer);
+    *buffer = '\0';
+    ++(buffer);
+    return true;
   }
 
 } ToOffboard;
@@ -237,22 +254,25 @@ typedef struct {
   bool AUTO_ARM{false};
   bool MANUAL_START{false};
   Mode MODE{Mode::ESTOP};
+  uint8_t BATTERY_LEVEL{255};
 
-  bool serialize(uint8_t **buffer, uint8_t bufferSize) {
+  bool serialize(uint8_t *buffer, uint8_t bufferSize) {
     // Need enough space for max size values with comma delimiter and trailing
     // '\n' and '\0'
-    if (bufferSize < 10) {
+    if (bufferSize < 14) {
       return false;
     }
 
-    ::serialize(ESTOP, buffer);
-    ::serialize(AUTO_ARM, buffer);
-    ::serialize(MANUAL_START, buffer);
-    ::serialize(MODE, buffer);
-    **buffer = '\n';
-    ++(*buffer);
-    **buffer = '\0';
-    ++(*buffer);
+    ::serialize(ESTOP, &buffer);
+    ::serialize(AUTO_ARM, &buffer);
+    ::serialize(MANUAL_START, &buffer);
+    ::serialize(MODE, &buffer);
+    ::serialize(BATTERY_LEVEL, &buffer);
+    *buffer = '\n';
+    ++(buffer);
+    *buffer = '\0';
+    ++(buffer);
+    return true;
   }
 
 } ToJetson;
@@ -291,20 +311,45 @@ bool IsNearlyCenter(uint8_t value, uint8_t centerValue = 127,
          (value <= (centerValue + tolerance));
 }
 
+// Deadband around center [125,130].  Overall pulse range [1000us,2000us]
+int PctToPulseLength(uint8_t throttle, bool deadband = true) {
+  if (deadband) {
+    if (throttle > 130) {
+      return 1500 + ((throttle - 130) * 4);
+    } else if (throttle < 125) {
+      return 1000 + ((throttle + 1) * 4);
+    }
+    return 1500;
+  } else {
+    // Some saturation at min and max values
+    return constrain(((static_cast<int>(throttle) - 127) * 4) + 1500, 1000,
+                     2000);
+  }
+}
+
 // Main Code
 
 void setup() {
   xbee = XBee();
 
   // Setup USB serial
-  Serial.begin(112500);
+  Serial.begin(115200);
   while (!Serial) {
     ; // wait for serial port to connect
   }
   Serial.setTimeout(1);
 
   serXBee.begin(9600);
+  while (!serXBee) {
+    ; // wait for serial port to connect
+  }
   xbee.setSerial(serXBee);
+
+  // Throttle to FL(10), Steering to FR(5)
+  throttle.attach(10, -114,
+                  100); // min=1000us (544-(-114*4)), max=2000us (2400-(100*4))
+  steering.attach(5, -114,
+                  100); // min=1000us (544-(-114*4)), max=2000us (2400-(100*4))
 }
 
 void loop() {
@@ -324,8 +369,7 @@ void loop() {
     if (xbee.getResponse().getApiId() == RX_16_RESPONSE) {
       latestOffboardUpdate = now;
       xbee.getResponse().getRx16Response(rx16);
-      offboardState.deSerialize(rx16.getFrameData() + rx16.getDataOffset(),
-                                rx16.getDataLength());
+      offboardState.deSerialize(rx16.getData(), rx16.getDataLength());
     }
   }
 
@@ -356,7 +400,9 @@ void loop() {
     jetsonTimedOut = false;
   }
 
-  if (offboardState.ESTOP) {
+  // State management
+
+  if (offboardState.ESTOP || offboardTimedOut) {
     autoMode = Mode::ESTOP;
   } else if (offboardState.AUTO_ARM == false && autoMode != Mode::RC_ACTIVE) {
     autoMode = Mode::RC_ARMED;
@@ -374,9 +420,6 @@ void loop() {
     }
     break;
   case Mode::RC_ACTIVE:
-    if (offboardTimedOut) {
-      autoMode = Mode::RC_ARMED;
-    }
     break;
   case Mode::AUTO_ARMED:
     if (jetsonState.AUTO_READY && IsNearlyCenter(jetsonState.CMD_STEERING) &&
@@ -391,11 +434,52 @@ void loop() {
     break;
   }
 
+  // Car control
+  auto throttleCmd = PctToPulseLength(127);
+  auto steeringCmd = PctToPulseLength(127);
+
+  switch (autoMode) {
+  case Mode::RC_ACTIVE:
+    throttleCmd = PctToPulseLength(offboardState.AXIS_LY);
+    steeringCmd = PctToPulseLength(offboardState.AXIS_RX);
+    break;
+  case Mode::AUTO_ACTIVE:
+    throttleCmd = PctToPulseLength(jetsonState.CMD_STEERING, false);
+    steeringCmd = PctToPulseLength(jetsonState.CMD_THROTTLE, false);
+    break;
+  default:
+    throttleCmd = PctToPulseLength(127);
+    steeringCmd = PctToPulseLength(127);
+  }
+
+  throttle.writeMicroseconds(throttleCmd);
+  steering.writeMicroseconds(steeringCmd);
+
+  /// @todo Read battery level
+  uint8_t batteryLevel = 255;
+
+  ToJetson onboardFeedback;
+  onboardFeedback.ESTOP = offboardState.ESTOP;
+  onboardFeedback.AUTO_ARM = offboardState.AUTO_ARM;
+  onboardFeedback.MANUAL_START = offboardState.MANUAL_START;
+  onboardFeedback.MODE = autoMode;
+  onboardFeedback.BATTERY_LEVEL = batteryLevel;
+  onboardFeedback.serialize((uint8_t *)onboardTxPayload,
+                            sizeof(onboardTxPayload));
+
+  ToOffboard offboardFeedback;
+  offboardFeedback.MODE = autoMode;
+  offboardFeedback.BATTERY_LEVEL = batteryLevel;
+  offboardFeedback.serialize((uint8_t *)offboardTxPayload,
+                             sizeof(offboardTxPayload));
+
   // Offboard Tx
-  tx16.setAddress16(rx16.getRemoteAddress16());
+  // tx16.setAddress16(rx16.getRemoteAddress16());
+  tx16.setAddress16(0);
   tx16.setPayload(offboardTxPayload,
                   GetPacketSize(offboardTxPayload, sizeof(offboardTxPayload)));
   xbee.send(tx16);
+  xbee.readPacket();
 
   // Onboard Tx
   Serial.write(onboardTxPayload,

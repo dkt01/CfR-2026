@@ -69,12 +69,13 @@ Messages transmitted each direction are ASCII serial where fields are comma-sepa
 
 ### Arduino -> Jetson
 
-| Field Index | Description  | Data Type | Data Range | Notes                                                                           |
-| ----------- | ------------ | --------- | ---------- | ------------------------------------------------------------------------------- |
-| 0           | E-Stop State | Boolean   | `0` or `1` | `1` indicates E-Stop active                                                     |
-| 1           | Auto Arm     | Boolean   | `0` or `1` | `1` indicates autonomous mode active.  `0` indicates RC only                    |
-| 2           | Manual Start | Boolean   | `0` or `1` | `1` indicates robot should start autonomous driving without visual start signal |
-| 3           | Auto Mode    | Enum      | [0,4]      | `0` E-Stop, `1` RC Armed, `2` RC Active, `3` Auto Armed, `4` Auto Active        |
+| Field Index | Description   | Data Type | Data Range | Notes                                                                           |
+| ----------- | ------------- | --------- | ---------- | ------------------------------------------------------------------------------- |
+| 0           | E-Stop State  | Boolean   | `0` or `1` | `1` indicates E-Stop active                                                     |
+| 1           | Auto Arm      | Boolean   | `0` or `1` | `1` indicates autonomous mode active.  `0` indicates RC only                    |
+| 2           | Manual Start  | Boolean   | `0` or `1` | `1` indicates robot should start autonomous driving without visual start signal |
+| 3           | Auto Mode     | Enum      | [0,4]      | `0` E-Stop, `1` RC Armed, `2` RC Active, `3` Auto Armed, `4` Auto Active        |
+| 4           | Battery Level | Integer   | [0,255]    | `0` is empty battery, `255` is full battery.                                    |
 
 ### Jetson -> Arduino
 
