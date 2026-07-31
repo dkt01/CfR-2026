@@ -46,7 +46,7 @@
 	<text x="950" y="350" style="font-family:Arial;font-size:11px;text-anchor:start" dominant-baseline="middle" transform="rotate(0, 950, 350)">Manual Start</text>
 	<line x1="810" y1="350" x2="930" y2="350" style="stroke:rgb(0, 0, 0);stroke-linecap:square;stroke-width:2" />
 	<line x1="690" y1="200" x2="690" y2="350" style="stroke:rgb(0, 0, 0);stroke-linecap:square;stroke-width:2" />
-	<line x1="690" y1="350" x2="770" y2="350" style="stroke:rgb(0, 0, 0);stroke-linecap:square;stroke-width:2" />
+	<line x1="690" y1="350" x2="780" y2="350" style="stroke:rgb(0, 0, 0);stroke-linecap:square;stroke-width:2" />
 	<line x1="590" y1="200" x2="690" y2="200" style="stroke:rgb(0, 0, 0);stroke-linecap:square;stroke-width:2" />
 	<line x1="780" y1="350" x2="781" y2="350" style="stroke:rgb(0, 0, 0);stroke-linecap:square;stroke-width:2" />
 	<line x1="809" y1="350" x2="810" y2="350" style="stroke:rgb(0, 0, 0);stroke-linecap:square;stroke-width:2" />
