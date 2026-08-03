@@ -23,7 +23,7 @@
    colcon build --symlink-install --cmake-args=-DCMAKE_BUILD_TYPE=Release --parallel-workers $(nproc)
    ```
 
-3. **rosboard** — browser-based topic viewer, self-hosted (no external CDN dependency and elimates the need for connecting the display to Orin):
+3. **rosboard** — browser-based topic viewer, self-hosted (no external CDN dependency and eliminates the need for connecting the display to Orin):
    ```bash
    git clone https://github.com/dheera/rosboard.git ~/rosboard
    sudo pip3 install --break-system-packages tornado simplejpeg
