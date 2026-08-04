@@ -9,7 +9,6 @@ import traceback
 from dataclasses import dataclass
 from enum import Enum
 from typing import Final
-from webbrowser import get
 
 import evdev
 import lgpio
@@ -401,7 +400,12 @@ def ledControl(
         time.sleep(0.25)
 
 
-def controllerControl(controllerState: ControllerState, controllerMutex: threading.Lock, runEvent: threading.Event, cycleMonitor: CycleRateMonitor):
+def controllerControl(
+    controllerState: ControllerState,
+    controllerMutex: threading.Lock,
+    runEvent: threading.Event,
+    cycleMonitor: CycleRateMonitor,
+):
     latestEvent = time.monotonic()
     ps = None
     # Outer loop handles disconnected controller
@@ -419,8 +423,13 @@ def controllerControl(controllerState: ControllerState, controllerMutex: threadi
             try:
                 with controllerMutex:
                     for event in ps.read():
-                        if event.type != evdev.ecodes.EV_SYN and event.code in KEYCODE_MAP:
-                            setattr(controllerState, KEYCODE_MAP[event.code], event.value)
+                        if (
+                            event.type != evdev.ecodes.EV_SYN
+                            and event.code in KEYCODE_MAP
+                        ):
+                            setattr(
+                                controllerState, KEYCODE_MAP[event.code], event.value
+                            )
                 latestEvent = time.monotonic()
                 controllerState.comms_ok = True
             except OSError:
@@ -438,7 +447,12 @@ def controllerControl(controllerState: ControllerState, controllerMutex: threadi
         time.sleep(0.1)  # Limit discovery loop rate to 10Hz
 
 
-def serializeState(controllerState: ControllerState, controllerStateLock: threading.Lock, inputState: InputState, inputStateLock: threading.Lock):
+def serializeState(
+    controllerState: ControllerState,
+    controllerStateLock: threading.Lock,
+    inputState: InputState,
+    inputStateLock: threading.Lock,
+):
     inputStateString = ""
     with inputStateLock:
         estop = False
@@ -448,7 +462,7 @@ def serializeState(controllerState: ControllerState, controllerStateLock: thread
             [
                 str(int(estop)),
                 str(int(inputState.auto_arm)),
-                str(int(inputState.manual_start))
+                str(int(inputState.manual_start)),
             ]
         )
     controllerStateString = ""
@@ -480,12 +494,15 @@ def serializeState(controllerState: ControllerState, controllerStateLock: thread
             ]
         )
 
-    return ",".join([inputStateString, controllerStateString]) + '\n'
+    return ",".join([inputStateString, controllerStateString]) + "\n"
 
-def deserializeState(message: str, robotState: RobotState, robotStateLock: threading.Lock):
+
+def deserializeState(
+    message: str, robotState: RobotState, robotStateLock: threading.Lock
+):
     try:
         # Make sure to strip trailing commas
-        parts = message.decode("utf-8").strip().strip(',').split(",")
+        parts = message.decode("utf-8").strip().strip(",").split(",")
         if len(parts) != 2:
             raise ValueError("Invalid received message length")
         with robotStateLock:
@@ -498,7 +515,14 @@ def deserializeState(message: str, robotState: RobotState, robotStateLock: threa
 
 
 # Receive data from robot
-def receiveData(xbee: XBee, recvTime: list[float], robotState: RobotState, robotStateMutex: threading.Lock, runEvent: threading.Event, cycleMonitor: CycleRateMonitor):
+def receiveData(
+    xbee: XBee,
+    recvTime: list[float],
+    robotState: RobotState,
+    robotStateMutex: threading.Lock,
+    runEvent: threading.Event,
+    cycleMonitor: CycleRateMonitor,
+):
     oldCB = xbee._callback
     oldTC = xbee._thread_continue
     xbee._callback = True
@@ -508,7 +532,9 @@ def receiveData(xbee: XBee, recvTime: list[float], robotState: RobotState, robot
             waitStart = time.monotonic()
             data = xbee.wait_read_frame()
             cycleMonitor.record("comm-receive")
-            cycleMonitor.record_duration("comm-receive-wait", time.monotonic() - waitStart)
+            cycleMonitor.record_duration(
+                "comm-receive-wait", time.monotonic() - waitStart
+            )
             try:
                 if deserializeState(data["rf_data"], robotState, robotStateMutex):
                     cycleMonitor.record("comm-receive-valid")
@@ -525,7 +551,16 @@ def receiveData(xbee: XBee, recvTime: list[float], robotState: RobotState, robot
         xbee._callback = oldCB
 
 
-def commControl(robotState: RobotState, robotStateMutex: threading.Lock, controllerState: ControllerState, controllerStateMutex: threading.Lock, inputState: InputState, inputStateMutex: threading.Lock, runEvent: threading.Event, cycleMonitor: CycleRateMonitor):
+def commControl(
+    robotState: RobotState,
+    robotStateMutex: threading.Lock,
+    controllerState: ControllerState,
+    controllerStateMutex: threading.Lock,
+    inputState: InputState,
+    inputStateMutex: threading.Lock,
+    runEvent: threading.Event,
+    cycleMonitor: CycleRateMonitor,
+):
     m_ser = None
     m_xbee = None
     # Needs to be list so we can pass by reference to the rx thread
@@ -553,12 +588,22 @@ def commControl(robotState: RobotState, robotStateMutex: threading.Lock, control
 
             runReadEvent.set()
             thread_read = threading.Thread(
-                target=receiveData, args=(m_xbee, latestReceiveTime, robotState, robotStateMutex, runReadEvent, cycleMonitor)
+                target=receiveData,
+                args=(
+                    m_xbee,
+                    latestReceiveTime,
+                    robotState,
+                    robotStateMutex,
+                    runReadEvent,
+                    cycleMonitor,
+                ),
             )
             thread_read.start()
 
             while runEvent.is_set():
-                message = serializeState(controllerState, controllerStateMutex, inputState, inputStateMutex)
+                message = serializeState(
+                    controllerState, controllerStateMutex, inputState, inputStateMutex
+                )
                 sendStart = time.monotonic()
                 m_xbee.send(
                     "tx",
@@ -585,7 +630,12 @@ def commControl(robotState: RobotState, robotStateMutex: threading.Lock, control
             time.sleep(0.1)  # Limit discovery loop rate to 10Hz
 
 
-def inputControl(inputState: InputState, inputMutex: threading.Lock, runEvent: threading.Event, cycleMonitor: CycleRateMonitor):
+def inputControl(
+    inputState: InputState,
+    inputMutex: threading.Lock,
+    runEvent: threading.Event,
+    cycleMonitor: CycleRateMonitor,
+):
     while runEvent.is_set():
         cycleMonitor.record("input")
         with inputMutex:
@@ -650,10 +700,21 @@ thread_ledControl = threading.Thread(
     ),
 )
 thread_controllerControl = threading.Thread(
-    target=controllerControl, args=(m_controllerState, m_controllerMutex, runEvent, cycleMonitor)
+    target=controllerControl,
+    args=(m_controllerState, m_controllerMutex, runEvent, cycleMonitor),
 )
 thread_commControl = threading.Thread(
-    target=commControl, args=(m_robotState, m_robotMutex, m_controllerState, m_controllerMutex, m_inputState, m_inputMutex, runEvent, cycleMonitor)
+    target=commControl,
+    args=(
+        m_robotState,
+        m_robotMutex,
+        m_controllerState,
+        m_controllerMutex,
+        m_inputState,
+        m_inputMutex,
+        runEvent,
+        cycleMonitor,
+    ),
 )
 thread_inputControl = threading.Thread(
     target=inputControl, args=(m_inputState, m_inputMutex, runEvent, cycleMonitor)
