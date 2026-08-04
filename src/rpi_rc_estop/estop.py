@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 
 import atexit
-import copy
-import math
+from collections import deque
 import os
 import threading
 import time
+import traceback
 from dataclasses import dataclass
 from enum import Enum
 from typing import Final
+from webbrowser import get
 
 import evdev
 import lgpio
@@ -20,6 +21,9 @@ TX_OPT = "\x01"
 
 TIMEOUT_CONTROLLER = 0.2
 TIMEOUT_COMMS = 0.2
+CYCLE_RATE_WINDOW = 5.0
+SERIAL_TRACE_ENV = "ESTOP_SERIAL_TRACE"
+SERIAL_TRACE_DEFAULT = "/tmp/xbee-serial.log"
 
 LED_ESTOP: Final = 8
 LED_ESTOP_SENSE: Final = 10
@@ -217,25 +221,112 @@ SERIAL_BUTTONS = [
 SERIAL_AXES = ["AXIS_LX", "AXIS_LY", "AXIS_RX", "AXIS_RY"]
 
 
+class TimestampedSerial:
+    def __init__(self, serial_port, trace_path: str | None):
+        self.serial_port = serial_port
+        self.trace_file = open(trace_path, "a", buffering=1) if trace_path else None
+        self.trace_mutex = threading.Lock()
+
+    def read(self, size=1):
+        start_timestamp = time.monotonic_ns()
+        data = self.serial_port.read(size)
+        end_timestamp = time.monotonic_ns()
+        if self.trace_file:
+            with self.trace_mutex:
+                self.trace_file.write(
+                    f"start={start_timestamp} end={end_timestamp} "
+                    f"duration_ns={end_timestamp - start_timestamp} "
+                    f"requested={size} returned={len(data)} data={data.hex()}\n"
+                )
+        return data
+
+    def close(self):
+        try:
+            self.serial_port.close()
+        finally:
+            if self.trace_file:
+                self.trace_file.close()
+
+    def __getattr__(self, name):
+        return getattr(self.serial_port, name)
+
+
+class CycleRateMonitor:
+    def __init__(self, window: float):
+        self.window = window
+        self.cycles: dict[str, deque[float]] = {}
+        self.durations: dict[str, deque[tuple[float, float]]] = {}
+        self.mutex = threading.Lock()
+
+    def record(self, name: str):
+        now = time.monotonic()
+        cutoff = now - self.window
+        with self.mutex:
+            timestamps = self.cycles.setdefault(name, deque())
+            timestamps.append(now)
+            while timestamps[0] < cutoff:
+                timestamps.popleft()
+
+    def record_duration(self, name: str, duration: float):
+        now = time.monotonic()
+        cutoff = now - self.window
+        with self.mutex:
+            durations = self.durations.setdefault(name, deque())
+            durations.append((now, duration))
+            while durations[0][0] < cutoff:
+                durations.popleft()
+
+    def rates(self) -> dict[str, float]:
+        now = time.monotonic()
+        cutoff = now - self.window
+        with self.mutex:
+            for timestamps in self.cycles.values():
+                while timestamps and timestamps[0] < cutoff:
+                    timestamps.popleft()
+            return {
+                name: len(timestamps) / self.window
+                for name, timestamps in self.cycles.items()
+            }
+
+    def duration_stats(self) -> dict[str, tuple[float, float]]:
+        now = time.monotonic()
+        cutoff = now - self.window
+        with self.mutex:
+            for durations in self.durations.values():
+                while durations and durations[0][0] < cutoff:
+                    durations.popleft()
+            return {
+                name: (
+                    sum(duration for _, duration in durations) / len(durations),
+                    max(duration for _, duration in durations),
+                )
+                for name, durations in self.durations.items()
+                if durations
+            }
+
+
 def deluminate(leds):
     for led in leds:
+        pass
         lgpio.gpio_write(m_gpio, led, 0)
 
 
 def ledControl(
-    robotState,
-    robotStateMutex,
-    inputState,
-    inputStateMutex,
-    controllerState,
-    controllerStateMutex,
-    ledState,
-    ledStateMutex,
-    runEvent,
+    robotState: RobotState,
+    robotStateMutex: threading.Lock,
+    inputState: InputState,
+    inputStateMutex: threading.Lock,
+    controllerState: ControllerState,
+    controllerStateMutex: threading.Lock,
+    ledState: LEDState,
+    ledStateMutex: threading.Lock,
+    runEvent: threading.Event,
+    cycleMonitor: CycleRateMonitor,
 ):
     loopCount = 0
 
     while runEvent.is_set():
+        cycleMonitor.record("led")
         # Update LED states first
         newLedState = LEDState()
 
@@ -250,6 +341,11 @@ def ledControl(
                 newLedState.mode_auto = LEDMode.ON
             elif robotState.auto_mode == AutoMode.AUTO_ACTIVE:
                 newLedState.mode_auto = LEDMode.BLINK
+            else:
+                # Invalid
+                newLedState.mode_stop = LEDMode.BLINK
+                newLedState.mode_rc = LEDMode.BLINK
+                newLedState.mode_auto = LEDMode.BLINK
 
             if robotState.battery_level < 128:
                 newLedState.battery = LEDMode.BLINK
@@ -262,6 +358,7 @@ def ledControl(
                 newLedState.comms = LEDMode.ON
             else:
                 newLedState.comms = LEDMode.BLINK
+            # print("Robot state:", robotState)
 
         with inputStateMutex:
             if inputState.estop:
@@ -272,36 +369,44 @@ def ledControl(
 
             if inputState.estop_override:
                 newLedState.estop_override = LEDMode.ON
+                if newLedState.estop == LEDMode.ON:
+                    newLedState.estop = LEDMode.BLINK
 
             if inputState.auto_arm:
                 newLedState.auto_arm = LEDMode.ON
 
+            # print("Input state:", inputState)
+
         with controllerStateMutex:
             if not controllerState.comms_ok and newLedState.mode_rc != LEDMode.OFF:
                 newLedState.mode_stop = LEDMode.BLINK
+            # print("Controller state:", controllerState)
 
         # Set LED illuminations based on LED state
         with ledStateMutex:
-            for led in ALL_LEDS:
-                state = ledState.__getattribute__(f"led_{led}")
+            ledState = newLedState
+            for led_label in ledState.__dataclass_fields__.keys():
+                constant_name = f"LED_{led_label.upper()}"
+                led = globals().get(constant_name)
+                state = getattr(ledState, led_label)
                 if state == LEDMode.ON:
                     lgpio.gpio_write(m_gpio, led, 1)
                 elif state == LEDMode.OFF:
                     lgpio.gpio_write(m_gpio, led, 0)
                 elif state == LEDMode.BLINK:
                     lgpio.gpio_write(m_gpio, led, loopCount % 2 == 0)
+            # print(ledState)
 
         loopCount += 1
         time.sleep(0.25)
 
 
-# TODO: Implementation
-def controllerControl(controllerQueue, controllerState, runEvent):
-    latestEvent = time.clock()
-    latestMode = None
+def controllerControl(controllerState: ControllerState, controllerMutex: threading.Lock, runEvent: threading.Event, cycleMonitor: CycleRateMonitor):
+    latestEvent = time.monotonic()
     ps = None
     # Outer loop handles disconnected controller
     while runEvent.is_set():
+        cycleMonitor.record("controller-discovery")
         devices = evdev.list_devices()
 
         if len(devices) > 0:
@@ -310,112 +415,151 @@ def controllerControl(controllerQueue, controllerState, runEvent):
 
         # Inner loop handles normal input events
         while runEvent.is_set() and len(evdev.list_devices()) > 0:
+            cycleMonitor.record("controller-input")
             try:
-                for event in ps.read():
-                    if event.type != evdev.ecodes.EV_SYN and event.code in KEYCODE_MAP:
-                        controllerState[KEYCODE_MAP[event.code]] = event.value
-
-                latestEvent = time.clock()
+                with controllerMutex:
+                    for event in ps.read():
+                        if event.type != evdev.ecodes.EV_SYN and event.code in KEYCODE_MAP:
+                            setattr(controllerState, KEYCODE_MAP[event.code], event.value)
+                latestEvent = time.monotonic()
+                controllerState.comms_ok = True
             except OSError:
                 pass
 
-            newMode = LED_ON
-            if time.clock() - latestEvent >= TIMEOUT_CONTROLLER:
-                # print("Timeout", time.clock() - latestEvent
-                controllerState.update(
-                    copy.deepcopy(CONTROLLER_ZERO)
-                )  # Zero out for safety
-                newMode = LED_BLINK
-
-            if newMode != latestMode:
-                controllerQueue.put(newMode)
-                latestMode = newMode
+            if time.monotonic() - latestEvent >= TIMEOUT_CONTROLLER:
+                # print("Timeout", time.monotonic() - latestEvent)
+                with controllerMutex:
+                    controllerState = ControllerState()  # Zero out for safety
 
             time.sleep(0.02)  # Limit loop rate to 50Hz
 
-        newMode = LED_OFF
-        controllerState.update(copy.deepcopy(CONTROLLER_ZERO))  # Zero out for safety
-
-        if newMode != latestMode:
-            # print("LOST_CONTROLLER")
-            controllerQueue.put(newMode)
-            latestMode = newMode
+        controllerState = ControllerState()  # Zero out for safety
 
         time.sleep(0.1)  # Limit discovery loop rate to 10Hz
 
 
-# TODO: Implementation
-# Receive Acks from Arduino
-def receiveData(xbee, ackTime, runEvent):
+def serializeState(controllerState: ControllerState, controllerStateLock: threading.Lock, inputState: InputState, inputStateLock: threading.Lock):
+    inputStateString = ""
+    with inputStateLock:
+        estop = False
+        if not inputState.estop_override:
+            estop = inputState.estop
+        inputStateString = ",".join(
+            [
+                str(int(estop)),
+                str(int(inputState.auto_arm)),
+                str(int(inputState.manual_start))
+            ]
+        )
+    controllerStateString = ""
+    with controllerStateLock:
+        controllerStateString = ",".join(
+            [
+                str(int(controllerState.comms_ok)),
+                str(controllerState.AXIS_LX),
+                str(controllerState.AXIS_LY),
+                str(controllerState.AXIS_RX),
+                str(controllerState.AXIS_RY),
+                str(int(controllerState.BUTTON_X)),
+                str(int(controllerState.BUTTON_O)),
+                str(int(controllerState.BUTTON_SQUARE)),
+                str(int(controllerState.BUTTON_TRIANGLE)),
+                str(int(controllerState.BUTTON_L1)),
+                str(int(controllerState.BUTTON_R1)),
+                str(int(controllerState.BUTTON_L2)),
+                str(int(controllerState.BUTTON_R2)),
+                str(int(controllerState.BUTTON_L3)),
+                str(int(controllerState.BUTTON_R3)),
+                str(int(controllerState.BUTTON_SELECT)),
+                str(int(controllerState.BUTTON_START)),
+                str(int(controllerState.BUTTON_PS)),
+                str(int(controllerState.BUTTON_UP)),
+                str(int(controllerState.BUTTON_RIGHT)),
+                str(int(controllerState.BUTTON_DOWN)),
+                str(int(controllerState.BUTTON_LEFT)),
+            ]
+        )
+
+    return ",".join([inputStateString, controllerStateString]) + '\n'
+
+def deserializeState(message: str, robotState: RobotState, robotStateLock: threading.Lock):
+    try:
+        # Make sure to strip trailing commas
+        parts = message.decode("utf-8").strip().strip(',').split(",")
+        if len(parts) != 2:
+            raise ValueError("Invalid received message length")
+        with robotStateLock:
+            robotState.auto_mode = AutoMode(int(parts[0]))
+            robotState.battery_level = int(parts[1])
+            robotState.comms_ok = True
+        return True
+    except Exception:
+        return False
+
+
+# Receive data from robot
+def receiveData(xbee: XBee, recvTime: list[float], robotState: RobotState, robotStateMutex: threading.Lock, runEvent: threading.Event, cycleMonitor: CycleRateMonitor):
     oldCB = xbee._callback
     oldTC = xbee._thread_continue
     xbee._callback = True
     xbee._thread_continue = lambda: runEvent.is_set()
     try:
         while runEvent.is_set():
+            waitStart = time.monotonic()
             data = xbee.wait_read_frame()
-            ackTime[0] = time.clock()
+            cycleMonitor.record("comm-receive")
+            cycleMonitor.record_duration("comm-receive-wait", time.monotonic() - waitStart)
+            try:
+                if deserializeState(data["rf_data"], robotState, robotStateMutex):
+                    cycleMonitor.record("comm-receive-valid")
+                    recvTime[0] = time.monotonic()
+                else:
+                    cycleMonitor.record("comm-receive-invalid")
+            except Exception:
+                cycleMonitor.record("comm-receive-invalid")
     except Exception:
-        pass  # Exception will be raised on event interrupt
+        traceback.print_exc()
     finally:
         # This prevents weirdness during xbee shutdown
         xbee._thread_continue = oldTC
         xbee._callback = oldCB
 
 
-# TODO: Implementation
-def serializeState(controllerState):
-    buttonBytes = "\x00" * int(math.ceil(float(len(SERIAL_BUTTONS)) / 8.0))
-    axisBytes = "\x00" * len(SERIAL_AXES)
-
-    buttonBytes = list(buttonBytes)
-    axisBytes = list(axisBytes)
-
-    for btn in range(len(SERIAL_BUTTONS)):
-        byteNum = int(math.floor(btn / 8.0))
-        bitNum = btn % 8
-        val = controllerState[SERIAL_BUTTONS[btn]]
-        buttonBytes[byteNum] = chr(ord(buttonBytes[byteNum]) | (val << bitNum))
-
-    for axs in range(len(SERIAL_AXES)):
-        val = controllerState[SERIAL_AXES[axs]]
-        axisBytes[axs] = chr(val)
-
-    buttonBytes = "".join(buttonBytes)
-    axisBytes = "".join(axisBytes)
-
-    return buttonBytes + axisBytes
-
-
-# TODO: Implementation
-def commControl(robotState, robotStateMutex, runEvent):
+def commControl(robotState: RobotState, robotStateMutex: threading.Lock, controllerState: ControllerState, controllerStateMutex: threading.Lock, inputState: InputState, inputStateMutex: threading.Lock, runEvent: threading.Event, cycleMonitor: CycleRateMonitor):
     m_ser = None
     m_xbee = None
-    latestMode = LED_OFF
-    latestAck = [0]
-    commsQueue.put(latestMode)
+    # Needs to be list so we can pass by reference to the rx thread
+    latestReceiveTime = [time.monotonic()]
     thread_read = None
     runReadEvent = threading.Event()
     runReadEvent.clear()
 
     while runEvent.is_set():
+        cycleMonitor.record("comm-discovery")
         serDevs = [f for f in os.listdir("/dev") if "ttyUSB" in f]
         if len(serDevs) == 0:
             time.sleep(0.1)  # Limit discovery loop rate to 10Hz
             continue
         try:
             print("New XBee @", serDevs[0])
-            m_ser = serial.Serial("/dev/" + serDevs[0])
+            serial_trace_path = os.getenv(SERIAL_TRACE_ENV, SERIAL_TRACE_DEFAULT)
+            m_ser = TimestampedSerial(
+                serial.Serial("/dev/" + serDevs[0], timeout=0.1),
+                serial_trace_path,
+            )
+            if serial_trace_path:
+                print("XBee serial trace @", serial_trace_path)
             m_xbee = XBee(m_ser, escaped=True)
 
             runReadEvent.set()
             thread_read = threading.Thread(
-                target=receiveData, args=(m_xbee, latestAck, runReadEvent)
+                target=receiveData, args=(m_xbee, latestReceiveTime, robotState, robotStateMutex, runReadEvent, cycleMonitor)
             )
             thread_read.start()
 
             while runEvent.is_set():
-                message = serializeState(controllerState)
+                message = serializeState(controllerState, controllerStateMutex, inputState, inputStateMutex)
+                sendStart = time.monotonic()
                 m_xbee.send(
                     "tx",
                     dest_addr=ROBOT_ADDR,
@@ -423,33 +567,27 @@ def commControl(robotState, robotStateMutex, runEvent):
                     options=TX_OPT,
                     data=message,
                 )
+                cycleMonitor.record("comm-send")
+                cycleMonitor.record_duration("comm-send", time.monotonic() - sendStart)
 
-                newMode = LED_ON
-                if time.clock() - latestAck[0] >= TIMEOUT_COMMS:
-                    newMode = LED_BLINK
-
-                if newMode != latestMode:
-                    commsQueue.put(newMode)
-                    latestMode = newMode
+                if time.monotonic() - latestReceiveTime[0] >= TIMEOUT_COMMS:
+                    with robotStateMutex:
+                        robotState.comms_ok = False
 
                 time.sleep(0.05)  # Limit loop rate to 20Hz
             runReadEvent.clear()
             m_xbee.halt()
         except Exception:
-            # traceback.print_exc()
-            newMode = LED_OFF
-            if newMode != latestMode:
-                commsQueue.put(newMode)
-                latestMode = newMode
-            if thread_read != None:
-                runReadEvent.clear()
+            traceback.print_exc()
+            runReadEvent.clear()
             # if(m_xbee != None and m_xbee.isAlive):
             #     m_xbee.halt()
             time.sleep(0.1)  # Limit discovery loop rate to 10Hz
 
 
-def inputControl(inputState, inputMutex, runEvent):
+def inputControl(inputState: InputState, inputMutex: threading.Lock, runEvent: threading.Event, cycleMonitor: CycleRateMonitor):
     while runEvent.is_set():
+        cycleMonitor.record("input")
         with inputMutex:
             inputState.estop = m_gpio.gpio_read(m_gpio, INPUT_ESTOP)
             inputState.estop_sense = m_gpio.gpio_read(m_gpio, INPUT_ESTOP_SENSE)
@@ -460,6 +598,23 @@ def inputControl(inputState, inputMutex, runEvent):
         time.sleep(0.05)  # Limit loop rate to 20Hz
 
 
+def cycleRateControl(cycleMonitor: CycleRateMonitor, runEvent: threading.Event):
+    while runEvent.is_set():
+        time.sleep(1.0)
+        rates = cycleMonitor.rates()
+        durations = cycleMonitor.duration_stats()
+        durationText = " ".join(
+            f"{name}=avg:{average * 1000:.1f}ms,max:{maximum * 1000:.1f}ms"
+            for name, (average, maximum) in sorted(durations.items())
+        )
+        print(
+            "Cycle rates (Hz):",
+            " ".join(f"{name}={rate:.1f}" for name, rate in sorted(rates.items())),
+        )
+        print("Cycle durations:", durationText)
+
+
+cycleMonitor = CycleRateMonitor(CYCLE_RATE_WINDOW)
 runEvent = threading.Event()
 runEvent.set()
 
@@ -491,28 +646,35 @@ thread_ledControl = threading.Thread(
         m_ledState,
         m_ledMutex,
         runEvent,
+        cycleMonitor,
     ),
 )
 thread_controllerControl = threading.Thread(
-    target=controllerControl, args=(m_controllerQueue, m_controllerState, runEvent)
+    target=controllerControl, args=(m_controllerState, m_controllerMutex, runEvent, cycleMonitor)
 )
 thread_commControl = threading.Thread(
-    target=commControl, args=(m_robotState, m_robotMutex, runEvent)
+    target=commControl, args=(m_robotState, m_robotMutex, m_controllerState, m_controllerMutex, m_inputState, m_inputMutex, runEvent, cycleMonitor)
 )
 thread_inputControl = threading.Thread(
-    target=inputControl, args=(m_inputState, m_inputMutex, runEvent)
+    target=inputControl, args=(m_inputState, m_inputMutex, runEvent, cycleMonitor)
+)
+thread_cycleRateControl = threading.Thread(
+    target=cycleRateControl, args=(cycleMonitor, runEvent)
 )
 
 thread_ledControl.start()
 thread_controllerControl.start()
 thread_commControl.start()
 thread_inputControl.start()
+thread_cycleRateControl.start()
 
 try:
     while True:
+        cycleMonitor.record("main")
         time.sleep(0.1)
 except KeyboardInterrupt:
     runEvent.clear()
+    thread_cycleRateControl.join()
     thread_commControl.join()
     thread_controllerControl.join()
     thread_ledControl.join()

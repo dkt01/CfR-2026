@@ -362,6 +362,7 @@ void loop() {
   static Mode autoMode = Mode::ESTOP;
 
   const auto now = millis();
+  static auto lastTx = now;
 
   // Offboard Rx
   xbee.readPacket();
@@ -473,15 +474,20 @@ void loop() {
   offboardFeedback.serialize((uint8_t *)offboardTxPayload,
                              sizeof(offboardTxPayload));
 
-  // Offboard Tx
-  // tx16.setAddress16(rx16.getRemoteAddress16());
-  tx16.setAddress16(0);
-  tx16.setPayload(offboardTxPayload,
-                  GetPacketSize(offboardTxPayload, sizeof(offboardTxPayload)));
-  xbee.send(tx16);
-  xbee.readPacket();
+  // Limit to 20Hz updates
+  if (now - lastTx > 50) {
+    // Offboard Tx
+    // tx16.setAddress16(rx16.getRemoteAddress16());
+    tx16.setAddress16(0);
+    tx16.setPayload(
+        offboardTxPayload,
+        GetPacketSize(offboardTxPayload, sizeof(offboardTxPayload)));
+    xbee.send(tx16);
+    xbee.readPacket();
 
-  // Onboard Tx
-  Serial.write(onboardTxPayload,
-               GetPacketSize(onboardTxPayload, sizeof(onboardTxPayload)));
+    // Onboard Tx
+    Serial.write(onboardTxPayload,
+                 GetPacketSize(onboardTxPayload, sizeof(onboardTxPayload)));
+    lastTx = now;
+  }
 }
