@@ -1,0 +1,15 @@
+[Unit]
+Description=RC E-Stop interface
+After=multi-user.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/pi/cfr/bin/python3 /home/pi/estop.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
