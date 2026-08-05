@@ -38,6 +38,9 @@ TX_OPT = "\x01"
 TIMEOUT_CONTROLLER = 0.2
 TIMEOUT_COMMS = 0.2
 CYCLE_RATE_WINDOW = 5.0
+# How often to re-scan for a device while none is connected; doesn't need to be
+# fast since a human plugging in a controller/XBee won't notice ~1s of latency.
+DISCOVERY_INTERVAL = 1.0
 SERIAL_TRACE_ENV = "ESTOP_SERIAL_TRACE"
 # SERIAL_TRACE_DEFAULT = "/tmp/xbee-serial.log"
 SERIAL_TRACE_DEFAULT = None
@@ -120,6 +123,7 @@ class ControllerState:
     ACCEL_Z: int = ACCEL_ZERO
     GYRO_Z: int = GYRO_ZERO
     comms_ok: bool = False
+    device_name: str = ""
 
 
 class AutoMode(Enum):
@@ -136,6 +140,7 @@ class RobotState:
     auto_mode: AutoMode = AutoMode.UNKNOWN
     battery_level: int = 255
     comms_ok: bool = False
+    comm_port: str = ""
 
 
 KEYCODE_MAP = {
@@ -288,10 +293,18 @@ class CycleRateMonitor:
             for timestamps in self.cycles.values():
                 while timestamps and timestamps[0] < cutoff:
                     timestamps.popleft()
-            return {
-                name: len(timestamps) / self.window
-                for name, timestamps in self.cycles.items()
-            }
+            result = {}
+            for name, timestamps in self.cycles.items():
+                if len(timestamps) < 2:
+                    result[name] = 0.0
+                    continue
+                # Divide by the span actually covered so far, not the full
+                # window, so the estimate doesn't ramp up from 0 at startup.
+                # len(timestamps) - 1 is the number of complete intervals
+                # spanned, which is the unbiased estimator for small counts.
+                span = min(self.window, now - timestamps[0])
+                result[name] = (len(timestamps) - 1) / span
+            return result
 
     def duration_stats(self) -> dict[str, tuple[float, float]]:
         now = time.monotonic()
@@ -388,6 +401,8 @@ def controllerControlEvdev(
         if len(devices) > 0:
             print("New controller @", devices[0])
             ps = evdev.InputDevice(devices[0])
+            with controllerMutex:
+                controllerState.device_name = devices[0]
 
         # Inner loop handles normal input events
         while runEvent.is_set() and len(evdev.list_devices()) > 0:
@@ -417,7 +432,9 @@ def controllerControlEvdev(
         with controllerMutex:
             _zeroControllerState(controllerState)  # Zero out for safety
 
-        time.sleep(0.1)  # Limit discovery loop rate to 10Hz
+        time.sleep(
+            DISCOVERY_INTERVAL
+        )  # Only need to notice a reconnect, not react instantly
 
 
 def _zeroControllerState(state: ControllerState) -> None:
@@ -496,6 +513,8 @@ def controllerControlPygame(
             joystick = pygame.joystick.Joystick(0)
             joystick.init()
             print("New controller @", joystick.get_name())
+            with controllerMutex:
+                controllerState.device_name = joystick.get_name()
 
         while (
             runEvent.is_set()
@@ -520,7 +539,9 @@ def controllerControlPygame(
         with controllerMutex:
             _zeroControllerState(controllerState)
 
-        time.sleep(0.1)  # Limit discovery loop rate to 10Hz
+        time.sleep(
+            DISCOVERY_INTERVAL
+        )  # Only need to notice a reconnect, not react instantly
 
 
 def serializeState(
@@ -667,7 +688,9 @@ def commControl(
         cycleMonitor.record("comm-discovery")
         portPath = discover_serial_port()
         if portPath is None:
-            time.sleep(0.1)  # Limit discovery loop rate to 10Hz
+            time.sleep(
+                DISCOVERY_INTERVAL
+            )  # Only need to notice a reconnect, not react instantly
             continue
         try:
             print("New XBee @", portPath)
@@ -679,6 +702,8 @@ def commControl(
             if serial_trace_path:
                 print("XBee serial trace @", serial_trace_path)
             m_xbee = XBee(m_ser, escaped=True)
+            with robotStateMutex:
+                robotState.comm_port = portPath
 
             runReadEvent.set()
             thread_read = threading.Thread(
@@ -732,7 +757,11 @@ def commControl(
                 m_ser.close()
                 m_ser = None
             m_xbee = None
-            time.sleep(0.1)  # Limit discovery loop rate to 10Hz
+            with robotStateMutex:
+                robotState.comm_port = ""
+            time.sleep(
+                DISCOVERY_INTERVAL
+            )  # Only need to notice a reconnect, not react instantly
 
 
 def cycleRateControl(cycleMonitor: CycleRateMonitor, runEvent: threading.Event):

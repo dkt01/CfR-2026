@@ -31,7 +31,10 @@ from estop_core import (
 # Emulates a momentary/held key via a refresh timeout, mirroring TIMEOUT_CONTROLLER,
 # since terminal input has no key-up event to detect release directly.
 MANUAL_START_TIMEOUT = 0.2
-RENDER_INTERVAL = 0.1
+# 6Hz is comfortably above the Nyquist rate for a 2Hz blink (4 transitions/sec)
+# while cutting full-screen redraw CPU cost vs. the previous 10Hz.
+REFRESH_HZ = 6
+RENDER_INTERVAL = 1 / REFRESH_HZ
 BLINK_HZ = 2.0
 TUI_TITLE = "CfR E-Stop / RC Emulator"
 
@@ -109,7 +112,9 @@ def render_status(robotState: RobotState, controllerState: ControllerState) -> T
         return "[green]CONNECTED[/green]" if ok else "[red]DISCONNECTED[/red]"
 
     table.add_row("XBEE", connection(robotState.comms_ok))
+    table.add_row("", f"[grey58]{robotState.comm_port or '-'}[/grey58]")
     table.add_row("CONTROLLER", connection(controllerState.comms_ok))
+    table.add_row("", f"[grey58]{controllerState.device_name or '-'}[/grey58]")
     return table
 
 
@@ -212,7 +217,7 @@ def renderLoop(
     console.set_window_title(TUI_TITLE)
 
     try:
-        with Live(console=console, screen=True, refresh_per_second=10) as live:
+        with Live(console=console, screen=True, refresh_per_second=REFRESH_HZ) as live:
             while runEvent.is_set():
                 cycleMonitor.record("render")
                 with inputStateMutex:
