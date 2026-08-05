@@ -445,8 +445,8 @@ void loop() {
     steeringCmd = PctToPulseLength(offboardState.AXIS_RX);
     break;
   case Mode::AUTO_ACTIVE:
-    throttleCmd = PctToPulseLength(jetsonState.CMD_STEERING, false);
-    steeringCmd = PctToPulseLength(jetsonState.CMD_THROTTLE, false);
+    throttleCmd = PctToPulseLength(jetsonState.CMD_THROTTLE, false);
+    steeringCmd = PctToPulseLength(jetsonState.CMD_STEERING, false);
     break;
   default:
     throttleCmd = PctToPulseLength(127);
