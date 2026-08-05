@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 
 import atexit
-from collections import deque
 import os
 import threading
 import time
 import traceback
+from collections import deque
 from dataclasses import dataclass
 from enum import Enum
 from typing import Final
@@ -14,6 +14,7 @@ import evdev
 import lgpio
 import serial
 from xbee import XBee
+from xbee.thread.base import ThreadQuitException
 
 ROBOT_ADDR = "\x00\x01"
 TX_OPT = "\x01"
@@ -22,22 +23,46 @@ TIMEOUT_CONTROLLER = 0.2
 TIMEOUT_COMMS = 0.2
 CYCLE_RATE_WINDOW = 5.0
 SERIAL_TRACE_ENV = "ESTOP_SERIAL_TRACE"
-SERIAL_TRACE_DEFAULT = "/tmp/xbee-serial.log"
+# SERIAL_TRACE_DEFAULT = "/tmp/xbee-serial.log"
+SERIAL_TRACE_DEFAULT = None
 
-LED_ESTOP: Final = 8
-LED_ESTOP_SENSE: Final = 10
-LED_ESTOP_OVERRIDE: Final = 13
-LED_AUTO_ARM: Final = 16
-LED_COMMS: Final = 18
-LED_MODE_STOP: Final = 19
-LED_MODE_RC: Final = 21
-LED_BATTERY: Final = 22
-LED_MODE_AUTO: Final = 23
-INPUT_ESTOP: Final = 5
-INPUT_ESTOP_SENSE: Final = 7
-INPUT_ESTOP_OVERRIDE: Final = 11
-INPUT_AUTO_ARM: Final = 15
-INPUT_MANUAL_START: Final = 12
+
+# key: physical pin number, value: GPIO number
+# https://www.raspberry-pi-geek.com/howto/GPIO-Pinout-Rasp-Pi-1-Rev1-and-Rev2
+RpiB2PinMap = {
+    3: 2,
+    5: 3,
+    7: 4,
+    8: 14,
+    10: 15,
+    11: 17,
+    12: 18,
+    13: 27,
+    15: 22,
+    16: 23,
+    18: 24,
+    19: 10,
+    21: 9,
+    22: 25,
+    23: 11,
+    24: 8,
+    26: 7,
+}
+
+LED_ESTOP: Final = RpiB2PinMap[8]
+LED_ESTOP_SENSE: Final = RpiB2PinMap[10]
+LED_ESTOP_OVERRIDE: Final = RpiB2PinMap[13]
+LED_AUTO_ARM: Final = RpiB2PinMap[16]
+LED_COMMS: Final = RpiB2PinMap[18]
+LED_MODE_STOP: Final = RpiB2PinMap[19]
+LED_MODE_RC: Final = RpiB2PinMap[21]
+LED_BATTERY: Final = RpiB2PinMap[22]
+LED_MODE_AUTO: Final = RpiB2PinMap[23]
+INPUT_ESTOP: Final = RpiB2PinMap[5]
+INPUT_ESTOP_SENSE: Final = RpiB2PinMap[7]
+INPUT_ESTOP_OVERRIDE: Final = RpiB2PinMap[11]
+INPUT_AUTO_ARM: Final = RpiB2PinMap[15]
+INPUT_MANUAL_START: Final = RpiB2PinMap[12]
 
 ACTIVE_HIGH_LEDS = [
     LED_ESTOP,
@@ -52,6 +77,28 @@ ACTIVE_LOW_LEDS = [LED_ESTOP_OVERRIDE, LED_AUTO_ARM]
 ALL_LEDS = ACTIVE_HIGH_LEDS + ACTIVE_LOW_LEDS
 PULL_UP_INPUTS = [INPUT_ESTOP, INPUT_ESTOP_SENSE, INPUT_MANUAL_START]
 PULL_DOWN_INPUTS = [INPUT_ESTOP_OVERRIDE, INPUT_AUTO_ARM]
+
+# key: physical pin number, value: GPIO number
+# https://www.raspberry-pi-geek.com/howto/GPIO-Pinout-Rasp-Pi-1-Rev1-and-Rev2
+RpiB2PinMap = {
+    3: 2,
+    5: 3,
+    7: 4,
+    8: 14,
+    10: 15,
+    11: 17,
+    12: 18,
+    13: 27,
+    15: 22,
+    16: 23,
+    18: 24,
+    19: 10,
+    21: 9,
+    22: 25,
+    23: 11,
+    24: 8,
+    26: 7,
+}
 
 
 class LEDMode(Enum):
@@ -306,7 +353,6 @@ class CycleRateMonitor:
 
 def deluminate(leds):
     for led in leds:
-        pass
         lgpio.gpio_write(m_gpio, led, 0)
 
 
@@ -543,6 +589,8 @@ def receiveData(
                     cycleMonitor.record("comm-receive-invalid")
             except Exception:
                 cycleMonitor.record("comm-receive-invalid")
+    except ThreadQuitException:
+        pass
     except Exception:
         traceback.print_exc()
     finally:
@@ -579,7 +627,7 @@ def commControl(
             print("New XBee @", serDevs[0])
             serial_trace_path = os.getenv(SERIAL_TRACE_ENV, SERIAL_TRACE_DEFAULT)
             m_ser = TimestampedSerial(
-                serial.Serial("/dev/" + serDevs[0], timeout=0.1),
+                serial.Serial("/dev/" + serDevs[0], baudrate=38400, timeout=0.1),
                 serial_trace_path,
             )
             if serial_trace_path:
@@ -601,6 +649,7 @@ def commControl(
             thread_read.start()
 
             while runEvent.is_set():
+                startTime = time.monotonic()
                 message = serializeState(
                     controllerState, controllerStateMutex, inputState, inputStateMutex
                 )
@@ -614,19 +663,29 @@ def commControl(
                 )
                 cycleMonitor.record("comm-send")
                 cycleMonitor.record_duration("comm-send", time.monotonic() - sendStart)
-
-                if time.monotonic() - latestReceiveTime[0] >= TIMEOUT_COMMS:
+                endTime = time.monotonic()
+                if endTime - latestReceiveTime[0] >= TIMEOUT_COMMS:
                     with robotStateMutex:
                         robotState.comms_ok = False
-
-                time.sleep(0.05)  # Limit loop rate to 20Hz
-            runReadEvent.clear()
-            m_xbee.halt()
+                delayTime = max(0.0, 0.05 - (endTime - startTime))
+                time.sleep(delayTime)  # Limit loop rate to 20Hz
         except Exception:
             traceback.print_exc()
+        finally:
+            # xbee.halt() assumes internal threading state that is
+            # never set up when we drive wait_read_frame() manually
+            # (it raises AttributeError on self._thread), so stop the
+            # reader thread ourselves instead.
             runReadEvent.clear()
-            # if(m_xbee != None and m_xbee.isAlive):
-            #     m_xbee.halt()
+            if thread_read is not None:
+                thread_read.join(timeout=1.0)
+                if thread_read.is_alive():
+                    print("Warning: xbee read thread did not exit cleanly")
+                thread_read = None
+            if m_ser is not None:
+                m_ser.close()
+                m_ser = None
+            m_xbee = None
             time.sleep(0.1)  # Limit discovery loop rate to 10Hz
 
 
@@ -639,11 +698,11 @@ def inputControl(
     while runEvent.is_set():
         cycleMonitor.record("input")
         with inputMutex:
-            inputState.estop = m_gpio.gpio_read(m_gpio, INPUT_ESTOP)
-            inputState.estop_sense = m_gpio.gpio_read(m_gpio, INPUT_ESTOP_SENSE)
-            inputState.estop_override = m_gpio.gpio_read(m_gpio, INPUT_ESTOP_OVERRIDE)
-            inputState.auto_arm = m_gpio.gpio_read(m_gpio, INPUT_AUTO_ARM)
-            inputState.manual_start = m_gpio.gpio_read(m_gpio, INPUT_MANUAL_START)
+            inputState.estop = lgpio.gpio_read(m_gpio, INPUT_ESTOP)
+            inputState.estop_sense = lgpio.gpio_read(m_gpio, INPUT_ESTOP_SENSE)
+            inputState.estop_override = lgpio.gpio_read(m_gpio, INPUT_ESTOP_OVERRIDE)
+            inputState.auto_arm = lgpio.gpio_read(m_gpio, INPUT_AUTO_ARM)
+            inputState.manual_start = lgpio.gpio_read(m_gpio, INPUT_MANUAL_START)
 
         time.sleep(0.05)  # Limit loop rate to 20Hz
 
@@ -668,19 +727,29 @@ cycleMonitor = CycleRateMonitor(CYCLE_RATE_WINDOW)
 runEvent = threading.Event()
 runEvent.set()
 
-for led in ACTIVE_HIGH_LEDS:
-    m_gpio.gpio_claim_output(m_gpio, led)
+latestPin = 0
+try:
+    for led in ACTIVE_HIGH_LEDS:
+        latestPin = led
+        lgpio.gpio_claim_output(m_gpio, led)
 
-for led in ACTIVE_LOW_LEDS:
-    m_gpio.gpio_claim_output(m_gpio, led, lFlags=lgpio.SET_ACTIVE_LOW)
+    for led in ACTIVE_LOW_LEDS:
+        latestPin = led
+        lgpio.gpio_claim_output(m_gpio, led, lFlags=lgpio.SET_ACTIVE_LOW)
 
-for input in PULL_UP_INPUTS:
-    m_gpio.gpio_claim_input(m_gpio, input, lFlags=lgpio.SET_PULL_UP)
+    for input in PULL_UP_INPUTS:
+        latestPin = input
+        lgpio.gpio_claim_input(m_gpio, input, lFlags=lgpio.SET_PULL_UP)
 
-for input in PULL_DOWN_INPUTS:
-    m_gpio.gpio_claim_input(
-        m_gpio, input, lFlags=lgpio.SET_PULL_DOWN | lgpio.SET_ACTIVE_LOW
-    )
+    for input in PULL_DOWN_INPUTS:
+        latestPin = input
+        lgpio.gpio_claim_input(
+            m_gpio, input, lFlags=lgpio.SET_PULL_DOWN | lgpio.SET_ACTIVE_LOW
+        )
+except lgpio.error as e:
+    print("Exception:", e)
+    print("pin:", latestPin)
+
 
 atexit.register(deluminate, ALL_LEDS)
 

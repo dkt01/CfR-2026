@@ -339,7 +339,7 @@ void setup() {
   }
   Serial.setTimeout(1);
 
-  serXBee.begin(9600);
+  serXBee.begin(38400);
   while (!serXBee) {
     ; // wait for serial port to connect
   }
