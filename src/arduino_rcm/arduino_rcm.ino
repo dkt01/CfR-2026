@@ -390,6 +390,7 @@ void loop() {
   static uint16_t xbeeErrors = 0;
   static uint8_t lastXBeeApiId = 0;
   static uint8_t lastXBeeError = 0;
+  bool receivedOffboardMessage = false;
 
   // Offboard Rx
   xbee.readPacket();
@@ -398,11 +399,11 @@ void loop() {
     lastXBeeApiId = xbee.getResponse().getApiId();
     if (xbee.getResponse().getApiId() == RX_16_RESPONSE) {
       ++xbeeRx16Frames;
-      latestOffboardUpdate = now;
       xbee.getResponse().getRx16Response(rx16);
       if (offboardState.deSerialize(rx16.getData(), rx16.getDataLength())) {
         ++xbeeValidMessages;
         latestOffboardUpdate = now;
+        receivedOffboardMessage = true;
 
       } else {
         ++xbeeInvalidMessages;
@@ -513,8 +514,10 @@ void loop() {
                              sizeof(offboardTxPayload));
 
   static int count = 0;
-  // Limit to 20Hz updates
-  if (now - lastTx > 50) {
+  // Transmit immediately after a valid offboard frame. SoftwareSerial disables
+  // receive interrupts while transmitting, so this avoids colliding with the
+  // next 20 Hz command frame.
+  if (receivedOffboardMessage && now - lastTx >= 50) {
     // Offboard Tx
     // tx16.setAddress16(rx16.getRemoteAddress16());
     tx16.setAddress16(0);

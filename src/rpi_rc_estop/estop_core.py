@@ -36,7 +36,9 @@ ROBOT_ADDR = b"\x00\x01"
 TX_OPT = b"\x00"
 
 TIMEOUT_CONTROLLER = 0.2
-TIMEOUT_COMMS = 0.2
+# This drives only the TUI link indicator. Keep it longer than the Arduino's
+# command failsafe because duplex XBee traffic can lose short bursts of feedback.
+TIMEOUT_COMMS = 0.5
 CYCLE_RATE_WINDOW = 5.0
 # How often to re-scan for a device while none is connected; doesn't need to be
 # fast since a human plugging in a controller/XBee won't notice ~1s of latency.
@@ -207,29 +209,32 @@ SERIAL_BUTTONS = [
 ]
 SERIAL_AXES = ["AXIS_LX", "AXIS_LY", "AXIS_RX", "AXIS_RY"]
 
-# SDL2/pygame joystick index layout for a typical PS3 pad. Raw (non-GameController)
-# joystick indices are driver/OS dependent -- verify against real hardware and
-# adjust here if buttons/axes don't line up.
+# Raw pygame joystick indices for the connected PS3 controller. Index 2 is the
+# shared trigger axis, so it must not be serialized as the right stick X axis.
 PYGAME_AXIS_MAP = {
     0: "AXIS_LX",
     1: "AXIS_LY",
-    2: "AXIS_RX",
-    3: "AXIS_RY",
+    3: "AXIS_RX",
+    4: "AXIS_RY",
 }
 PYGAME_BUTTON_MAP = {
-    0: "BUTTON_SQUARE",
-    1: "BUTTON_X",
-    2: "BUTTON_O",
-    3: "BUTTON_TRIANGLE",
+    0: "BUTTON_X",
+    1: "BUTTON_O",
+    2: "BUTTON_TRIANGLE",
+    3: "BUTTON_SQUARE",
     4: "BUTTON_L1",
     5: "BUTTON_R1",
     6: "BUTTON_L2",
     7: "BUTTON_R2",
     8: "BUTTON_SELECT",
     9: "BUTTON_START",
-    10: "BUTTON_L3",
-    11: "BUTTON_R3",
-    12: "BUTTON_PS",
+    10: "BUTTON_PS",
+    11: "BUTTON_L3",
+    12: "BUTTON_R3",
+    13: "BUTTON_UP",
+    14: "BUTTON_DOWN",
+    15: "BUTTON_LEFT",
+    16: "BUTTON_RIGHT",
 }
 PYGAME_HAT_INDEX = 0
 
@@ -474,13 +479,7 @@ def _applyPygameState(joystick, controllerState: ControllerState) -> None:
         if hasattr(controllerState, pressureField):
             setattr(controllerState, pressureField, 255 if pressed else 0)
 
-    # Prefer analog trigger axes over the digital button fallback when present.
-    if numAxes > 4:
-        controllerState.PRESSURE_L2 = _scalePygamePressure(joystick.get_axis(4))
-    if numAxes > 5:
-        controllerState.PRESSURE_R2 = _scalePygamePressure(joystick.get_axis(5))
-
-    if joystick.get_numhats() > PYGAME_HAT_INDEX:
+    if numButtons <= 13 and joystick.get_numhats() > PYGAME_HAT_INDEX:
         hatX, hatY = joystick.get_hat(PYGAME_HAT_INDEX)
         controllerState.PRESSURE_UP = 255 if hatY > 0 else 0
         controllerState.PRESSURE_DOWN = 255 if hatY < 0 else 0
@@ -598,7 +597,10 @@ def serializeState(
 
 
 def deserializeState(
-    message: str, robotState: RobotState, robotStateLock: threading.Lock
+    message: bytes,
+    robotState: RobotState,
+    robotStateLock: threading.Lock,
+    recvTime: list[float],
 ):
     try:
         # Make sure to strip trailing commas
@@ -608,6 +610,7 @@ def deserializeState(
         with robotStateLock:
             robotState.auto_mode = AutoMode(int(parts[0]))
             robotState.battery_level = int(parts[1])
+            recvTime[0] = time.monotonic()
             robotState.comms_ok = True
         return True
     except Exception:
@@ -641,9 +644,10 @@ def receiveData(
                         robotState.tx_status = data["status"][0]
                         robotState.tx_ack = robotState.tx_status == 0
                     cycleMonitor.record("comm-tx-ack")
-                elif deserializeState(data["rf_data"], robotState, robotStateMutex):
+                elif deserializeState(
+                    data["rf_data"], robotState, robotStateMutex, recvTime
+                ):
                     cycleMonitor.record("comm-receive-valid")
-                    recvTime[0] = time.monotonic()
                 else:
                     cycleMonitor.record("comm-receive-invalid")
             except Exception:
