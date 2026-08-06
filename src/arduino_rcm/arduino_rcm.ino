@@ -15,6 +15,7 @@ Servo throttle;
 Servo steering;
 
 const unsigned long commsTimeout_ms = 200;
+const bool enableOffboardTx = true;
 
 enum class Mode : uint8_t {
   ESTOP,
@@ -26,9 +27,13 @@ enum class Mode : uint8_t {
 
 // Serialization helpers for comma-delimited ascii messages
 
-bool deserialize(bool &val, uint8_t **data) {
+bool deserialize(bool &val, const uint8_t *&data, const uint8_t *end) {
+  if (data == end) {
+    return true;
+  }
+
   bool error = false;
-  switch (**data) {
+  switch (*data) {
   case '0':
     val = false;
     break;
@@ -38,20 +43,24 @@ bool deserialize(bool &val, uint8_t **data) {
   default:
     error = true;
   }
-  while (**data != '\0' && **data != '\n' && **data != ',') {
-    ++(*data);
+  while (data != end && *data != '\n' && *data != ',') {
+    ++data;
   }
-  if (**data == ',') {
-    ++(*data);
+  if (data != end && *data == ',') {
+    ++data;
   }
   return error;
 }
 
-bool deserialize(uint8_t &val, uint8_t **data) {
+bool deserialize(uint8_t &val, const uint8_t *&data, const uint8_t *end) {
+  if (data == end || *data == '\n' || *data == ',') {
+    return true;
+  }
+
   uint32_t tempVal = 0;
   bool error = false;
-  while (**data != '\0' && **data != '\n' && **data != ',') {
-    switch (**data) {
+  while (data != end && *data != '\n' && *data != ',') {
+    switch (*data) {
     case '0':
     case '1':
     case '2':
@@ -62,11 +71,12 @@ bool deserialize(uint8_t &val, uint8_t **data) {
     case '7':
     case '8':
     case '9':
-      tempVal = tempVal * 10 + (**data - '0');
+      tempVal = tempVal * 10 + (*data - '0');
       break;
     default:
       error = true;
     }
+    ++data;
   }
   if (tempVal > 255) {
     error = true;
@@ -74,15 +84,15 @@ bool deserialize(uint8_t &val, uint8_t **data) {
   } else {
     val = static_cast<uint8_t>(tempVal);
   }
-  if (**data == ',') {
-    ++(*data);
+  if (data != end && *data == ',') {
+    ++data;
   }
   return error;
 }
 
-bool deserialize(Mode &val, uint8_t **data) {
+bool deserialize(Mode &val, const uint8_t *&data, const uint8_t *end) {
   uint8_t intMode;
-  bool retVal = deserialize(intMode, data);
+  bool retVal = deserialize(intMode, data, end);
   val = static_cast<Mode>(intMode);
   return retVal;
 }
@@ -172,33 +182,36 @@ typedef struct {
       return false;
     }
 
-    error = error || deserialize(ESTOP, &data);
-    error = error || deserialize(AUTO_ARM, &data);
-    error = error || deserialize(MANUAL_START, &data);
-    error = error || deserialize(RC_PRESENT, &data);
-    error = error || deserialize(AXIS_LX, &data);
-    error = error || deserialize(AXIS_LY, &data);
-    error = error || deserialize(AXIS_RX, &data);
-    error = error || deserialize(AXIS_RY, &data);
-    error = error || deserialize(BUTTON_X, &data);
-    error = error || deserialize(BUTTON_O, &data);
-    error = error || deserialize(BUTTON_SQUARE, &data);
-    error = error || deserialize(BUTTON_TRIANGLE, &data);
-    error = error || deserialize(BUTTON_L1, &data);
-    error = error || deserialize(BUTTON_R1, &data);
-    error = error || deserialize(BUTTON_L2, &data);
-    error = error || deserialize(BUTTON_R2, &data);
-    error = error || deserialize(BUTTON_L3, &data);
-    error = error || deserialize(BUTTON_R3, &data);
-    error = error || deserialize(BUTTON_SELECT, &data);
-    error = error || deserialize(BUTTON_START, &data);
-    error = error || deserialize(BUTTON_PS, &data);
-    error = error || deserialize(BUTTON_UP, &data);
-    error = error || deserialize(BUTTON_RIGHT, &data);
-    error = error || deserialize(BUTTON_DOWN, &data);
-    error = error || deserialize(BUTTON_LEFT, &data);
+    const uint8_t *cursor = data;
+    const uint8_t *end = data + dataLength;
 
-    return error;
+    error = deserialize(ESTOP, cursor, end) || error;
+    error = deserialize(AUTO_ARM, cursor, end) || error;
+    error = deserialize(MANUAL_START, cursor, end) || error;
+    error = deserialize(RC_PRESENT, cursor, end) || error;
+    error = deserialize(AXIS_LX, cursor, end) || error;
+    error = deserialize(AXIS_LY, cursor, end) || error;
+    error = deserialize(AXIS_RX, cursor, end) || error;
+    error = deserialize(AXIS_RY, cursor, end) || error;
+    error = deserialize(BUTTON_X, cursor, end) || error;
+    error = deserialize(BUTTON_O, cursor, end) || error;
+    error = deserialize(BUTTON_SQUARE, cursor, end) || error;
+    error = deserialize(BUTTON_TRIANGLE, cursor, end) || error;
+    error = deserialize(BUTTON_L1, cursor, end) || error;
+    error = deserialize(BUTTON_R1, cursor, end) || error;
+    error = deserialize(BUTTON_L2, cursor, end) || error;
+    error = deserialize(BUTTON_R2, cursor, end) || error;
+    error = deserialize(BUTTON_L3, cursor, end) || error;
+    error = deserialize(BUTTON_R3, cursor, end) || error;
+    error = deserialize(BUTTON_SELECT, cursor, end) || error;
+    error = deserialize(BUTTON_START, cursor, end) || error;
+    error = deserialize(BUTTON_PS, cursor, end) || error;
+    error = deserialize(BUTTON_UP, cursor, end) || error;
+    error = deserialize(BUTTON_RIGHT, cursor, end) || error;
+    error = deserialize(BUTTON_DOWN, cursor, end) || error;
+    error = deserialize(BUTTON_LEFT, cursor, end) || error;
+
+    return !error;
   }
 
 } FromOffboard;
@@ -234,17 +247,20 @@ typedef struct {
     bool error = false;
 
     // Variable length, but must have at least one character per field including
-    // comma delimiters and integer fields can be no longer than 3 characters
-    // each.  Optional trailing comma delimiter.
+    // comma delimiters and integer fields can be no longer than 3
+    // characters each.  Optional trailing comma delimiter.
     if (dataLength < 6 || dataLength > 11) {
       return false;
     }
 
-    error = error || deserialize(AUTO_READY, &data);
-    error = error || deserialize(CMD_STEERING, &data);
-    error = error || deserialize(CMD_THROTTLE, &data);
+    const uint8_t *cursor = data;
+    const uint8_t *end = data + dataLength;
 
-    return error;
+    error = deserialize(AUTO_READY, cursor, end) || error;
+    error = deserialize(CMD_STEERING, cursor, end) || error;
+    error = deserialize(CMD_THROTTLE, cursor, end) || error;
+
+    return !error;
   }
 
 } FromJetson;
@@ -344,6 +360,7 @@ void setup() {
     ; // wait for serial port to connect
   }
   xbee.setSerial(serXBee);
+  tx16.setFrameId(NO_RESPONSE_FRAME_ID);
 
   // Throttle to FL(10), Steering to FR(5)
   throttle.attach(10, -114,
@@ -353,6 +370,9 @@ void setup() {
 }
 
 void loop() {
+  static uint8_t debugStage = 0;
+  static uint8_t debugLoops = 0;
+  const bool printDebugStages = false; // debugLoops < 10;
   static FromOffboard offboardState;
   static FromJetson jetsonState;
   static unsigned long latestOffboardUpdate = 0;
@@ -363,15 +383,34 @@ void loop() {
 
   const auto now = millis();
   static auto lastTx = now;
+  static uint16_t xbeeFrames = 0;
+  static uint16_t xbeeRx16Frames = 0;
+  static uint16_t xbeeValidMessages = 0;
+  static uint16_t xbeeInvalidMessages = 0;
+  static uint16_t xbeeErrors = 0;
+  static uint8_t lastXBeeApiId = 0;
+  static uint8_t lastXBeeError = 0;
 
   // Offboard Rx
   xbee.readPacket();
   if (xbee.getResponse().isAvailable()) {
+    ++xbeeFrames;
+    lastXBeeApiId = xbee.getResponse().getApiId();
     if (xbee.getResponse().getApiId() == RX_16_RESPONSE) {
+      ++xbeeRx16Frames;
       latestOffboardUpdate = now;
       xbee.getResponse().getRx16Response(rx16);
-      offboardState.deSerialize(rx16.getData(), rx16.getDataLength());
+      if (offboardState.deSerialize(rx16.getData(), rx16.getDataLength())) {
+        ++xbeeValidMessages;
+        latestOffboardUpdate = now;
+
+      } else {
+        ++xbeeInvalidMessages;
+      }
     }
+  } else if (xbee.getResponse().isError()) {
+    ++xbeeErrors;
+    lastXBeeError = xbee.getResponse().getErrorCode();
   }
 
   // Onboard Rx
@@ -402,7 +441,6 @@ void loop() {
   }
 
   // State management
-
   if (offboardState.ESTOP || offboardTimedOut) {
     autoMode = Mode::ESTOP;
   } else if (offboardState.AUTO_ARM == false && autoMode != Mode::RC_ACTIVE) {
@@ -474,6 +512,7 @@ void loop() {
   offboardFeedback.serialize((uint8_t *)offboardTxPayload,
                              sizeof(offboardTxPayload));
 
+  static int count = 0;
   // Limit to 20Hz updates
   if (now - lastTx > 50) {
     // Offboard Tx
@@ -482,9 +521,9 @@ void loop() {
     tx16.setPayload(
         offboardTxPayload,
         GetPacketSize(offboardTxPayload, sizeof(offboardTxPayload)));
-    xbee.send(tx16);
-    xbee.readPacket();
-
+    if (enableOffboardTx) {
+      xbee.send(tx16);
+    }
     // Onboard Tx
     Serial.write(onboardTxPayload,
                  GetPacketSize(onboardTxPayload, sizeof(onboardTxPayload)));

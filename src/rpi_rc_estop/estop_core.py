@@ -32,8 +32,8 @@ except ImportError:
     pygame = None
     PYGAME_SUPPORTED = False
 
-ROBOT_ADDR = "\x00\x01"
-TX_OPT = "\x01"
+ROBOT_ADDR = b"\x00\x01"
+TX_OPT = b"\x00"
 
 TIMEOUT_CONTROLLER = 0.2
 TIMEOUT_COMMS = 0.2
@@ -141,6 +141,9 @@ class RobotState:
     battery_level: int = 255
     comms_ok: bool = False
     comm_port: str = ""
+    tx_ack: bool = False
+    tx_status: int = 255
+    tx_message: str = ""
 
 
 KEYCODE_MAP = {
@@ -633,7 +636,12 @@ def receiveData(
                 "comm-receive-wait", time.monotonic() - waitStart
             )
             try:
-                if deserializeState(data["rf_data"], robotState, robotStateMutex):
+                if data["id"] == "tx_status":
+                    with robotStateMutex:
+                        robotState.tx_status = data["status"][0]
+                        robotState.tx_ack = robotState.tx_status == 0
+                    cycleMonitor.record("comm-tx-ack")
+                elif deserializeState(data["rf_data"], robotState, robotStateMutex):
                     cycleMonitor.record("comm-receive-valid")
                     recvTime[0] = time.monotonic()
                 else:
@@ -724,11 +732,13 @@ def commControl(
                 message = serializeState(
                     controllerState, controllerStateMutex, inputState, inputStateMutex
                 )
+                with robotStateMutex:
+                    robotState.tx_message = message
                 sendStart = time.monotonic()
                 m_xbee.send(
                     "tx",
                     dest_addr=ROBOT_ADDR,
-                    frame_id="\x00",
+                    frame_id=b"\x01",
                     options=TX_OPT,
                     data=message,
                 )

@@ -113,6 +113,10 @@ def render_status(robotState: RobotState, controllerState: ControllerState) -> T
 
     table.add_row("XBEE", connection(robotState.comms_ok))
     table.add_row("", f"[grey58]{robotState.comm_port or '-'}[/grey58]")
+    ackText = "ACK" if robotState.tx_ack else f"NACK ({robotState.tx_status:#04x})"
+    ackColor = "green" if robotState.tx_ack else "red"
+    table.add_row("TX", f"[{ackColor}]{ackText}[/{ackColor}]")
+    table.add_row("TX DATA", repr(robotState.tx_message))
     table.add_row("CONTROLLER", connection(controllerState.comms_ok))
     table.add_row("", f"[grey58]{controllerState.device_name or '-'}[/grey58]")
     return table
