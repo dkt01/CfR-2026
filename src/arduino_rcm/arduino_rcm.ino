@@ -5,7 +5,6 @@
 
 XBee xbee;
 SoftwareSerial serXBee(2, 3);
-Rx16Response rx16 = Rx16Response();
 Tx16Request tx16 = Tx16Request();
 uint8_t offboardTxPayload[8] = {};
 uint8_t onboardRxPayload[16] = {};
@@ -327,6 +326,94 @@ bool IsNearlyCenter(uint8_t value, uint8_t centerValue = 127,
          (value <= (centerValue + tolerance));
 }
 
+struct XBeeRx16Parser {
+  static const uint8_t maxFrameLength = 64;
+
+  enum class State : uint8_t { WAIT_START, LENGTH_MSB, LENGTH_LSB, FRAME };
+
+  State state{State::WAIT_START};
+  uint8_t frameData[maxFrameLength];
+  uint16_t frameLength{0};
+  uint8_t frameIndex{0};
+  uint8_t checksum{0};
+  bool escaped{false};
+
+  void reset() {
+    state = State::WAIT_START;
+    frameLength = 0;
+    frameIndex = 0;
+    checksum = 0;
+    escaped = false;
+  }
+
+  bool readFrame(uint8_t *&payload, uint8_t &payloadLength) {
+    uint8_t bytesRead = 0;
+    while (serXBee.available() && bytesRead < 16) {
+      uint8_t value = serXBee.read();
+      ++bytesRead;
+
+      if (state == State::WAIT_START) {
+        if (value == START_BYTE) {
+          state = State::LENGTH_MSB;
+        }
+        continue;
+      }
+
+      if (escaped) {
+        value ^= 0x20;
+        escaped = false;
+      } else if (value == ESCAPE) {
+        escaped = true;
+        continue;
+      } else if (value == START_BYTE) {
+        reset();
+        state = State::LENGTH_MSB;
+        continue;
+      }
+
+      switch (state) {
+      case State::LENGTH_MSB:
+        frameLength = static_cast<uint16_t>(value) << 8;
+        state = State::LENGTH_LSB;
+        break;
+      case State::LENGTH_LSB:
+        frameLength |= value;
+        if (frameLength == 0 || frameLength > maxFrameLength) {
+          reset();
+        } else {
+          frameIndex = 0;
+          checksum = 0;
+          state = State::FRAME;
+        }
+        break;
+      case State::FRAME:
+        if (frameIndex < frameLength) {
+          frameData[frameIndex++] = value;
+          checksum += value;
+          break;
+        }
+
+        const bool valid = static_cast<uint8_t>(checksum + value) == 0xFF &&
+                           frameData[0] == RX_16_RESPONSE && frameLength >= 5;
+        if (valid) {
+          payload = frameData + 5;
+          payloadLength = frameLength - 5;
+        }
+        reset();
+        if (valid) {
+          return true;
+        }
+        break;
+      case State::WAIT_START:
+        break;
+      }
+    }
+    return false;
+  }
+};
+
+XBeeRx16Parser xbeeRxParser;
+
 // Deadband around center [125,130].  Overall pulse range [1000us,2000us]
 int PctToPulseLength(uint8_t throttle, bool deadband = true) {
   if (deadband) {
@@ -382,7 +469,8 @@ void loop() {
   static Mode autoMode = Mode::ESTOP;
 
   const auto now = millis();
-  static auto lastTx = now;
+  static auto lastXBeeTx = now;
+  static auto lastOnboardTx = now;
   static uint16_t xbeeFrames = 0;
   static uint16_t xbeeRx16Frames = 0;
   static uint16_t xbeeValidMessages = 0;
@@ -393,25 +481,18 @@ void loop() {
   bool receivedOffboardMessage = false;
 
   // Offboard Rx
-  xbee.readPacket();
-  if (xbee.getResponse().isAvailable()) {
+  uint8_t *offboardPayload = nullptr;
+  uint8_t offboardPayloadLength = 0;
+  if (xbeeRxParser.readFrame(offboardPayload, offboardPayloadLength)) {
     ++xbeeFrames;
-    lastXBeeApiId = xbee.getResponse().getApiId();
-    if (xbee.getResponse().getApiId() == RX_16_RESPONSE) {
-      ++xbeeRx16Frames;
-      xbee.getResponse().getRx16Response(rx16);
-      if (offboardState.deSerialize(rx16.getData(), rx16.getDataLength())) {
-        ++xbeeValidMessages;
-        latestOffboardUpdate = now;
-        receivedOffboardMessage = true;
-
-      } else {
-        ++xbeeInvalidMessages;
-      }
+    ++xbeeRx16Frames;
+    if (offboardState.deSerialize(offboardPayload, offboardPayloadLength)) {
+      ++xbeeValidMessages;
+      latestOffboardUpdate = now;
+      receivedOffboardMessage = true;
+    } else {
+      ++xbeeInvalidMessages;
     }
-  } else if (xbee.getResponse().isError()) {
-    ++xbeeErrors;
-    lastXBeeError = xbee.getResponse().getErrorCode();
   }
 
   // Onboard Rx
@@ -429,6 +510,11 @@ void loop() {
 
   if (IsTimedOut(latestOffboardUpdate, now, commsTimeout_ms)) {
     offboardState = FromOffboard();
+    if (!offboardTimedOut) {
+      serXBee.stopListening();
+      serXBee.listen();
+      xbeeRxParser.reset();
+    }
     offboardTimedOut = true;
   } else {
     offboardTimedOut = false;
@@ -513,11 +599,10 @@ void loop() {
   offboardFeedback.serialize((uint8_t *)offboardTxPayload,
                              sizeof(offboardTxPayload));
 
-  static int count = 0;
   // Transmit immediately after a valid offboard frame. SoftwareSerial disables
   // receive interrupts while transmitting, so this avoids colliding with the
   // next 20 Hz command frame.
-  if (receivedOffboardMessage && now - lastTx >= 50) {
+  if (receivedOffboardMessage && now - lastXBeeTx >= 50) {
     // Offboard Tx
     // tx16.setAddress16(rx16.getRemoteAddress16());
     tx16.setAddress16(0);
@@ -527,9 +612,12 @@ void loop() {
     if (enableOffboardTx) {
       xbee.send(tx16);
     }
-    // Onboard Tx
+    lastXBeeTx = now;
+  }
+
+  if (now - lastOnboardTx >= 50) {
     Serial.write(onboardTxPayload,
                  GetPacketSize(onboardTxPayload, sizeof(onboardTxPayload)));
-    lastTx = now;
+    lastOnboardTx = now;
   }
 }
