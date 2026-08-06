@@ -422,9 +422,14 @@ def controllerControlEvdev(
                             event.type != evdev.ecodes.EV_SYN
                             and event.code in KEYCODE_MAP
                         ):
-                            setattr(
-                                controllerState, KEYCODE_MAP[event.code], event.value
-                            )
+                            fieldName = KEYCODE_MAP[event.code]
+                            value = event.value
+                            if fieldName in SERIAL_AXES:
+                                axisInfo = ps.absinfo(event.code)
+                                value = _scaleEvdevAxis(
+                                    event.value, axisInfo.min, axisInfo.max
+                                )
+                            setattr(controllerState, fieldName, value)
                 latestEvent = time.monotonic()
                 controllerState.comms_ok = True
             except OSError:
@@ -452,7 +457,23 @@ def _zeroControllerState(state: ControllerState) -> None:
 
 
 def _scalePygameAxis(value: float) -> int:
-    return int(round((max(-1.0, min(1.0, value)) + 1.0) * 127.5))
+    rawValue = int(round((max(-1.0, min(1.0, value)) + 1.0) * 127.5))
+    return _applyAxisDeadband(rawValue)
+
+
+def _applyAxisDeadband(rawValue: int) -> int:
+    if 122 <= rawValue <= 133:
+        return AXIS_ZERO
+    if rawValue < 122:
+        return int(round(rawValue * 126 / 121))
+    return min(255, int(round(128 + (rawValue - 134) * 127 / 121)))
+
+
+def _scaleEvdevAxis(value: int, minimum: int, maximum: int) -> int:
+    if maximum <= minimum:
+        return AXIS_ZERO
+    rawValue = round((value - minimum) * 255 / (maximum - minimum))
+    return _applyAxisDeadband(max(0, min(255, rawValue)))
 
 
 def _scalePygamePressure(value: float) -> int:
