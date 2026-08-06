@@ -1,0 +1,39 @@
+/**:
+  ros__parameters:
+    use_sim_time: false
+
+arduino_bridge:
+  ros__parameters:
+    # Serial link
+    device: /dev/ttyACM0
+    baud: 115200
+    tx_rate_hz: 50.0        # Arduino drops to neutral after 200 ms of silence
+    boot_delay: 2.0         # Uno bootloader window after the port is opened
+    reconnect_period: 1.0
+
+    # Watchdogs
+    command_timeout: 0.2    # neutral if the autonomy stack goes quiet
+    link_timeout: 0.5       # link_ok drops if no status frame arrives
+
+    # Actuator limits.  Start conservative: the VXL-3S on a Slash 4X4 will
+    # happily do 50+ mph at full throttle.
+    max_throttle: 0.25
+    max_steering: 1.0
+    throttle_slew_per_s: 2.0
+
+    # Flip if the servo or ESC is wired opposite to the assumed convention.
+    invert_steering: false
+    invert_throttle: false
+
+    # Bench testing only: set false to pass commands through without waiting
+    # for the Arduino to report AUTO_ACTIVE.
+    require_auto_active: true
+
+cmd_vel_to_drive:
+  ros__parameters:
+    wheelbase: 0.324               # Traxxas Slash 4X4, metres
+    max_speed: 4.0                 # m/s that maps to full throttle
+    max_steering_angle: 0.40       # rad at full lock
+    min_speed_for_steering: 0.3    # floor speed for the bicycle model
+    cmd_timeout: 0.3
+    publish_rate_hz: 50.0
