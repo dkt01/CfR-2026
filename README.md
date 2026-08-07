@@ -61,6 +61,30 @@ Messages transmitted each direction are ASCII serial where fields are comma-sepa
 | 23          | RC - DPad Down        | Boolean   | `0` or `1` | `1` indicates pressed                                                           |
 | 24          | RC - DPad Left        | Boolean   | `0` or `1` | `1` indicates pressed                                                           |
 
+## Onboard Protocol
+
+The robot features an Arduino that controls the car's actuators and an NVIDIA Jetson Orin Nano Super.  The two components communicate over a USB serial interface at 115200 Baud.
+
+Messages transmitted each direction are ASCII serial where fields are comma-separated and messages are separated by a new line character (`\n`).
+
+### Arduino -> Jetson
+
+| Field Index | Description   | Data Type | Data Range | Notes                                                                           |
+| ----------- | ------------- | --------- | ---------- | ------------------------------------------------------------------------------- |
+| 0           | E-Stop State  | Boolean   | `0` or `1` | `1` indicates E-Stop active                                                     |
+| 1           | Auto Arm      | Boolean   | `0` or `1` | `1` indicates autonomous mode active.  `0` indicates RC only                    |
+| 2           | Manual Start  | Boolean   | `0` or `1` | `1` indicates robot should start autonomous driving without visual start signal |
+| 3           | Auto Mode     | Enum      | [0,4]      | `0` E-Stop, `1` RC Armed, `2` RC Active, `3` Auto Armed, `4` Auto Active        |
+| 4           | Battery Level | Integer   | [0,255]    | `0` is empty battery, `255` is full battery.                                    |
+
+### Jetson -> Arduino
+
+| Field Index | Description    | Data Type | Data Range | Notes                                      |
+| ----------- | -------------- | --------- | ---------- | ------------------------------------------ |
+| 0           | Auto Ready     | Boolean   | `0` or `1` | `1` indicates auto control requested       |
+| 1           | Steering Angle | Integer   | [0,255]    | `0` is full right, `255` is full left      |
+| 2           | Velocity       | Integer   | [0,255]    | `0` is full reverse, `255` is full forward |
+
 ## Documentation
 
 * [Traxxas Slash 4X4 VXL Ultimate](https://traxxas.com/media/productattach/C-68277-4/2/68277-4-OM-EN-R01.pdf)
