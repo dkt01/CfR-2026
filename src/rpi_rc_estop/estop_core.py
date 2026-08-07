@@ -4,6 +4,7 @@ box (estop.py) and the laptop terminal emulator (estop_tui.py).
 
 import dataclasses
 import os
+import platform
 import threading
 import time
 import traceback
@@ -236,7 +237,52 @@ PYGAME_BUTTON_MAP = {
     15: "BUTTON_LEFT",
     16: "BUTTON_RIGHT",
 }
+# Windows' XInput compatibility layer enumerates the PS3 controller as an Xbox
+# controller, remapping axis/button indices and reporting L2/R2 as separate
+# trigger axes instead of buttons.
+PYGAME_AXIS_MAP_WINDOWS = {
+    0: "AXIS_LX",
+    1: "AXIS_LY",
+    2: "AXIS_RX",
+    3: "AXIS_RY",
+}
+PYGAME_BUTTON_MAP_WINDOWS = {
+    0: "BUTTON_X",
+    1: "BUTTON_O",
+    2: "BUTTON_SQUARE",
+    3: "BUTTON_TRIANGLE",
+    4: "BUTTON_L1",
+    5: "BUTTON_R1",
+    6: "BUTTON_SELECT",
+    7: "BUTTON_START",
+    8: "BUTTON_L3",
+    9: "BUTTON_R3",
+    10: "BUTTON_PS",
+}
+PYGAME_TRIGGER_AXIS_L2_WINDOWS = 4
+PYGAME_TRIGGER_AXIS_R2_WINDOWS = 5
+# Digital press threshold on the 0-255 scaled trigger pressure.
+PYGAME_TRIGGER_PRESSED_THRESHOLD_WINDOWS = 32
 PYGAME_HAT_INDEX = 0
+
+IS_WINDOWS = platform.system() == "Windows"
+XBOX_CONTROLLER_NAME_TOKENS = ("xbox", "xinput", "x-box")
+PS_CONTROLLER_NAME_TOKENS = ("playstation", "dualshock", "sony", "ps3", "ps4", "ps5")
+
+
+def _useWindowsControllerMap(deviceName: str) -> bool:
+    """Decide whether to use the Windows/Xbox-style axis+button layout.
+
+    Applies whenever the reported device name says Xbox (the case where Windows
+    has remapped a PS3 pad), or on Windows when the name is inconclusive (some
+    drivers don't report a usable name at all).
+    """
+    name = (deviceName or "").lower()
+    if any(token in name for token in XBOX_CONTROLLER_NAME_TOKENS):
+        return True
+    if any(token in name for token in PS_CONTROLLER_NAME_TOKENS):
+        return False
+    return IS_WINDOWS
 
 
 class TimestampedSerial:
@@ -480,9 +526,33 @@ def _scalePygamePressure(value: float) -> int:
     return int(round((max(-1.0, min(1.0, value)) + 1.0) / 2.0 * 255))
 
 
-def _applyPygameState(joystick, controllerState: ControllerState) -> None:
+def _applyWindowsTriggerAxis(
+    joystick,
+    axisIndex: int,
+    controllerState: ControllerState,
+    pressureField: str,
+    buttonField: str,
+) -> None:
+    """Windows reports L2/R2 as separate full-range trigger axes rather than buttons."""
+    if axisIndex >= joystick.get_numaxes():
+        return
+    pressure = _scalePygamePressure(joystick.get_axis(axisIndex))
+    setattr(controllerState, pressureField, pressure)
+    setattr(
+        controllerState,
+        buttonField,
+        pressure > PYGAME_TRIGGER_PRESSED_THRESHOLD_WINDOWS,
+    )
+
+
+def _applyPygameState(
+    joystick, controllerState: ControllerState, useWindowsMap: bool
+) -> None:
+    axisMap = PYGAME_AXIS_MAP_WINDOWS if useWindowsMap else PYGAME_AXIS_MAP
+    buttonMap = PYGAME_BUTTON_MAP_WINDOWS if useWindowsMap else PYGAME_BUTTON_MAP
+
     numAxes = joystick.get_numaxes()
-    for axisIndex, fieldName in PYGAME_AXIS_MAP.items():
+    for axisIndex, fieldName in axisMap.items():
         if axisIndex < numAxes:
             setattr(
                 controllerState,
@@ -491,7 +561,7 @@ def _applyPygameState(joystick, controllerState: ControllerState) -> None:
             )
 
     numButtons = joystick.get_numbuttons()
-    for buttonIndex, fieldName in PYGAME_BUTTON_MAP.items():
+    for buttonIndex, fieldName in buttonMap.items():
         if buttonIndex >= numButtons:
             continue
         pressed = bool(joystick.get_button(buttonIndex))
@@ -500,7 +570,27 @@ def _applyPygameState(joystick, controllerState: ControllerState) -> None:
         if hasattr(controllerState, pressureField):
             setattr(controllerState, pressureField, 255 if pressed else 0)
 
-    if numButtons <= 13 and joystick.get_numhats() > PYGAME_HAT_INDEX:
+    if useWindowsMap:
+        _applyWindowsTriggerAxis(
+            joystick,
+            PYGAME_TRIGGER_AXIS_L2_WINDOWS,
+            controllerState,
+            "PRESSURE_L2",
+            "BUTTON_L2",
+        )
+        _applyWindowsTriggerAxis(
+            joystick,
+            PYGAME_TRIGGER_AXIS_R2_WINDOWS,
+            controllerState,
+            "PRESSURE_R2",
+            "BUTTON_R2",
+        )
+
+    # On the Windows/Xbox layout the dpad is always reported via a hat; on the
+    # default (PS3) layout some drivers instead expose it as buttons 13-16, so
+    # only fall back to the hat there when the button count says it's absent.
+    useHatForDpad = useWindowsMap or numButtons <= 13
+    if useHatForDpad and joystick.get_numhats() > PYGAME_HAT_INDEX:
         hatX, hatY = joystick.get_hat(PYGAME_HAT_INDEX)
         controllerState.PRESSURE_UP = 255 if hatY > 0 else 0
         controllerState.PRESSURE_DOWN = 255 if hatY < 0 else 0
@@ -532,10 +622,12 @@ def controllerControlPygame(
         pygame.joystick.init()
 
         joystick = None
+        useWindowsMap = False
         if pygame.joystick.get_count() > 0:
             joystick = pygame.joystick.Joystick(0)
             joystick.init()
             print("New controller @", joystick.get_name())
+            useWindowsMap = _useWindowsControllerMap(joystick.get_name())
             with controllerMutex:
                 controllerState.device_name = joystick.get_name()
 
@@ -548,7 +640,7 @@ def controllerControlPygame(
             try:
                 pygame.event.pump()
                 with controllerMutex:
-                    _applyPygameState(joystick, controllerState)
+                    _applyPygameState(joystick, controllerState, useWindowsMap)
                 latestEvent = time.monotonic()
             except pygame.error:
                 break

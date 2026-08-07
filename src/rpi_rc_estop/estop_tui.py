@@ -220,6 +220,10 @@ def renderLoop(
     console = Console()
     console.set_window_title(TUI_TITLE)
 
+    # Starts False so a not-yet-discovered controller at launch doesn't read as
+    # a disconnect and slam the estop on before the operator has done anything.
+    controllerWasConnected = False
+
     try:
         with Live(console=console, screen=True, refresh_per_second=REFRESH_HZ) as live:
             while runEvent.is_set():
@@ -230,6 +234,13 @@ def renderLoop(
                         and time.monotonic() - lastEnterTime[0] >= MANUAL_START_TIMEOUT
                     ):
                         inputState.manual_start = False
+
+                with controllerStateMutex:
+                    controllerConnected = controllerState.comms_ok
+                if controllerWasConnected and not controllerConnected:
+                    with inputStateMutex:
+                        inputState.estop = True
+                controllerWasConnected = controllerConnected
 
                 if quitConfirmEvent.is_set():
                     panel = render_quit_confirm()
