@@ -17,7 +17,9 @@ def generate_launch_description():
         "device", default_value="/dev/ttyACM0", description="Arduino USB serial device"
     )
     params_arg = DeclareLaunchArgument(
-        "params_file", default_value=params_file, description="Parameter file for both nodes"
+        "params_file",
+        default_value=params_file,
+        description="Parameter file for both nodes",
     )
     cmd_vel_arg = DeclareLaunchArgument(
         "use_cmd_vel",
@@ -47,4 +49,6 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration("use_cmd_vel")),
     )
 
-    return LaunchDescription([device_arg, params_arg, cmd_vel_arg, bridge, cmd_vel_to_drive])
+    return LaunchDescription(
+        [device_arg, params_arg, cmd_vel_arg, bridge, cmd_vel_to_drive]
+    )

@@ -68,9 +68,20 @@ def _handle_sigterm(signum, frame):
 def main():
     signal.signal(signal.SIGTERM, _handle_sigterm)
 
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--link", default=DEFAULT_LINK, help=f"symlink to the PTY (default: {DEFAULT_LINK})")
-    parser.add_argument("--battery", type=int, default=200, help="reported battery level, 0-255 (default: 200)")
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--link",
+        default=DEFAULT_LINK,
+        help=f"symlink to the PTY (default: {DEFAULT_LINK})",
+    )
+    parser.add_argument(
+        "--battery",
+        type=int,
+        default=200,
+        help="reported battery level, 0-255 (default: 200)",
+    )
     args = parser.parse_args()
 
     if not 0 <= args.battery <= 255:
@@ -85,7 +96,9 @@ def main():
     os.symlink(slave_path, args.link)
 
     print(f"fake Arduino on {slave_path} (linked from {args.link})")
-    print("WARNING: no real actuators, no real E-Stop -- only simulates the Jetson-side auto-arm handshake")
+    print(
+        "WARNING: no real actuators, no real E-Stop -- only simulates the Jetson-side auto-arm handshake"
+    )
     print("Ctrl-C to stop")
     sys.stdout.flush()
 
@@ -114,7 +127,12 @@ def main():
                     if frame is None:
                         continue
                     auto_ready, steering, throttle = frame
-                    if mode == MODE_AUTO_ARMED and auto_ready and is_centered(steering) and is_centered(throttle):
+                    if (
+                        mode == MODE_AUTO_ARMED
+                        and auto_ready
+                        and is_centered(steering)
+                        and is_centered(throttle)
+                    ):
                         mode = MODE_AUTO_ACTIVE
 
             now = time.monotonic()

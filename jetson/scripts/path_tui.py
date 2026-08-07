@@ -23,14 +23,20 @@ try:
     from rclpy.action import ActionClient
     from rclpy.node import Node
 except ImportError:
-    print("error: rclpy not found.  source /opt/ros/<distro>/setup.bash first", file=sys.stderr)
+    print(
+        "error: rclpy not found.  source /opt/ros/<distro>/setup.bash first",
+        file=sys.stderr,
+    )
     sys.exit(1)
 
 try:
     from cfr_interfaces.action import DrivePath
     from cfr_interfaces.msg import PathSegment
 except ImportError:
-    print("error: cfr_interfaces not found.  source the workspace's install/setup.bash first", file=sys.stderr)
+    print(
+        "error: cfr_interfaces not found.  source the workspace's install/setup.bash first",
+        file=sys.stderr,
+    )
     sys.exit(1)
 
 
@@ -120,24 +126,36 @@ class PathTui:
         goal = build_goal(self.segments)
         self.state = "SENDING"
         self.status_message = "sending goal..."
-        self.goal_future = self.client.send_goal_async(goal, feedback_callback=self.on_feedback)
+        self.goal_future = self.client.send_goal_async(
+            goal, feedback_callback=self.on_feedback
+        )
 
     def on_feedback(self, feedback_msg):
         self.latest_feedback = feedback_msg.feedback
 
     def poll_futures(self):
-        if self.state == "SENDING" and self.goal_future is not None and self.goal_future.done():
+        if (
+            self.state == "SENDING"
+            and self.goal_future is not None
+            and self.goal_future.done()
+        ):
             self.goal_handle = self.goal_future.result()
             if not self.goal_handle.accepted:
                 self.state = "DONE"
                 self.result = None
-                self.status_message = "REJECTED (a goal may already be running, or odometry is stale)"
+                self.status_message = (
+                    "REJECTED (a goal may already be running, or odometry is stale)"
+                )
             else:
                 self.result_future = self.goal_handle.get_result_async()
                 self.state = "EXECUTING"
                 self.status_message = ""
 
-        if self.state == "EXECUTING" and self.result_future is not None and self.result_future.done():
+        if (
+            self.state == "EXECUTING"
+            and self.result_future is not None
+            and self.result_future.done()
+        ):
             self.result = self.result_future.result().result
             self.state = "DONE"
 
@@ -192,7 +210,9 @@ class PathTui:
             self.flash_error("distance must be nonzero")
             return
         meters = feet * FEET_TO_METERS
-        self.segments.append(Segment("STRAIGHT", meters, f"STRAIGHT  {feet:+.2f} ft   ({meters:+.3f} m)"))
+        self.segments.append(
+            Segment("STRAIGHT", meters, f"STRAIGHT  {feet:+.2f} ft   ({meters:+.3f} m)")
+        )
         self.status_message = ""
 
     def add_turn(self):
@@ -208,7 +228,9 @@ class PathTui:
             self.flash_error("turn angle must be nonzero")
             return
         if abs(degrees) > 180.0:
-            self.flash_error("turn angle must be within +/-180 deg; split into multiple segments")
+            self.flash_error(
+                "turn angle must be within +/-180 deg; split into multiple segments"
+            )
             return
         radians = degrees * DEG_TO_RAD
         direction = "left" if degrees > 0 else "right"
@@ -237,7 +259,9 @@ class PathTui:
             if not self.segments:
                 self.flash_error("add at least one segment first")
             elif not self.client.server_is_ready():
-                self.flash_error("action server not available -- is path_follower_node running?")
+                self.flash_error(
+                    "action server not available -- is path_follower_node running?"
+                )
             else:
                 self.status_message = ""
                 self.send_goal()
@@ -314,7 +338,9 @@ class PathTui:
             self.stdscr.addstr("   [t] add ")
             self.stdscr.addstr("turn", self.colors.get("TURN", 0))
             self.stdscr.addstr("   [d] delete last   [c] clear all")
-            self.stdscr.addstr(footer_row + 1, 0, "[g]/[Enter] SEND and execute        [q] quit")
+            self.stdscr.addstr(
+                footer_row + 1, 0, "[g]/[Enter] SEND and execute        [q] quit"
+            )
 
         elif self.state in ("SENDING", "EXECUTING"):
             self.stdscr.addstr(4, 0, self.state + "...")
@@ -334,13 +360,17 @@ class PathTui:
                     color,
                 )
             footer_row = height - 4
-            self.stdscr.addstr(footer_row, 0, "[x] cancel        [q] quit (cancels first)")
+            self.stdscr.addstr(
+                footer_row, 0, "[x] cancel        [q] quit (cancels first)"
+            )
 
         elif self.state == "DONE":
             if self.result is not None:
                 outcome = "SUCCESS" if self.result.success else "FAILED"
                 color = self.colors.get("ok" if self.result.success else "fail", 0)
-                self.stdscr.addstr(4, 0, f"result: {outcome} - {self.result.message}", color)
+                self.stdscr.addstr(
+                    4, 0, f"result: {outcome} - {self.result.message}", color
+                )
             else:
                 self.stdscr.addstr(4, 0, "result: REJECTED", self.colors.get("fail", 0))
             self.stdscr.addstr(6, 0, "press any key to build another path")
@@ -401,9 +431,13 @@ def main(stdscr, action_name):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument(
-        "--action", default="/path_follower/drive_path", help="DrivePath action name (default: %(default)s)"
+        "--action",
+        default="/path_follower/drive_path",
+        help="DrivePath action name (default: %(default)s)",
     )
     cli_args, _ros_args = parser.parse_known_args()
 
