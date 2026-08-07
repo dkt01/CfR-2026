@@ -15,13 +15,11 @@ using cfr_arduino_bridge::Mode;
 using cfr_arduino_bridge::NormalizedToCommand;
 using cfr_arduino_bridge::Serialize;
 
-TEST(Serialize, NeutralFrame)
-{
+TEST(Serialize, NeutralFrame) {
   EXPECT_EQ(Serialize(JetsonToArduino{}), "0,127,127\n");
 }
 
-TEST(Serialize, ReadyFrame)
-{
+TEST(Serialize, ReadyFrame) {
   JetsonToArduino command;
   command.auto_ready = true;
   command.steering = 200;
@@ -32,12 +30,9 @@ TEST(Serialize, ReadyFrame)
 // The Arduino's FromJetson::deSerialize() rejects payloads outside [6, 11]
 // characters once readBytesUntil() has stripped the newline.  Zero padding
 // keeps every frame at a legal, constant width.
-TEST(Serialize, AlwaysWithinArduinoLengthLimits)
-{
-  for (int steering = 0; steering <= 255; ++steering)
-  {
-    for (int throttle : {0, 1, 9, 10, 99, 100, 127, 255})
-    {
+TEST(Serialize, AlwaysWithinArduinoLengthLimits) {
+  for (int steering = 0; steering <= 255; ++steering) {
+    for (int throttle : {0, 1, 9, 10, 99, 100, 127, 255}) {
       JetsonToArduino command;
       command.steering = static_cast<uint8_t>(steering);
       command.throttle = static_cast<uint8_t>(throttle);
@@ -50,8 +45,7 @@ TEST(Serialize, AlwaysWithinArduinoLengthLimits)
   }
 }
 
-TEST(Deserialize, TrailingCommaFrameFromArduino)
-{
+TEST(Deserialize, TrailingCommaFrameFromArduino) {
   // ToJetson::serialize() emits a comma after every field, including the last.
   ArduinoToJetson status;
   ASSERT_TRUE(Deserialize("1,0,1,4,200,", status));
@@ -62,16 +56,14 @@ TEST(Deserialize, TrailingCommaFrameFromArduino)
   EXPECT_EQ(status.battery_level, 200);
 }
 
-TEST(Deserialize, WithoutTrailingComma)
-{
+TEST(Deserialize, WithoutTrailingComma) {
   ArduinoToJetson status;
   ASSERT_TRUE(Deserialize("0,1,0,3,255", status));
   EXPECT_EQ(status.mode, Mode::kAutoArmed);
   EXPECT_EQ(status.battery_level, 255);
 }
 
-TEST(Deserialize, RejectsMalformedFrames)
-{
+TEST(Deserialize, RejectsMalformedFrames) {
   ArduinoToJetson status;
   EXPECT_FALSE(Deserialize("", status));
   EXPECT_FALSE(Deserialize("0,1,0,3", status)) << "too few fields";
@@ -82,8 +74,7 @@ TEST(Deserialize, RejectsMalformedFrames)
   EXPECT_FALSE(Deserialize("0,1,0,3,2a5", status)) << "non-numeric battery";
 }
 
-TEST(Deserialize, LeavesOutputUntouchedOnFailure)
-{
+TEST(Deserialize, LeavesOutputUntouchedOnFailure) {
   ArduinoToJetson status;
   ASSERT_TRUE(Deserialize("1,1,1,4,42", status));
   ASSERT_FALSE(Deserialize("garbage", status));
@@ -91,15 +82,13 @@ TEST(Deserialize, LeavesOutputUntouchedOnFailure)
   EXPECT_EQ(status.battery_level, 42);
 }
 
-TEST(NormalizedToCommand, EndpointsAndCenter)
-{
+TEST(NormalizedToCommand, EndpointsAndCenter) {
   EXPECT_EQ(NormalizedToCommand(0.0), kNeutralCommand);
   EXPECT_EQ(NormalizedToCommand(1.0), 255);
   EXPECT_EQ(NormalizedToCommand(-1.0), 0);
 }
 
-TEST(NormalizedToCommand, ClampsOutOfRangeAndNan)
-{
+TEST(NormalizedToCommand, ClampsOutOfRangeAndNan) {
   EXPECT_EQ(NormalizedToCommand(5.0), 255);
   EXPECT_EQ(NormalizedToCommand(-5.0), 0);
   EXPECT_EQ(NormalizedToCommand(std::nan("")), kNeutralCommand);
@@ -107,8 +96,7 @@ TEST(NormalizedToCommand, ClampsOutOfRangeAndNan)
 
 // Small commands must not land inside the Arduino's arming deadband silently,
 // and neutral must always be inside it.
-TEST(NormalizedToCommand, NeutralIsInsideArmingDeadband)
-{
+TEST(NormalizedToCommand, NeutralIsInsideArmingDeadband) {
   EXPECT_TRUE(IsNearlyCenter(NormalizedToCommand(0.0)));
   EXPECT_FALSE(IsNearlyCenter(NormalizedToCommand(0.5)));
   EXPECT_FALSE(IsNearlyCenter(NormalizedToCommand(-0.5)));

@@ -13,53 +13,45 @@ using cfr_arduino_bridge::SegmentType;
 using cfr_arduino_bridge::WrapToPi;
 using cfr_arduino_bridge::YawFromQuaternion;
 
-namespace
-{
-  constexpr double kTolerance = 1e-6;
+namespace {
+constexpr double kTolerance = 1e-6;
 
-  // Quaternion for a pure yaw rotation.
-  void YawQuaternion(double yaw, double &w, double &x, double &y, double &z)
-  {
-    w = std::cos(yaw / 2.0);
-    x = 0.0;
-    y = 0.0;
-    z = std::sin(yaw / 2.0);
-  }
+// Quaternion for a pure yaw rotation.
+void YawQuaternion(double yaw, double &w, double &x, double &y, double &z) {
+  w = std::cos(yaw / 2.0);
+  x = 0.0;
+  y = 0.0;
+  z = std::sin(yaw / 2.0);
+}
 } // namespace
 
-TEST(YawFromQuaternionTest, Identity)
-{
+TEST(YawFromQuaternionTest, Identity) {
   EXPECT_NEAR(YawFromQuaternion(1.0, 0.0, 0.0, 0.0), 0.0, kTolerance);
 }
 
-TEST(YawFromQuaternionTest, NinetyDegreesLeft)
-{
+TEST(YawFromQuaternionTest, NinetyDegreesLeft) {
   double w, x, y, z;
   YawQuaternion(kPi / 2.0, w, x, y, z);
   EXPECT_NEAR(YawFromQuaternion(w, x, y, z), kPi / 2.0, kTolerance);
 }
 
-TEST(YawFromQuaternionTest, NinetyDegreesRight)
-{
+TEST(YawFromQuaternionTest, NinetyDegreesRight) {
   double w, x, y, z;
   YawQuaternion(-kPi / 2.0, w, x, y, z);
   EXPECT_NEAR(YawFromQuaternion(w, x, y, z), -kPi / 2.0, kTolerance);
 }
 
-TEST(WrapToPiTest, WithinRangeUnchanged)
-{
+TEST(WrapToPiTest, WithinRangeUnchanged) {
   EXPECT_NEAR(WrapToPi(0.5), 0.5, kTolerance);
   EXPECT_NEAR(WrapToPi(-0.5), -0.5, kTolerance);
 }
 
-TEST(WrapToPiTest, WrapsPastPi)
-{
+TEST(WrapToPiTest, WrapsPastPi) {
   EXPECT_NEAR(WrapToPi(3.0 * kPi / 2.0), -kPi / 2.0, kTolerance);
   EXPECT_NEAR(WrapToPi(-3.0 * kPi / 2.0), kPi / 2.0, kTolerance);
 }
 
-TEST(ComputeSegmentCommandTest, StraightMidway)
-{
+TEST(ComputeSegmentCommandTest, StraightMidway) {
   Segment segment;
   segment.type = SegmentType::kStraight;
   segment.distance = 1.0;
@@ -75,8 +67,7 @@ TEST(ComputeSegmentCommandTest, StraightMidway)
   EXPECT_NEAR(cmd.angular_z, 0.0, kTolerance);
 }
 
-TEST(ComputeSegmentCommandTest, StraightReachesTolerance)
-{
+TEST(ComputeSegmentCommandTest, StraightReachesTolerance) {
   Segment segment;
   segment.type = SegmentType::kStraight;
   segment.distance = 1.0;
@@ -90,8 +81,7 @@ TEST(ComputeSegmentCommandTest, StraightReachesTolerance)
   EXPECT_TRUE(cmd.complete);
 }
 
-TEST(ComputeSegmentCommandTest, StraightCorrectsHeadingDrift)
-{
+TEST(ComputeSegmentCommandTest, StraightCorrectsHeadingDrift) {
   Segment segment;
   segment.type = SegmentType::kStraight;
   segment.distance = 1.0;
@@ -106,8 +96,7 @@ TEST(ComputeSegmentCommandTest, StraightCorrectsHeadingDrift)
   EXPECT_LT(cmd.angular_z, 0.0);
 }
 
-TEST(ComputeSegmentCommandTest, StraightDeceleratesNearTarget)
-{
+TEST(ComputeSegmentCommandTest, StraightDeceleratesNearTarget) {
   Segment segment;
   segment.type = SegmentType::kStraight;
   segment.distance = 1.0;
@@ -122,8 +111,7 @@ TEST(ComputeSegmentCommandTest, StraightDeceleratesNearTarget)
   EXPECT_GE(cmd.linear_x, params.min_creep_speed);
 }
 
-TEST(ComputeSegmentCommandTest, StraightReverse)
-{
+TEST(ComputeSegmentCommandTest, StraightReverse) {
   Segment segment;
   segment.type = SegmentType::kStraight;
   segment.distance = -1.0;
@@ -137,8 +125,7 @@ TEST(ComputeSegmentCommandTest, StraightReverse)
   EXPECT_LT(cmd.linear_x, 0.0);
 }
 
-TEST(ComputeSegmentCommandTest, TurnLeftKeepsMovingUntilComplete)
-{
+TEST(ComputeSegmentCommandTest, TurnLeftKeepsMovingUntilComplete) {
   Segment segment;
   segment.type = SegmentType::kTurn;
   segment.turn_angle = kPi / 2.0; // 90 degrees left
@@ -154,8 +141,7 @@ TEST(ComputeSegmentCommandTest, TurnLeftKeepsMovingUntilComplete)
   EXPECT_GT(cmd.linear_x, 0.0);
 }
 
-TEST(ComputeSegmentCommandTest, TurnRightNegativeRate)
-{
+TEST(ComputeSegmentCommandTest, TurnRightNegativeRate) {
   Segment segment;
   segment.type = SegmentType::kTurn;
   segment.turn_angle = -kPi / 2.0; // 90 degrees right
@@ -170,8 +156,7 @@ TEST(ComputeSegmentCommandTest, TurnRightNegativeRate)
   EXPECT_GT(cmd.linear_x, 0.0);
 }
 
-TEST(ComputeSegmentCommandTest, TurnCompletesAtTarget)
-{
+TEST(ComputeSegmentCommandTest, TurnCompletesAtTarget) {
   Segment segment;
   segment.type = SegmentType::kTurn;
   segment.turn_angle = kPi / 2.0;
@@ -184,8 +169,7 @@ TEST(ComputeSegmentCommandTest, TurnCompletesAtTarget)
   EXPECT_TRUE(cmd.complete);
 }
 
-TEST(ComputeSegmentCommandTest, TurnCorrectsBackOnOvershoot)
-{
+TEST(ComputeSegmentCommandTest, TurnCorrectsBackOnOvershoot) {
   Segment segment;
   segment.type = SegmentType::kTurn;
   segment.turn_angle = kPi / 2.0;
@@ -200,14 +184,15 @@ TEST(ComputeSegmentCommandTest, TurnCorrectsBackOnOvershoot)
   EXPECT_LE(cmd.progress, 1.0);
 }
 
-TEST(ComputeSegmentCommandTest, TurnDeceleratesNearTarget)
-{
+TEST(ComputeSegmentCommandTest, TurnDeceleratesNearTarget) {
   Segment segment;
   segment.type = SegmentType::kTurn;
   segment.turn_angle = kPi / 2.0;
   Pose2D start;
   Pose2D current;
-  current.yaw = kPi / 2.0 - 0.1; // 0.1 rad remaining, inside the default 0.3 rad decel window
+  current.yaw =
+      kPi / 2.0 -
+      0.1; // 0.1 rad remaining, inside the default 0.3 rad decel window
   ControllerParams params;
 
   const auto cmd = ComputeSegmentCommand(segment, start, current, params);
