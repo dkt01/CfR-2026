@@ -6,8 +6,8 @@ Traxxas Slash 4X4 through the Arduino over the USB serial link described in the
 
 | Package | Contents |
 | ------- | -------- |
-| [`cfr_interfaces`](cfr_interfaces/) | `DriveCommand` and `ArduinoStatus` message definitions |
-| [`cfr_arduino_bridge`](cfr_arduino_bridge/) | `arduino_bridge_node` and `cmd_vel_to_drive_node` |
+| [`cfr_interfaces`](cfr_interfaces/) | `DriveCommand`, `ArduinoStatus`, `PathSegment` messages; `DrivePath` action |
+| [`cfr_arduino_bridge`](cfr_arduino_bridge/) | `arduino_bridge_node`, `cmd_vel_to_drive_node`, `path_follower_node` |
 
 ## Nodes
 
@@ -50,6 +50,104 @@ Skip this node entirely if the autonomy stack publishes `DriveCommand` directly:
 ```bash
 ros2 launch cfr_arduino_bridge arduino_bridge.launch.py use_cmd_vel:=false
 ```
+
+### `path_follower_node`
+
+Drives a fixed sequence of straight/turn segments -- e.g. an L-shape -- using
+odometry for closed-loop feedback, and publishes `cmd_vel` like a human
+operator would. Sits upstream of `cmd_vel_to_drive_node` and knows nothing
+about the vehicle's wheelbase or the wire protocol.
+
+| Interface | Type | Direction |
+| --------- | ---- | --------- |
+| `~/odom` | `nav_msgs/Odometry` | subscribed (remapped to `/zed/zed_node/odom`) |
+| `cmd_vel` | `geometry_msgs/Twist` | published (remapped to `/cmd_vel`) |
+| `~/drive_path` | `cfr_interfaces/action/DrivePath` | action server |
+
+The vehicle is Ackermann and cannot rotate in place, so a `PathSegment` is one
+of two kinds, and a turn is physically driven as an arc rather than a spin:
+
+* `STRAIGHT` -- drive `distance` metres, holding the heading measured at the
+  start of the segment with a P controller.
+* `TURN` -- drive at `turn_speed` while yawing at `turn_rate` until heading has
+  rotated by `turn_angle` radians (positive is left, REP-103). Segments must
+  satisfy `|turn_angle| <= pi`; split larger turns into multiple segments.
+
+Both segment types decelerate as they approach their target and reject goals
+with an empty segment list. The goal aborts if odometry is stale when it
+starts or goes stale mid-path (`odom_timeout`), or if a segment does not
+complete within `max_segment_duration` (wheel slip, stuck odometry). Only one
+goal runs at a time; a second is rejected outright rather than queued.
+
+```bash
+ros2 launch cfr_arduino_bridge path_follower.launch.py
+```
+
+Drive the L-shape from the top of this file (5 ft straight, 90 deg right, 2 ft
+straight; feet converted to metres):
+
+```bash
+ros2 action send_goal /path_follower/drive_path cfr_interfaces/action/DrivePath \
+  "{segments: [
+     {type: 0, distance: 1.524},
+     {type: 1, turn_angle: -1.5708},
+     {type: 0, distance: 0.610}
+  ]}" --feedback
+```
+
+`--feedback` prints `current_segment` / `segment_progress` as it runs. Ctrl-C on
+that `send_goal` process sends a cancel request, which brings the car to a stop
+within one control tick.
+
+#### `path_tui.py`
+
+[`scripts/path_tui.py`](scripts/path_tui.py) is a terminal UI for building a
+segment list and sending it, instead of hand-writing the `send_goal` YAML
+above. Needs the workspace sourced first:
+
+```bash
+source ~/ros2_ws/install/setup.bash
+~/software/scripts/path_tui.py                              # default action name
+~/software/scripts/path_tui.py --action /other_ns/drive_path
+```
+
+| Key | Action |
+| --- | ------ |
+| `s` | add a `STRAIGHT` segment (prompts for distance in feet, `+` forward / `-` reverse) |
+| `t` | add a `TURN` segment (prompts for angle in degrees, `+` left / `-` right) |
+| `d` | delete the last segment |
+| `c` | clear all segments |
+| `g` / Enter | send the goal and switch to a live progress view |
+| `x` | cancel while executing |
+| `q` | quit (cancels first if a goal is executing) |
+
+Distance and angle are entered in feet/degrees for readability and converted
+to the action's metres/radians internally. Segments are kept after a run
+completes so a failed or canceled path can be resent as-is. Ctrl-C at any
+point cancels an in-flight goal before exiting, the same as `q` -- closing the
+TUI should stop the car, not abandon it mid-path.
+
+`STRAIGHT` segments are green and `TURN` segments are yellow, in both the
+segment list and the live progress bar during execution; the result screen is
+green on success, red on failure/rejection. Falls back to plain text on a
+terminal without color support.
+
+For a single command that brings up the actuator link, ZED, and
+`path_follower_node` and then drops straight into the TUI, use
+[`scripts/launchPathFollowingTUI.sh`](scripts/launchPathFollowingTUI.sh):
+
+```bash
+~/software/scripts/launchPathFollowingTUI.sh
+~/software/scripts/launchPathFollowingTUI.sh --device /dev/ttyACM1
+~/software/scripts/launchPathFollowingTUI.sh --no-stack       # bridge/ZED already up elsewhere
+~/software/scripts/launchPathFollowingTUI.sh --fake-arduino   # no Arduino attached
+```
+
+It starts `launch.sh` and `path_follower.launch.py` in the background (logs go
+to `/tmp/cfr_path_following/*.log`, keeping the TUI's screen clean) and runs
+the TUI in the foreground. Quitting the TUI, or Ctrl-C, tears both background
+launches down -- the same fate-sharing `launch.sh` itself uses for the bridge
+and ZED.
 
 ## Wire format
 
@@ -117,8 +215,9 @@ have to be copied or symlinked into the workspace `src/`. When building from a
 clone rather than a sync, add `--symlink-install` to pick up edits to the launch
 file and config without rebuilding.
 
-`test_protocol` covers the wire format and `test_serial_port` runs the port
-against a pseudo terminal, so both pass with no Arduino attached.
+`test_protocol` covers the wire format, `test_serial_port` runs the port
+against a pseudo terminal, and `test_path_geometry` covers `path_follower_node`'s
+control law -- all three pass with no Arduino, camera, or car attached.
 
 Built executables land in `build/cfr_arduino_bridge/bin/` and are installed to
 both `install/cfr_arduino_bridge/bin/` and `install/cfr_arduino_bridge/lib/cfr_arduino_bridge/`.
@@ -166,6 +265,29 @@ the user is not in `dialout`, or `ModemManager` is probing the port.
 `--skip-checks` bypasses them. The ZED node comes from `zed_wrapper`, built per
 [../zed/README.md](../zed/README.md); `--no-zed` runs without it.
 
+### No Arduino attached
+
+```bash
+~/software/scripts/launch.sh --fake-arduino --no-zed
+```
+
+Runs [`scripts/fake_arduino.py`](scripts/fake_arduino.py) -- a PTY that speaks
+just enough of the onboard protocol to unblock `arduino_bridge_node`'s
+`AUTO_ARMED -> AUTO_ACTIVE` handshake (`auto_ready=1` with both axes centered)
+-- and points the bridge at it instead of a real device. **This does not
+simulate the offboard XBee/RC/E-Stop link**, which the real sketch's mode state
+machine is also gated on (`offboardTimedOut` forces `Mode::ESTOP` regardless of
+what the Jetson sends) and which has no code in this repo yet. Use it to
+exercise message flow through `arduino_bridge_node` /
+`cmd_vel_to_drive_node` / `path_follower_node` with no hardware attached, not
+as a stand-in for a safety-validated bench session -- there are no real
+actuators and no real E-Stop behind it. Can also be run standalone:
+
+```bash
+python3 scripts/fake_arduino.py                                # creates /tmp/fake_arduino
+~/software/scripts/launch.sh --device /tmp/fake_arduino --skip-checks
+```
+
 Underneath it is just:
 
 ```bash
@@ -197,3 +319,7 @@ ros2 topic pub -r 20 /cmd_vel geometry_msgs/msg/Twist \
    the expected directions. Flip `invert_steering` / `invert_throttle` if not.
 5. Kill the publisher and confirm the car returns to neutral within
    `command_timeout`.
+6. For `path_follower_node`: confirm `ros2 topic echo /zed/zed_node/odom` is
+   publishing, then send a short single `STRAIGHT` segment on a stand and
+   check the wheels turn the right way for the whole segment (not just at the
+   start) before ever sending a `TURN` segment or running on the ground.

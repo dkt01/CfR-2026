@@ -22,6 +22,7 @@ USE_CMD_VEL=true
 USE_ZED=true
 USE_BRIDGE=true
 USE_ROSBOARD=false
+USE_FAKE_ARDUINO=false
 SKIP_CHECKS=false
 EXTRA_ARGS=()
 
@@ -40,6 +41,9 @@ Options:
       --no-bridge      Do not start the Arduino bridge
       --no-cmd-vel     Do not start cmd_vel_to_drive_node
       --rosboard       Also start rosboard from $ROSBOARD_DIR
+      --fake-arduino   No Arduino attached: run fake_arduino.py instead and point the
+                      bridge at it.  Simulates the auto-arm handshake only -- no real
+                      actuators, no real E-Stop.  See fake_arduino.py --help.
       --skip-checks    Skip the preflight checks
   -h, --help           This message
 
@@ -49,6 +53,7 @@ Examples:
   $(basename "$0")
   $(basename "$0") --no-zed --device /dev/ttyACM1
   $(basename "$0") --rosboard
+  $(basename "$0") --fake-arduino --no-zed
   $(basename "$0") max_throttle:=0.15
 EOF
 }
@@ -79,6 +84,10 @@ while [[ $# -gt 0 ]]; do
             USE_ROSBOARD=true
             shift
             ;;
+        --fake-arduino)
+            USE_FAKE_ARDUINO=true
+            shift
+            ;;
         --skip-checks)
             SKIP_CHECKS=true
             shift
@@ -104,6 +113,21 @@ if [[ "$USE_BRIDGE" != true && "$USE_ZED" != true ]]; then
     exit 2
 fi
 
+# Set up cleanup before anything gets backgrounded (fake_arduino.py, below),
+# so it's torn down even if a later check exits.
+PIDS=()
+
+cleanup() {
+    trap - EXIT INT TERM
+    for pid in ${PIDS[@]+"${PIDS[@]}"}; do
+        kill "$pid" 2>/dev/null || true
+    done
+    for pid in ${PIDS[@]+"${PIDS[@]}"}; do
+        wait "$pid" 2>/dev/null || true
+    done
+}
+trap cleanup EXIT INT TERM
+
 if [[ ! -f "/opt/ros/$ROS_DISTRO_NAME/setup.bash" ]]; then
     echo "error: ROS 2 $ROS_DISTRO_NAME not found at /opt/ros/$ROS_DISTRO_NAME" >&2
     exit 1
@@ -114,10 +138,17 @@ if [[ ! -f "$ROS2_WS/install/setup.bash" ]]; then
     exit 1
 fi
 
-if [[ "$SKIP_CHECKS" != true && "$USE_BRIDGE" == true ]]; then
+if [[ "$USE_BRIDGE" == true && "$USE_FAKE_ARDUINO" == true ]]; then
+    echo "WARNING: --fake-arduino -- no real actuators, no real E-Stop.  bench/dev only."
+    "$SCRIPT_DIR/fake_arduino.py" --link /tmp/fake_arduino &
+    PIDS+=("$!")
+    DEVICE=/tmp/fake_arduino
+    sleep 0.5  # let it create the symlink before the bridge tries to open it
+elif [[ "$SKIP_CHECKS" != true && "$USE_BRIDGE" == true ]]; then
     if [[ ! -e "$DEVICE" ]]; then
         echo "error: $DEVICE does not exist.  is the Arduino plugged in?" >&2
         echo "       available: $(ls /dev/ttyACM* /dev/ttyUSB* 2>/dev/null | tr '\n' ' ')" >&2
+        echo "       no hardware to test with?  try --fake-arduino" >&2
         exit 1
     fi
 
@@ -154,19 +185,6 @@ if [[ "$USE_ROSBOARD" == true && ! -x "$ROSBOARD_DIR/run" ]]; then
     echo "error: rosboard not found at $ROSBOARD_DIR" >&2
     exit 1
 fi
-
-PIDS=()
-
-cleanup() {
-    trap - EXIT INT TERM
-    for pid in ${PIDS[@]+"${PIDS[@]}"}; do
-        kill "$pid" 2>/dev/null || true
-    done
-    for pid in ${PIDS[@]+"${PIDS[@]}"}; do
-        wait "$pid" 2>/dev/null || true
-    done
-}
-trap cleanup EXIT INT TERM
 
 # The bridge comes up first: it starts feeding the Arduino neutral commands
 # immediately, so the car sits in a known state while the camera initializes.

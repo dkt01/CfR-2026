@@ -19,11 +19,14 @@
 #include "geometry_msgs/msg/twist.hpp"
 #include "rclcpp/rclcpp.hpp"
 
-namespace cfr_arduino_bridge {
+namespace cfr_arduino_bridge
+{
 
-  class CmdVelToDriveNode : public rclcpp::Node {
-   public:
-    CmdVelToDriveNode() : rclcpp::Node("cmd_vel_to_drive") {
+  class CmdVelToDriveNode : public rclcpp::Node
+  {
+  public:
+    CmdVelToDriveNode() : rclcpp::Node("cmd_vel_to_drive")
+    {
       wheelbase_ = declare_parameter<double>("wheelbase", 0.324);
       max_speed_ = declare_parameter<double>("max_speed", 4.0);
       max_steering_angle_ = declare_parameter<double>("max_steering_angle", 0.40);
@@ -31,20 +34,22 @@ namespace cfr_arduino_bridge {
       cmd_timeout_ = declare_parameter<double>("cmd_timeout", 0.3);
       publish_rate_hz_ = declare_parameter<double>("publish_rate_hz", 50.0);
 
-      if (max_speed_ <= 0.0 || max_steering_angle_ <= 0.0 || wheelbase_ <= 0.0) {
+      if (max_speed_ <= 0.0 || max_steering_angle_ <= 0.0 || wheelbase_ <= 0.0)
+      {
         RCLCPP_FATAL(get_logger(), "wheelbase, max_speed and max_steering_angle must all be positive");
         throw std::invalid_argument("invalid vehicle parameters");
       }
 
       publisher_ = create_publisher<cfr_interfaces::msg::DriveCommand>("drive_cmd", rclcpp::SensorDataQoS());
       subscription_ = create_subscription<geometry_msgs::msg::Twist>(
-          "cmd_vel", rclcpp::SensorDataQoS(), [this](const geometry_msgs::msg::Twist::SharedPtr msg) {
+          "cmd_vel", rclcpp::SensorDataQoS(), [this](const geometry_msgs::msg::Twist::SharedPtr msg)
+          {
             last_twist_ = *msg;
-            last_twist_time_ = now();
-          });
+            last_twist_time_ = now(); });
 
       const auto period = std::chrono::duration<double>(1.0 / std::max(publish_rate_hz_, 1.0));
-      timer_ = create_wall_timer(std::chrono::duration_cast<std::chrono::nanoseconds>(period), [this] { OnTimer(); });
+      timer_ = create_wall_timer(std::chrono::duration_cast<std::chrono::nanoseconds>(period), [this]
+                                 { OnTimer(); });
 
       RCLCPP_INFO(get_logger(),
                   "cmd_vel_to_drive: wheelbase=%.3f m max_speed=%.2f m/s max_steer=%.2f rad",
@@ -53,8 +58,9 @@ namespace cfr_arduino_bridge {
                   max_steering_angle_);
     }
 
-   private:
-    void OnTimer() {
+  private:
+    void OnTimer()
+    {
       const rclcpp::Time stamp = now();
       const bool fresh = last_twist_time_.nanoseconds() != 0 && (stamp - last_twist_time_).seconds() < cmd_timeout_;
 
@@ -65,7 +71,8 @@ namespace cfr_arduino_bridge {
       msg.steering = 0.0F;
       msg.throttle = 0.0F;
 
-      if (fresh) {
+      if (fresh)
+      {
         const double speed = last_twist_.linear.x;
         const double yaw_rate = last_twist_.angular.z;
 
@@ -74,7 +81,9 @@ namespace cfr_arduino_bridge {
 
         msg.steering = static_cast<float>(std::clamp(steering_angle / max_steering_angle_, -1.0, 1.0));
         msg.throttle = static_cast<float>(std::clamp(speed / max_speed_, -1.0, 1.0));
-      } else if (last_twist_time_.nanoseconds() != 0) {
+      }
+      else if (last_twist_time_.nanoseconds() != 0)
+      {
         RCLCPP_WARN_THROTTLE(
             get_logger(), *get_clock(), 2000, "cmd_vel stale (> %.2f s), commanding neutral", cmd_timeout_);
       }
@@ -97,9 +106,10 @@ namespace cfr_arduino_bridge {
     rclcpp::TimerBase::SharedPtr timer_;
   };
 
-}  // namespace cfr_arduino_bridge
+} // namespace cfr_arduino_bridge
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv)
+{
   rclcpp::init(argc, argv);
   rclcpp::spin(std::make_shared<cfr_arduino_bridge::CmdVelToDriveNode>());
   rclcpp::shutdown();

@@ -37,3 +37,22 @@ cmd_vel_to_drive:
     min_speed_for_steering: 0.3    # floor speed for the bicycle model
     cmd_timeout: 0.3
     publish_rate_hz: 50.0
+
+path_follower:
+  ros__parameters:
+    # Keep these well below cmd_vel_to_drive's max_speed/max_steering_angle:
+    # path_follower has no obstacle awareness, it only tracks odometry.
+    cruise_speed: 0.3          # m/s on a STRAIGHT segment
+    turn_speed: 0.2            # m/s on a TURN segment (must stay nonzero, see path_geometry.hpp)
+    turn_rate: 0.5             # rad/s commanded on a TURN segment
+    heading_kp: 1.5            # P gain holding heading during a STRAIGHT segment
+    max_angular: 1.0           # rad/s clamp on commanded angular.z
+    decel_distance: 0.3        # m, start slowing within this of a STRAIGHT target
+    decel_angle: 0.3           # rad, start slowing within this of a TURN target
+    min_creep_speed: 0.08      # m/s floor while decelerating a STRAIGHT segment
+    min_turn_rate: 0.15        # rad/s floor while decelerating a TURN segment
+    distance_tolerance: 0.03   # m, STRAIGHT segment considered complete within this
+    angle_tolerance: 0.02      # rad (~1.1 deg), TURN segment considered complete within this
+    control_rate_hz: 20.0
+    odom_timeout: 0.5          # s, abort the path if odometry goes stale
+    max_segment_duration: 20.0 # s, abort a segment that hasn't completed (wheel slip, stuck odometry)

@@ -11,7 +11,9 @@
 
   <depend>cfr_interfaces</depend>
   <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
   <depend>rclcpp</depend>
+  <depend>rclcpp_action</depend>
 
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
