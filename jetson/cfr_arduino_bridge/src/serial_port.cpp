@@ -54,7 +54,7 @@ bool SerialPort::Open(const std::string &device, unsigned baud) {
     return false;
   }
 
-  struct termios tty {};
+  struct termios tty{};
   if (::tcgetattr(fd_, &tty) != 0) {
     last_error_ = std::string("tcgetattr failed: ") + std::strerror(errno);
     Close();
