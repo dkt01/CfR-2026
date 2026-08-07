@@ -258,6 +258,8 @@ def renderLoop(
 
 def main():
     inputState = InputState()
+    inputState.estop = True
+    inputState.estop_sense = True
     controllerState = ControllerState()
     robotState = RobotState()
 
