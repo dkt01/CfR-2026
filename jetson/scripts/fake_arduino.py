@@ -8,12 +8,7 @@ arduino_bridge_node's AUTO_ARMED -> AUTO_ACTIVE handshake: once it sees a
 Jetson frame with auto_ready=1 and both axes centered, it reports
 mode=AUTO_ACTIVE and stays there.
 
-This does NOT simulate the offboard XBee/RC/E-Stop link -- there's no code for
-that in this repo yet, and the real sketch's mode state machine is gated on it
-too (offboardTimedOut forces Mode::ESTOP regardless of what the Jetson sends).
-This fake skips that gate entirely and starts AUTO_ARMED. Use it to exercise
-message flow through arduino_bridge_node, cmd_vel_to_drive_node, and
-path_follower_node -- not as a stand-in for a safety-validated bench session.
+This does NOT simulate the offboard XBee/RC/E-Stop link
 
     python3 fake_arduino.py                          # creates /tmp/fake_arduino
     ~/software/scripts/launch.sh --device /tmp/fake_arduino --skip-checks
