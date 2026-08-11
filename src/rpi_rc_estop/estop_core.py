@@ -746,7 +746,9 @@ def receiveData(
     oldCB = xbee._callback
     oldTC = xbee._thread_continue
     xbee._callback = True
-    xbee._thread_continue = lambda: runEvent.is_set()
+    # XBee tests this attribute directly rather than calling it.  A lambda is
+    # always truthy, so it prevents wait_read_frame() from seeing shutdown.
+    xbee._thread_continue = True
     try:
         while runEvent.is_set():
             waitStart = time.monotonic()
@@ -879,10 +881,13 @@ def commControl(
             # (it raises AttributeError on self._thread), so stop the
             # reader thread ourselves instead.
             runReadEvent.clear()
+            if m_xbee is not None:
+                # wait_read_frame() polls this boolean and raises
+                # ThreadQuitException.  Do this before closing the serial port
+                # so the reader never races a closed file descriptor.
+                m_xbee._thread_continue = False
             if thread_read is not None:
-                thread_read.join(timeout=1.0)
-                if thread_read.is_alive():
-                    print("Warning: xbee read thread did not exit cleanly")
+                thread_read.join()
                 thread_read = None
             if m_ser is not None:
                 m_ser.close()

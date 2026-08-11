@@ -575,7 +575,10 @@ void loop() {
       }
       break;
     case Mode::AUTO_ACTIVE:
-      if (jetsonTimedOut) {
+      // AUTO_READY is an enable, not only an entry-handshake signal.  Leaving
+      // AUTO_ACTIVE as soon as the Jetson clears it guarantees neutral PWM
+      // between path goals while the serial link remains healthy.
+      if (jetsonTimedOut || !jetsonState.AUTO_READY) {
         autoMode = Mode::AUTO_ARMED;
       }
       break;

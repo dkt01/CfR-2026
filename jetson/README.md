@@ -61,7 +61,7 @@ about the vehicle's wheelbase or the wire protocol.
 | Interface | Type | Direction |
 | --------- | ---- | --------- |
 | `~/odom` | `nav_msgs/Odometry` | subscribed (remapped to `/zed/zed_node/odom`) |
-| `cmd_vel` | `geometry_msgs/Twist` | published (remapped to `/cmd_vel`) |
+| `cmd_vel` | `geometry_msgs/Twist` | published (remapped to `/cmd_vel` by default) |
 | `~/drive_path` | `cfr_interfaces/action/DrivePath` | action server |
 
 The vehicle is Ackermann and cannot rotate in place, so a `PathSegment` is one
@@ -147,7 +147,9 @@ It starts `launch.sh` and `path_follower.launch.py` in the background (logs go
 to `/tmp/cfr_path_following/*.log`, keeping the TUI's screen clean) and runs
 the TUI in the foreground. Quitting the TUI, or Ctrl-C, tears both background
 launches down -- the same fate-sharing `launch.sh` itself uses for the bridge
-and ZED.
+and ZED. Its bridge converter listens only on `/path_follower/cmd_vel`, so
+unrelated publishers on global `/cmd_vel` cannot arm or command the car before
+a path goal is accepted.
 
 ## Wire format
 

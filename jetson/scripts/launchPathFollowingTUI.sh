@@ -107,7 +107,7 @@ PIDS=()
 cleanup() {
     trap - EXIT INT TERM
     for pid in ${PIDS[@]+"${PIDS[@]}"}; do
-        kill "$pid" 2>/dev/null || true
+        kill -- "-$pid" 2>/dev/null || true
     done
     for pid in ${PIDS[@]+"${PIDS[@]}"}; do
         wait "$pid" 2>/dev/null || true
@@ -118,13 +118,16 @@ trap cleanup EXIT INT TERM
 if [[ "$NO_STACK" != true ]]; then
     echo "starting actuator link + ZED (log: $LOG_DIR/stack.log)"
     stack_args=(--device "$DEVICE")
+    # Restrict the actuator converter to commands from this path follower.
+    # Other nodes publishing on /cmd_vel must not arm autonomous control.
+    stack_args+=("cmd_vel_topic:=/path_follower/cmd_vel")
     if [[ "$SKIP_CHECKS" == true ]]; then
         stack_args+=(--skip-checks)
     fi
     if [[ "$FAKE_ARDUINO" == true ]]; then
         stack_args+=(--fake-arduino)
     fi
-    "$SCRIPT_DIR/launch.sh" "${stack_args[@]}" >"$LOG_DIR/stack.log" 2>&1 &
+    setsid "$SCRIPT_DIR/launch.sh" "${stack_args[@]}" >"$LOG_DIR/stack.log" 2>&1 &
     STACK_PID=$!
     PIDS+=("$STACK_PID")
 
@@ -151,7 +154,8 @@ source "$ROS2_WS/install/setup.bash"
 set -u
 
 echo "starting path_follower_node (log: $LOG_DIR/path_follower.log)"
-ros2 launch cfr_arduino_bridge path_follower.launch.py >"$LOG_DIR/path_follower.log" 2>&1 &
+setsid ros2 launch cfr_arduino_bridge path_follower.launch.py \
+    "cmd_vel_topic:=/path_follower/cmd_vel" >"$LOG_DIR/path_follower.log" 2>&1 &
 PIDS+=("$!")
 
 echo "launching TUI -- q or Ctrl-C there stops everything started here"

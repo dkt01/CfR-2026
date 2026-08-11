@@ -26,6 +26,11 @@ def generate_launch_description():
         default_value="true",
         description="Also run cmd_vel_to_drive_node to translate geometry_msgs/Twist",
     )
+    cmd_vel_topic_arg = DeclareLaunchArgument(
+        "cmd_vel_topic",
+        default_value="/cmd_vel",
+        description="Twist topic accepted by cmd_vel_to_drive_node",
+    )
 
     bridge = Node(
         package="cfr_arduino_bridge",
@@ -45,10 +50,20 @@ def generate_launch_description():
         name="cmd_vel_to_drive",
         output="screen",
         parameters=[LaunchConfiguration("params_file")],
-        remappings=[("cmd_vel", "/cmd_vel"), ("drive_cmd", "/drive_cmd")],
+        remappings=[
+            ("cmd_vel", LaunchConfiguration("cmd_vel_topic")),
+            ("drive_cmd", "/drive_cmd"),
+        ],
         condition=IfCondition(LaunchConfiguration("use_cmd_vel")),
     )
 
     return LaunchDescription(
-        [device_arg, params_arg, cmd_vel_arg, bridge, cmd_vel_to_drive]
+        [
+            device_arg,
+            params_arg,
+            cmd_vel_arg,
+            cmd_vel_topic_arg,
+            bridge,
+            cmd_vel_to_drive,
+        ]
     )

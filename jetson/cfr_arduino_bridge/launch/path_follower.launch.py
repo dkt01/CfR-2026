@@ -22,6 +22,11 @@ def generate_launch_description():
         default_value="/zed/zed_node/odom",
         description="Odometry source for pose feedback (position + heading)",
     )
+    cmd_vel_arg = DeclareLaunchArgument(
+        "cmd_vel_topic",
+        default_value="/cmd_vel",
+        description="Twist topic published by the path follower",
+    )
     params_arg = DeclareLaunchArgument(
         "params_file", default_value=params_file, description="Parameter file"
     )
@@ -34,8 +39,8 @@ def generate_launch_description():
         parameters=[LaunchConfiguration("params_file")],
         remappings=[
             ("~/odom", LaunchConfiguration("odom_topic")),
-            ("cmd_vel", "/cmd_vel"),
+            ("cmd_vel", LaunchConfiguration("cmd_vel_topic")),
         ],
     )
 
-    return LaunchDescription([odom_arg, params_arg, path_follower])
+    return LaunchDescription([odom_arg, cmd_vel_arg, params_arg, path_follower])
