@@ -827,7 +827,7 @@ def commControl(
             print("New XBee @", portPath)
             serial_trace_path = os.getenv(SERIAL_TRACE_ENV, SERIAL_TRACE_DEFAULT)
             m_ser = TimestampedSerial(
-                serial.Serial(portPath, baudrate=38400, timeout=0.1),
+                serial.Serial(portPath, baudrate=57600, timeout=0.1),
                 serial_trace_path,
             )
             if serial_trace_path:

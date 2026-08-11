@@ -65,7 +65,7 @@ Messages transmitted each direction are ASCII serial where fields are comma-sepa
 
 ## Onboard Protocol
 
-The robot features an Arduino that controls the car's actuators and an NVIDIA Jetson Orin Nano Super.  The two components communicate over a USB serial interface at 115200 Baud.
+The robot features an Arduino that controls the car's actuators and an NVIDIA Jetson Orin Nano Super.  The two components communicate over a USB serial interface at 1000000 Baud.
 
 Messages transmitted each direction are ASCII serial where fields are comma-separated and messages are separated by a new line character (`\n`).
 

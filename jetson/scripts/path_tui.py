@@ -31,7 +31,8 @@ except ImportError:
 
 try:
     from cfr_interfaces.action import DrivePath
-    from cfr_interfaces.msg import PathSegment
+    from cfr_interfaces.msg import DriveCommand, PathSegment
+    from std_srvs.srv import Trigger
 except ImportError:
     print(
         "error: cfr_interfaces not found.  source the workspace's install/setup.bash first",
@@ -71,11 +72,24 @@ def build_goal(segments):
 
 
 class PathTui:
-    def __init__(self, stdscr, node, client, action_name):
+    def __init__(
+        self,
+        stdscr,
+        node,
+        client,
+        reset_odometry_client,
+        action_name,
+        drive_command_topic,
+    ):
         self.stdscr = stdscr
         self.node = node
         self.client = client
+        self.reset_odometry_client = reset_odometry_client
         self.action_name = action_name
+        self.latest_drive_command = None
+        self.drive_command_subscription = node.create_subscription(
+            DriveCommand, drive_command_topic, self.on_drive_command, 10
+        )
 
         self.segments = []
         self.state = "BUILDING"  # BUILDING, SENDING, EXECUTING, DONE
@@ -85,6 +99,7 @@ class PathTui:
         self.goal_handle = None
         self.goal_future = None
         self.result_future = None
+        self.reset_odometry_future = None
         self.latest_feedback = None
         self.result = None
 
@@ -133,7 +148,17 @@ class PathTui:
     def on_feedback(self, feedback_msg):
         self.latest_feedback = feedback_msg.feedback
 
+    def on_drive_command(self, message):
+        self.latest_drive_command = message
+
     def poll_futures(self):
+        if self.reset_odometry_future is not None and self.reset_odometry_future.done():
+            response = self.reset_odometry_future.result()
+            self.status_message = (
+                response.message if response.success else f"error: {response.message}"
+            )
+            self.reset_odometry_future = None
+
         if (
             self.state == "SENDING"
             and self.goal_future is not None
@@ -162,6 +187,17 @@ class PathTui:
     def cancel_goal(self):
         if self.goal_handle is not None:
             self.goal_handle.cancel_goal_async()
+
+    def reset_odometry(self):
+        if self.reset_odometry_future is not None:
+            return
+        if not self.reset_odometry_client.service_is_ready():
+            self.flash_error("odometry reset service is not available")
+            return
+        self.status_message = "resetting local odometry..."
+        self.reset_odometry_future = self.reset_odometry_client.call_async(
+            Trigger.Request()
+        )
 
     def drain_cancel(self, ticks=20):
         """Spin briefly so a just-issued cancel has a chance to resolve before
@@ -255,6 +291,8 @@ class PathTui:
         elif key in (ord("c"), ord("C")):
             self.segments = []
             self.status_message = ""
+        elif key in (ord("r"), ord("R")):
+            self.reset_odometry()
         elif key in (ord("g"), ord("G"), 10, 13):  # g, Enter
             if not self.segments:
                 self.flash_error("add at least one segment first")
@@ -313,6 +351,50 @@ class PathTui:
         except curses.error:
             pass  # terminal too small for this frame; skip rather than crash
 
+    def _draw_execution_telemetry(self, feedback):
+        self.stdscr.addstr(
+            7,
+            2,
+            "current  x={:.3f} y={:.3f} yaw={:.1f} deg".format(
+                feedback.current_x,
+                feedback.current_y,
+                math.degrees(feedback.current_yaw),
+            ),
+        )
+        if feedback.desired_position_valid:
+            desired_position = "x={:.3f} y={:.3f}".format(
+                feedback.desired_x, feedback.desired_y
+            )
+            error_position = "x={:.3f} y={:.3f}".format(
+                feedback.error_x, feedback.error_y
+            )
+        else:
+            desired_position = "x=n/a y=n/a"
+            error_position = "x=n/a y=n/a"
+        self.stdscr.addstr(
+            8,
+            2,
+            "desired  {} yaw={:.1f} deg".format(
+                desired_position, math.degrees(feedback.desired_yaw)
+            ),
+        )
+        self.stdscr.addstr(
+            9,
+            2,
+            "error    {} yaw={:.1f} deg".format(
+                error_position, math.degrees(feedback.error_yaw)
+            ),
+        )
+        commands = "velocity={:+.3f} m/s yaw={:+.3f} rad/s".format(
+            feedback.commanded_linear_x, feedback.commanded_angular_z
+        )
+        if self.latest_drive_command is not None:
+            commands += "  throttle={:+.3f} steering={:+.3f}".format(
+                self.latest_drive_command.throttle,
+                self.latest_drive_command.steering,
+            )
+        self.stdscr.addstr(10, 2, commands)
+
     def _draw_impl(self):
         self.stdscr.erase()
         height, width = self.stdscr.getmaxyx()
@@ -337,7 +419,9 @@ class PathTui:
             self.stdscr.addstr("straight", self.colors.get("STRAIGHT", 0))
             self.stdscr.addstr("   [t] add ")
             self.stdscr.addstr("turn", self.colors.get("TURN", 0))
-            self.stdscr.addstr("   [d] delete last   [c] clear all")
+            self.stdscr.addstr(
+                "   [d] delete last   [c] clear all   [r] reset odometry"
+            )
             self.stdscr.addstr(
                 footer_row + 1, 0, "[g]/[Enter] SEND and execute        [q] quit"
             )
@@ -359,6 +443,7 @@ class PathTui:
                     f"[{bar}] {fb.segment_progress * 100:5.1f}%",
                     color,
                 )
+                self._draw_execution_telemetry(fb)
             footer_row = height - 4
             self.stdscr.addstr(
                 footer_row, 0, "[x] cancel        [q] quit (cancels first)"
@@ -414,7 +499,7 @@ class PathTui:
             return self.final_message
 
 
-def main(stdscr, action_name):
+def main(stdscr, action_name, reset_odometry_service, drive_command_topic):
     height, width = stdscr.getmaxyx()
     if height < MIN_HEIGHT or width < MIN_WIDTH:
         return f"terminal too small ({width}x{height}); need at least {MIN_WIDTH}x{MIN_HEIGHT}"
@@ -422,8 +507,16 @@ def main(stdscr, action_name):
     rclpy.init(args=sys.argv)
     node = Node("path_tui")
     client = ActionClient(node, DrivePath, action_name)
+    reset_odometry_client = node.create_client(Trigger, reset_odometry_service)
     try:
-        tui = PathTui(stdscr, node, client, action_name)
+        tui = PathTui(
+            stdscr,
+            node,
+            client,
+            reset_odometry_client,
+            action_name,
+            drive_command_topic,
+        )
         return tui.run()
     finally:
         node.destroy_node()
@@ -439,8 +532,23 @@ if __name__ == "__main__":
         default="/path_follower/drive_path",
         help="DrivePath action name (default: %(default)s)",
     )
+    parser.add_argument(
+        "--reset-odometry-service",
+        default="/path_follower/reset_odometry",
+        help="Trigger service that resets the local odometry frame (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--drive-command-topic",
+        default="/drive_cmd",
+        help="DriveCommand topic shown during execution (default: %(default)s)",
+    )
     cli_args, _ros_args = parser.parse_known_args()
 
-    result_message = curses.wrapper(main, cli_args.action)
+    result_message = curses.wrapper(
+        main,
+        cli_args.action,
+        cli_args.reset_odometry_service,
+        cli_args.drive_command_topic,
+    )
     if result_message:
         print(result_message)

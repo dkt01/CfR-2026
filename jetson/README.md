@@ -117,6 +117,7 @@ source ~/ros2_ws/install/setup.bash
 | `t` | add a `TURN` segment (prompts for angle in degrees, `+` left / `-` right) |
 | `d` | delete the last segment |
 | `c` | clear all segments |
+| `r` | reset local odometry to the robot's current pose; available only when no path is running |
 | `g` / Enter | send the goal and switch to a live progress view |
 | `x` | cancel while executing |
 | `q` | quit (cancels first if a goal is executing) |
@@ -126,6 +127,12 @@ to the action's metres/radians internally. Segments are kept after a run
 completes so a failed or canceled path can be resent as-is. Ctrl-C at any
 point cancels an in-flight goal before exiting, the same as `q` -- closing the
 TUI should stop the car, not abandon it mid-path.
+
+While a path executes, the TUI shows local current pose, the active segment's
+target pose, pose error, controller velocity/yaw-rate command, and normalized
+throttle/steering from `/drive_cmd`. A turn has a target heading but not a
+target position because its radius is determined by the vehicle steering
+geometry, so its position target and error are shown as `n/a`.
 
 `STRAIGHT` segments are green and `TURN` segments are yellow, in both the
 segment list and the live progress bar during execution; the result screen is
@@ -150,6 +157,9 @@ launches down -- the same fate-sharing `launch.sh` itself uses for the bridge
 and ZED. Its bridge converter listens only on `/path_follower/cmd_vel`, so
 unrelated publishers on global `/cmd_vel` cannot arm or command the car before
 a path goal is accepted.
+
+The follower's odometry initialization and reset messages are in
+`/tmp/cfr_path_following/path_follower.log` during a TUI session.
 
 ## Wire format
 

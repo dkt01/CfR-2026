@@ -20,6 +20,7 @@ find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_action REQUIRED)
+find_package(std_srvs REQUIRED)
 
 # protocol and serial handling, kept free of ROS so it can be unit tested.
 add_library(cfr_arduino_protocol
@@ -49,7 +50,7 @@ ament_target_dependencies(cmd_vel_to_drive_node rclcpp cfr_interfaces geometry_m
 
 add_executable(path_follower_node src/path_follower_node.cpp)
 target_link_libraries(path_follower_node cfr_path_geometry)
-ament_target_dependencies(path_follower_node rclcpp rclcpp_action cfr_interfaces geometry_msgs nav_msgs)
+ament_target_dependencies(path_follower_node rclcpp rclcpp_action cfr_interfaces geometry_msgs nav_msgs std_srvs)
 
 install(TARGETS cfr_arduino_protocol cfr_path_geometry
   EXPORT export_${PROJECT_NAME}
@@ -93,6 +94,6 @@ endif()
 
 ament_export_include_directories(include)
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
-ament_export_dependencies(rclcpp rclcpp_action cfr_interfaces geometry_msgs nav_msgs)
+ament_export_dependencies(rclcpp rclcpp_action cfr_interfaces geometry_msgs nav_msgs std_srvs)
 
 ament_package()

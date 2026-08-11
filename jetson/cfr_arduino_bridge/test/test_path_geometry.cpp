@@ -4,26 +4,28 @@
 
 #include "cfr_arduino_bridge/path_geometry.hpp"
 
+using cfr_arduino_bridge::ComputeDesiredPose;
 using cfr_arduino_bridge::ComputeSegmentCommand;
 using cfr_arduino_bridge::ControllerParams;
 using cfr_arduino_bridge::kPi;
 using cfr_arduino_bridge::Pose2D;
+using cfr_arduino_bridge::PoseRelativeTo;
 using cfr_arduino_bridge::Segment;
 using cfr_arduino_bridge::SegmentType;
 using cfr_arduino_bridge::WrapToPi;
 using cfr_arduino_bridge::YawFromQuaternion;
 
 namespace {
-constexpr double kTolerance = 1e-6;
+  constexpr double kTolerance = 1e-6;
 
-// Quaternion for a pure yaw rotation.
-void YawQuaternion(double yaw, double &w, double &x, double &y, double &z) {
-  w = std::cos(yaw / 2.0);
-  x = 0.0;
-  y = 0.0;
-  z = std::sin(yaw / 2.0);
-}
-} // namespace
+  // Quaternion for a pure yaw rotation.
+  void YawQuaternion(double yaw, double& w, double& x, double& y, double& z) {
+    w = std::cos(yaw / 2.0);
+    x = 0.0;
+    y = 0.0;
+    z = std::sin(yaw / 2.0);
+  }
+}  // namespace
 
 TEST(YawFromQuaternionTest, Identity) {
   EXPECT_NEAR(YawFromQuaternion(1.0, 0.0, 0.0, 0.0), 0.0, kTolerance);
@@ -49,6 +51,54 @@ TEST(WrapToPiTest, WithinRangeUnchanged) {
 TEST(WrapToPiTest, WrapsPastPi) {
   EXPECT_NEAR(WrapToPi(3.0 * kPi / 2.0), -kPi / 2.0, kTolerance);
   EXPECT_NEAR(WrapToPi(-3.0 * kPi / 2.0), kPi / 2.0, kTolerance);
+}
+
+TEST(PoseRelativeToTest, RebasesPositionAndHeading) {
+  Pose2D reference;
+  reference.x = 10.0;
+  reference.y = -3.0;
+  reference.yaw = kPi / 2.0;
+  Pose2D pose;
+  pose.x = 9.0;
+  pose.y = -1.0;
+  pose.yaw = 3.0 * kPi / 4.0;
+
+  const Pose2D relative = PoseRelativeTo(pose, reference);
+  EXPECT_NEAR(relative.x, 2.0, kTolerance);
+  EXPECT_NEAR(relative.y, 1.0, kTolerance);
+  EXPECT_NEAR(relative.yaw, kPi / 4.0, kTolerance);
+}
+
+TEST(ComputeDesiredPoseTest, StraightTargetIncludesStartHeading) {
+  Segment segment;
+  segment.type = SegmentType::kStraight;
+  segment.distance = 2.0;
+  Pose2D start;
+  start.x = 1.0;
+  start.y = -1.0;
+  start.yaw = kPi / 2.0;
+
+  const auto desired = ComputeDesiredPose(segment, start);
+  EXPECT_TRUE(desired.position_valid);
+  EXPECT_NEAR(desired.pose.x, 1.0, kTolerance);
+  EXPECT_NEAR(desired.pose.y, 1.0, kTolerance);
+  EXPECT_NEAR(desired.pose.yaw, start.yaw, kTolerance);
+}
+
+TEST(ComputeDesiredPoseTest, TurnTargetsHeadingOnly) {
+  Segment segment;
+  segment.type = SegmentType::kTurn;
+  segment.turn_angle = kPi / 2.0;
+  Pose2D start;
+  start.x = 1.0;
+  start.y = -1.0;
+  start.yaw = kPi / 2.0;
+
+  const auto desired = ComputeDesiredPose(segment, start);
+  EXPECT_FALSE(desired.position_valid);
+  EXPECT_NEAR(desired.pose.x, start.x, kTolerance);
+  EXPECT_NEAR(desired.pose.y, start.y, kTolerance);
+  EXPECT_NEAR(desired.pose.yaw, kPi, kTolerance);
 }
 
 TEST(ComputeSegmentCommandTest, StraightMidway) {
@@ -88,12 +138,55 @@ TEST(ComputeSegmentCommandTest, StraightCorrectsHeadingDrift) {
   Pose2D start;
   Pose2D current;
   current.x = 0.5;
-  current.yaw = 0.1; // drifted left of the start heading
+  current.yaw = 0.1;  // drifted left of the start heading
   ControllerParams params;
 
   const auto cmd = ComputeSegmentCommand(segment, start, current, params);
   // Drifted left -> steer right (negative) to correct back.
   EXPECT_LT(cmd.angular_z, 0.0);
+}
+
+TEST(ComputeSegmentCommandTest, StraightIgnoresHeadingNoiseInsideDeadband) {
+  Segment segment;
+  segment.type = SegmentType::kStraight;
+  segment.distance = 1.0;
+  Pose2D start;
+  Pose2D current;
+  current.yaw = 0.005;
+  ControllerParams params;
+  params.heading_deadband = 0.01;
+
+  const auto cmd = ComputeSegmentCommand(segment, start, current, params);
+  EXPECT_NEAR(cmd.angular_z, 0.0, kTolerance);
+}
+
+TEST(ComputeSegmentCommandTest, StraightSubtractsHeadingDeadbandBeforeCorrection) {
+  Segment segment;
+  segment.type = SegmentType::kStraight;
+  segment.distance = 1.0;
+  Pose2D start;
+  Pose2D current;
+  current.yaw = 0.03;
+  ControllerParams params;
+  params.heading_kp = 1.0;
+  params.heading_deadband = 0.01;
+
+  const auto cmd = ComputeSegmentCommand(segment, start, current, params);
+  EXPECT_NEAR(cmd.angular_z, -0.02, kTolerance);
+}
+
+TEST(ComputeSegmentCommandTest, StraightLimitsHeadingCorrection) {
+  Segment segment;
+  segment.type = SegmentType::kStraight;
+  segment.distance = 1.0;
+  Pose2D start;
+  Pose2D current;
+  current.yaw = kPi / 2.0;
+  ControllerParams params;
+  params.max_angular = 0.10;
+
+  const auto cmd = ComputeSegmentCommand(segment, start, current, params);
+  EXPECT_NEAR(cmd.angular_z, -params.max_angular, kTolerance);
 }
 
 TEST(ComputeSegmentCommandTest, StraightDeceleratesNearTarget) {
@@ -102,7 +195,7 @@ TEST(ComputeSegmentCommandTest, StraightDeceleratesNearTarget) {
   segment.distance = 1.0;
   Pose2D start;
   Pose2D current;
-  current.x = 0.85; // 0.15 m remaining, inside the default 0.3 m decel window
+  current.x = 0.85;  // 0.15 m remaining, inside the default 0.3 m decel window
   ControllerParams params;
 
   const auto cmd = ComputeSegmentCommand(segment, start, current, params);
@@ -128,10 +221,10 @@ TEST(ComputeSegmentCommandTest, StraightReverse) {
 TEST(ComputeSegmentCommandTest, TurnLeftKeepsMovingUntilComplete) {
   Segment segment;
   segment.type = SegmentType::kTurn;
-  segment.turn_angle = kPi / 2.0; // 90 degrees left
+  segment.turn_angle = kPi / 2.0;  // 90 degrees left
   Pose2D start;
   Pose2D current;
-  current.yaw = 0.2; // partway through the turn
+  current.yaw = 0.2;  // partway through the turn
   ControllerParams params;
 
   const auto cmd = ComputeSegmentCommand(segment, start, current, params);
@@ -144,7 +237,7 @@ TEST(ComputeSegmentCommandTest, TurnLeftKeepsMovingUntilComplete) {
 TEST(ComputeSegmentCommandTest, TurnRightNegativeRate) {
   Segment segment;
   segment.type = SegmentType::kTurn;
-  segment.turn_angle = -kPi / 2.0; // 90 degrees right
+  segment.turn_angle = -kPi / 2.0;  // 90 degrees right
   Pose2D start;
   Pose2D current;
   current.yaw = -0.2;
@@ -175,12 +268,12 @@ TEST(ComputeSegmentCommandTest, TurnCorrectsBackOnOvershoot) {
   segment.turn_angle = kPi / 2.0;
   Pose2D start;
   Pose2D current;
-  current.yaw = kPi / 2.0 + 0.1; // overshot the target by more than tolerance
+  current.yaw = kPi / 2.0 + 0.1;  // overshot the target by more than tolerance
   ControllerParams params;
 
   const auto cmd = ComputeSegmentCommand(segment, start, current, params);
   EXPECT_FALSE(cmd.complete);
-  EXPECT_LT(cmd.angular_z, 0.0); // steer back the other way
+  EXPECT_LT(cmd.angular_z, 0.0);  // steer back the other way
   EXPECT_LE(cmd.progress, 1.0);
 }
 
@@ -190,9 +283,7 @@ TEST(ComputeSegmentCommandTest, TurnDeceleratesNearTarget) {
   segment.turn_angle = kPi / 2.0;
   Pose2D start;
   Pose2D current;
-  current.yaw =
-      kPi / 2.0 -
-      0.1; // 0.1 rad remaining, inside the default 0.3 rad decel window
+  current.yaw = kPi / 2.0 - 0.1;  // 0.1 rad remaining, inside the default 0.3 rad decel window
   ControllerParams params;
 
   const auto cmd = ComputeSegmentCommand(segment, start, current, params);

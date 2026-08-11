@@ -16,3 +16,27 @@ string message
 uint32 current_segment
 uint32 total_segments
 float32 segment_progress
+
+# Current pose in the local odometry frame, which starts at the follower's
+# initial pose or its most recent reset.
+float64 current_x
+float64 current_y
+float64 current_yaw
+
+# Segment target.  TURN segments have a heading target but no position target,
+# because their radius is determined by the vehicle's steering geometry.
+float64 desired_x
+float64 desired_y
+float64 desired_yaw
+bool desired_position_valid
+
+# desired - current; position errors are meaningful only when
+# desired_position_valid is true.
+float64 error_x
+float64 error_y
+float64 error_yaw
+
+# Twist produced by the path controller before cmd_vel_to_drive maps it to
+# normalized throttle and steering.
+float64 commanded_linear_x
+float64 commanded_angular_z

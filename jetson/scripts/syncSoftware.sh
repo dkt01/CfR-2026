@@ -156,6 +156,10 @@ ssh "${REMOTE_HOST}" "bash -lc '
   set -u
   mkdir -p ${REMOTE_WS}
   cd ${REMOTE_WS}
+  # The Jetson clock can lag files synced from the development host.  A clean
+  # package build prevents Make from retaining an older installed binary when
+  # source timestamps appear to be in the future.
+  rm -rf build/cfr_interfaces install/cfr_interfaces build/cfr_arduino_bridge install/cfr_arduino_bridge
   colcon build --base-paths ${REMOTE_DIR} --cmake-args -DCMAKE_BUILD_TYPE=Release
 '"
 echo "build complete"
