@@ -26,10 +26,12 @@ Messages transmitted each direction are ASCII serial where fields are comma-sepa
 
 ### Onboard -> Offboard
 
-| Field Index | Description   | Data Type | Data Range | Notes                                                                    |
-| ----------- | ------------- | --------- | ---------- | ------------------------------------------------------------------------ |
-| 0           | Auto Mode     | Enum      | [0,4]      | `0` E-Stop, `1` RC Armed, `2` RC Active, `3` Auto Armed, `4` Auto Active |
-| 1           | Battery Level | Integer   | [0,255]    | `0` is empty battery, `255` is full battery.                             |
+| Field Index | Description             | Data Type | Data Range  | Notes                                                                    |
+| ----------- | ----------------------- | --------- | ----------- | ------------------------------------------------------------------------ |
+| 0           | Auto Mode               | Enum      | [0,4]       | `0` E-Stop, `1` RC Armed, `2` RC Active, `3` Auto Armed, `4` Auto Active |
+| 1           | Battery Level           | Integer   | [0,255]     | `0` is empty battery, `255` is full battery.                             |
+| 2           | Steering Output         | Integer   | [1000,2000] | Final steering PWM pulse width in microseconds.                          |
+| 3           | Throttle Output         | Integer   | [1000,2000] | Final throttle PWM pulse width in microseconds.                          |
 
 ### Offboard -> Onboard
 

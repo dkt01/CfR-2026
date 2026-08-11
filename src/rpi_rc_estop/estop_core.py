@@ -142,6 +142,8 @@ class AutoMode(Enum):
 class RobotState:
     auto_mode: AutoMode = AutoMode.UNKNOWN
     battery_level: int = 255
+    steering_output_us: int = 1500
+    throttle_output_us: int = 1500
     comms_ok: bool = False
     comm_port: str = ""
     tx_ack: bool = False
@@ -718,11 +720,13 @@ def deserializeState(
     try:
         # Make sure to strip trailing commas
         parts = message.decode("utf-8").strip().strip(",").split(",")
-        if len(parts) != 2:
+        if len(parts) != 4:
             raise ValueError("Invalid received message length")
         with robotStateLock:
             robotState.auto_mode = AutoMode(int(parts[0]))
             robotState.battery_level = int(parts[1])
+            robotState.steering_output_us = int(parts[2])
+            robotState.throttle_output_us = int(parts[3])
             recvTime[0] = time.monotonic()
             robotState.comms_ok = True
         return True

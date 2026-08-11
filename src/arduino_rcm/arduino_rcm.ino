@@ -5,7 +5,7 @@
 XBee xbee;
 SoftwareSerial serXBee(2, 3);
 Tx16Request tx16 = Tx16Request();
-uint8_t offboardTxPayload[8] = {};
+uint8_t offboardTxPayload[18] = {};
 uint8_t onboardRxPayload[16] = {};
 uint8_t onboardTxPayload[14] = {};
 
@@ -132,6 +132,21 @@ bool serialize(const uint8_t& val, uint8_t** buffer) {
   return true;
 }
 
+bool serialize(const uint16_t& val, uint8_t** buffer) {
+  uint16_t divisor = 1;
+  while (divisor <= val / 10) {
+    divisor *= 10;
+  }
+  while (divisor > 0) {
+    **buffer = '0' + (val / divisor) % 10;
+    ++(*buffer);
+    divisor /= 10;
+  }
+  **buffer = ',';
+  ++(*buffer);
+  return true;
+}
+
 bool serialize(Mode& val, uint8_t** buffer) {
   uint8_t intMode = static_cast<uint8_t>(val);
   return serialize(intMode, buffer);
@@ -221,16 +236,20 @@ typedef struct {
 typedef struct {
   Mode MODE{Mode::ESTOP};
   uint8_t BATTERY_LEVEL{255};
+  uint16_t STEERING_OUTPUT_US{0};
+  uint16_t THROTTLE_OUTPUT_US{0};
 
   bool serialize(uint8_t* buffer, uint8_t bufferSize) {
     // Need enough space for max size values with comma delimiter and trailing
     // '\n' and '\0'
-    if (bufferSize < 8) {
+    if (bufferSize < 18) {
       return false;
     }
 
     ::serialize(MODE, &buffer);
     ::serialize(BATTERY_LEVEL, &buffer);
+    ::serialize(STEERING_OUTPUT_US, &buffer);
+    ::serialize(THROTTLE_OUTPUT_US, &buffer);
     *buffer = '\n';
     ++(buffer);
     *buffer = '\0';
@@ -598,6 +617,8 @@ void loop() {
   ToOffboard offboardFeedback;
   offboardFeedback.MODE = autoMode;
   offboardFeedback.BATTERY_LEVEL = batteryLevel;
+  offboardFeedback.STEERING_OUTPUT_US = steeringCmd;
+  offboardFeedback.THROTTLE_OUTPUT_US = throttleCmd;
   offboardFeedback.serialize((uint8_t*)offboardTxPayload, sizeof(offboardTxPayload));
 
   // Transmit immediately after a valid offboard frame. SoftwareSerial disables
