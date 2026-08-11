@@ -39,6 +39,13 @@
 
 ## Visualize
 
+Run [`launch_zed.sh`](launch_zed.sh) to start the camera node and rosboard together (Ctrl-C stops both):
+```bash
+./launch_zed.sh
+```
+
+Or start them manually in separate terminals:
+
 1. Launch the camera node:
    ```bash
    source ~/ros2_ws/install/setup.bash
@@ -50,8 +57,10 @@
    source /opt/ros/jazzy/setup.bash
    ./run
    ```
-3. From a browser on a machine networked to the Orin, go to `http://<orin-ip>:8888` and select a topic (e.g. `/zed/zed_node/point_cloud/cloud_registered` or `/zed/zed_node/rgb/color/rect/image`) to visualize it.
 
+Either way, from a browser on a machine networked to the Orin, go to `http://<orin-ip>:8888` and select a topic (e.g. `/zed/zed_node/point_cloud/cloud_registered` or `/zed/zed_node/rgb/color/rect/image`) to visualize it.
+
+![alt text](image.png)
 ## ROS 2 Topics
 
 These are all the topics observed from ZED:

@@ -117,6 +117,8 @@ def render_status(robotState: RobotState, controllerState: ControllerState) -> T
     ackColor = "green" if robotState.tx_ack else "red"
     table.add_row("TX", f"[{ackColor}]{ackText}[/{ackColor}]")
     table.add_row("TX DATA", repr(robotState.tx_message))
+    table.add_row("STEERING OUT", f"{robotState.steering_output_us} us")
+    table.add_row("THROTTLE OUT", f"{robotState.throttle_output_us} us")
     table.add_row("CONTROLLER", connection(controllerState.comms_ok))
     table.add_row("", f"[grey58]{controllerState.device_name or '-'}[/grey58]")
     return table

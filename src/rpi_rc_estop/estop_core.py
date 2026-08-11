@@ -142,6 +142,8 @@ class AutoMode(Enum):
 class RobotState:
     auto_mode: AutoMode = AutoMode.UNKNOWN
     battery_level: int = 255
+    steering_output_us: int = 1500
+    throttle_output_us: int = 1500
     comms_ok: bool = False
     comm_port: str = ""
     tx_ack: bool = False
@@ -718,11 +720,13 @@ def deserializeState(
     try:
         # Make sure to strip trailing commas
         parts = message.decode("utf-8").strip().strip(",").split(",")
-        if len(parts) != 2:
+        if len(parts) != 4:
             raise ValueError("Invalid received message length")
         with robotStateLock:
             robotState.auto_mode = AutoMode(int(parts[0]))
             robotState.battery_level = int(parts[1])
+            robotState.steering_output_us = int(parts[2])
+            robotState.throttle_output_us = int(parts[3])
             recvTime[0] = time.monotonic()
             robotState.comms_ok = True
         return True
@@ -742,7 +746,9 @@ def receiveData(
     oldCB = xbee._callback
     oldTC = xbee._thread_continue
     xbee._callback = True
-    xbee._thread_continue = lambda: runEvent.is_set()
+    # XBee tests this attribute directly rather than calling it.  A lambda is
+    # always truthy, so it prevents wait_read_frame() from seeing shutdown.
+    xbee._thread_continue = True
     try:
         while runEvent.is_set():
             waitStart = time.monotonic()
@@ -821,7 +827,7 @@ def commControl(
             print("New XBee @", portPath)
             serial_trace_path = os.getenv(SERIAL_TRACE_ENV, SERIAL_TRACE_DEFAULT)
             m_ser = TimestampedSerial(
-                serial.Serial(portPath, baudrate=38400, timeout=0.1),
+                serial.Serial(portPath, baudrate=57600, timeout=0.1),
                 serial_trace_path,
             )
             if serial_trace_path:
@@ -875,10 +881,13 @@ def commControl(
             # (it raises AttributeError on self._thread), so stop the
             # reader thread ourselves instead.
             runReadEvent.clear()
+            if m_xbee is not None:
+                # wait_read_frame() polls this boolean and raises
+                # ThreadQuitException.  Do this before closing the serial port
+                # so the reader never races a closed file descriptor.
+                m_xbee._thread_continue = False
             if thread_read is not None:
-                thread_read.join(timeout=1.0)
-                if thread_read.is_alive():
-                    print("Warning: xbee read thread did not exit cleanly")
+                thread_read.join()
                 thread_read = None
             if m_ser is not None:
                 m_ser.close()

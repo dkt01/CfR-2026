@@ -5,12 +5,14 @@
 XBee xbee;
 SoftwareSerial serXBee(2, 3);
 Tx16Request tx16 = Tx16Request();
-uint8_t offboardTxPayload[8] = {};
+uint8_t offboardTxPayload[18] = {};
 uint8_t onboardRxPayload[16] = {};
 uint8_t onboardTxPayload[14] = {};
+uint8_t onboardDebugPayload[112] = {};
 
 const unsigned long commsTimeout_ms = 200;
 const bool enableOffboardTx = true;
+const bool enableOnboardDebug = true;
 
 enum class Mode : uint8_t { ESTOP, RC_ARMED, RC_ACTIVE, AUTO_ARMED, AUTO_ACTIVE };
 
@@ -26,6 +28,25 @@ constexpr uint16_t PWM_PERIOD_TICKS = PWM_TICKS_PER_US * PWM_PERIOD_US;
 
 uint16_t PulseUsToTicks(uint16_t pulse_us) {
   return pulse_us * PWM_TICKS_PER_US;
+}
+
+void CopyRejectedJetsonFrame(const uint8_t* source,
+                             uint8_t sourceLength,
+                             uint8_t* destination,
+                             uint8_t& destinationLength) {
+  destinationLength = min(sourceLength, static_cast<uint8_t>(sizeof(onboardRxPayload)));
+  for (uint8_t index = 0; index < destinationLength; ++index) {
+    destination[index] = source[index];
+  }
+}
+
+void EncodeHex(const uint8_t* source, uint8_t sourceLength, char* destination) {
+  constexpr char kHex[] = "0123456789ABCDEF";
+  for (uint8_t index = 0; index < sourceLength; ++index) {
+    destination[index * 2] = kHex[source[index] >> 4];
+    destination[index * 2 + 1] = kHex[source[index] & 0x0F];
+  }
+  destination[sourceLength * 2] = '\0';
 }
 
 // Serialization helpers for comma-delimited ascii messages
@@ -132,6 +153,21 @@ bool serialize(const uint8_t& val, uint8_t** buffer) {
   return true;
 }
 
+bool serialize(const uint16_t& val, uint8_t** buffer) {
+  uint16_t divisor = 1;
+  while (divisor <= val / 10) {
+    divisor *= 10;
+  }
+  while (divisor > 0) {
+    **buffer = '0' + (val / divisor) % 10;
+    ++(*buffer);
+    divisor /= 10;
+  }
+  **buffer = ',';
+  ++(*buffer);
+  return true;
+}
+
 bool serialize(Mode& val, uint8_t** buffer) {
   uint8_t intMode = static_cast<uint8_t>(val);
   return serialize(intMode, buffer);
@@ -221,16 +257,20 @@ typedef struct {
 typedef struct {
   Mode MODE{Mode::ESTOP};
   uint8_t BATTERY_LEVEL{255};
+  uint16_t STEERING_OUTPUT_US{0};
+  uint16_t THROTTLE_OUTPUT_US{0};
 
   bool serialize(uint8_t* buffer, uint8_t bufferSize) {
     // Need enough space for max size values with comma delimiter and trailing
     // '\n' and '\0'
-    if (bufferSize < 8) {
+    if (bufferSize < 18) {
       return false;
     }
 
     ::serialize(MODE, &buffer);
     ::serialize(BATTERY_LEVEL, &buffer);
+    ::serialize(STEERING_OUTPUT_US, &buffer);
+    ::serialize(THROTTLE_OUTPUT_US, &buffer);
     *buffer = '\n';
     ++(buffer);
     *buffer = '\0';
@@ -245,24 +285,36 @@ typedef struct {
   uint8_t CMD_STEERING{127};
   uint8_t CMD_THROTTLE{127};
 
-  bool deSerialize(uint8_t* data, uint8_t dataLength) {
-    bool error = false;
-
-    // Variable length, but must have at least one character per field including
-    // comma delimiters and integer fields can be no longer than 3
-    // characters each.  Optional trailing comma delimiter.
-    if (dataLength < 6 || dataLength > 11) {
+  bool deSerialize(const uint8_t* data, uint8_t dataLength) {
+    // Jetson Serialize() always emits exactly "b,nnn,nnn\\n".  Requiring
+    // the nine-byte payload before its newline prevents a damaged complete
+    // line from being interpreted as a shortened but valid command.
+    if (dataLength != 9 || (data[0] != '0' && data[0] != '1') || data[1] != ',' || data[5] != ',') {
       return false;
     }
 
-    const uint8_t* cursor = data;
-    const uint8_t* end = data + dataLength;
+    uint16_t steering = 0;
+    uint16_t throttle = 0;
+    for (uint8_t index = 2; index < 5; ++index) {
+      if (data[index] < '0' || data[index] > '9') {
+        return false;
+      }
+      steering = steering * 10 + static_cast<uint16_t>(data[index] - '0');
+    }
+    for (uint8_t index = 6; index < 9; ++index) {
+      if (data[index] < '0' || data[index] > '9') {
+        return false;
+      }
+      throttle = throttle * 10 + static_cast<uint16_t>(data[index] - '0');
+    }
+    if (steering > 255 || throttle > 255) {
+      return false;
+    }
 
-    error = deserialize(AUTO_READY, cursor, end) || error;
-    error = deserialize(CMD_STEERING, cursor, end) || error;
-    error = deserialize(CMD_THROTTLE, cursor, end) || error;
-
-    return !error;
+    AUTO_READY = data[0] == '1';
+    CMD_STEERING = static_cast<uint8_t>(steering);
+    CMD_THROTTLE = static_cast<uint8_t>(throttle);
+    return true;
   }
 
 } FromJetson;
@@ -442,13 +494,13 @@ void setup() {
   xbee = XBee();
 
   // Setup USB serial
-  Serial.begin(115200);
+  Serial.begin(1000000);
   while (!Serial) {
     ;  // wait for serial port to connect
   }
   Serial.setTimeout(1);
 
-  serXBee.begin(38400);
+  serXBee.begin(57600);
   while (!serXBee) {
     ;  // wait for serial port to connect
   }
@@ -482,6 +534,10 @@ void loop() {
   static uint16_t xbeeRx16Frames = 0;
   static uint16_t xbeeValidMessages = 0;
   static uint16_t xbeeInvalidMessages = 0;
+  static uint16_t validJetsonFrames = 0;
+  static uint16_t invalidJetsonFrames = 0;
+  static uint8_t lastRejectedJetsonFrame[sizeof(onboardRxPayload)] = {};
+  static uint8_t lastRejectedJetsonFrameLength = 0;
   bool receivedOffboardMessage = false;
 
   // Offboard Rx
@@ -499,15 +555,54 @@ void loop() {
     }
   }
 
-  // Onboard Rx
-  while (true) {
-    auto retval = Serial.readBytesUntil('\n', onboardRxPayload, sizeof(onboardRxPayload));
-    if (retval > 0) {
-      if (jetsonState.deSerialize(onboardRxPayload, retval)) {
-        latestJetsonUpdate = now;
+  // Onboard Rx.  Serial.readBytesUntil() returns a partial buffer when its
+  // timeout expires.  Those fragments can still look like a valid three-field
+  // command (for example "1,127,0" from a frame whose last digits have not
+  // arrived), which turns USB packet timing into actuator noise.  Only parse
+  // complete newline-terminated frames.
+  static uint8_t onboardRxLength = 0;
+  static bool onboardRxDiscarding = false;
+  while (Serial.available() > 0) {
+    const int received = Serial.read();
+    if (received == '\r') {
+      continue;
+    }
+    if (received == '\n') {
+      if (!onboardRxDiscarding && onboardRxLength > 0) {
+        // Decode into a candidate first.  A malformed frame must not mutate
+        // the command that remains live until the USB watchdog expires.
+        FromJetson candidate;
+        if (candidate.deSerialize(onboardRxPayload, onboardRxLength)) {
+          jetsonState = candidate;
+          latestJetsonUpdate = now;
+          ++validJetsonFrames;
+        } else {
+          ++invalidJetsonFrames;
+          CopyRejectedJetsonFrame(
+              onboardRxPayload, onboardRxLength, lastRejectedJetsonFrame, lastRejectedJetsonFrameLength);
+        }
+      } else if (onboardRxLength > 0) {
+        ++invalidJetsonFrames;
+        CopyRejectedJetsonFrame(
+            onboardRxPayload, onboardRxLength, lastRejectedJetsonFrame, lastRejectedJetsonFrameLength);
       }
+      onboardRxLength = 0;
+      onboardRxDiscarding = false;
+      continue;
+    }
+    if (onboardRxDiscarding) {
+      continue;
+    }
+    if (onboardRxLength < sizeof(onboardRxPayload)) {
+      onboardRxPayload[onboardRxLength++] = static_cast<uint8_t>(received);
     } else {
-      break;
+      // Drop the whole oversized frame rather than parsing its suffix as a
+      // new command on the next loop iteration.
+      onboardRxLength = 0;
+      onboardRxDiscarding = true;
+      ++invalidJetsonFrames;
+      CopyRejectedJetsonFrame(
+          onboardRxPayload, sizeof(onboardRxPayload), lastRejectedJetsonFrame, lastRejectedJetsonFrameLength);
     }
   }
 
@@ -556,7 +651,10 @@ void loop() {
       }
       break;
     case Mode::AUTO_ACTIVE:
-      if (jetsonTimedOut) {
+      // AUTO_READY is an enable, not only an entry-handshake signal.  Leaving
+      // AUTO_ACTIVE as soon as the Jetson clears it guarantees neutral PWM
+      // between path goals while the serial link remains healthy.
+      if (jetsonTimedOut || !jetsonState.AUTO_READY) {
         autoMode = Mode::AUTO_ARMED;
       }
       break;
@@ -598,6 +696,8 @@ void loop() {
   ToOffboard offboardFeedback;
   offboardFeedback.MODE = autoMode;
   offboardFeedback.BATTERY_LEVEL = batteryLevel;
+  offboardFeedback.STEERING_OUTPUT_US = steeringCmd;
+  offboardFeedback.THROTTLE_OUTPUT_US = throttleCmd;
   offboardFeedback.serialize((uint8_t*)offboardTxPayload, sizeof(offboardTxPayload));
 
   // Transmit immediately after a valid offboard frame. SoftwareSerial disables
@@ -616,6 +716,29 @@ void loop() {
 
   if (now - lastOnboardTx >= 50) {
     Serial.write(onboardTxPayload, GetPacketSize(onboardTxPayload, sizeof(onboardTxPayload)));
+    if (enableOnboardDebug) {
+      char rejectedHex[sizeof(lastRejectedJetsonFrame) * 2 + 1] = {};
+      EncodeHex(lastRejectedJetsonFrame, lastRejectedJetsonFrameLength, rejectedHex);
+      // This uses a distinct prefix so it cannot be mistaken for the normal
+      // five-field status frame consumed by the Jetson bridge.
+      const int debugLength = snprintf(reinterpret_cast<char*>(onboardDebugPayload),
+                                       sizeof(onboardDebugPayload),
+                                       "D,%lu,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s\n",
+                                       now,
+                                       validJetsonFrames,
+                                       invalidJetsonFrames,
+                                       jetsonState.AUTO_READY,
+                                       jetsonState.CMD_STEERING,
+                                       jetsonState.CMD_THROTTLE,
+                                       static_cast<uint8_t>(autoMode),
+                                       steeringCmd,
+                                       throttleCmd,
+                                       lastRejectedJetsonFrameLength,
+                                       rejectedHex);
+      if (debugLength > 0 && debugLength < static_cast<int>(sizeof(onboardDebugPayload))) {
+        Serial.write(onboardDebugPayload, static_cast<size_t>(debugLength));
+      }
+    }
     lastOnboardTx = now;
   }
 }

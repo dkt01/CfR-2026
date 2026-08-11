@@ -1,0 +1,66 @@
+/**:
+  ros__parameters:
+    use_sim_time: false
+
+arduino_bridge:
+  ros__parameters:
+    # Serial link
+    device: /dev/ttyACM0
+    baud: 1000000
+    tx_rate_hz: 50.0        # Arduino drops to neutral after 200 ms of silence
+    boot_delay: 2.0         # Uno bootloader window after the port is opened
+    reconnect_period: 1.0
+    # Debug trace: each line is the exact ten-byte frame accepted by the USB
+    # serial write.  Clear this after diagnosing command instability.
+    tx_trace_path: /tmp/cfr-arduino-tx.log
+    # Captures each complete newline-delimited status or diagnostic line read
+    # from the Uno, including its Arduino-side command and PWM diagnostics.
+    rx_trace_path: /tmp/cfr-arduino-rx.log
+
+    # Watchdogs
+    command_timeout: 0.2    # neutral if the autonomy stack goes quiet
+    link_timeout: 0.5       # link_ok drops if no status frame arrives
+
+    # Actuator limits.  Start conservative: the VXL-3S on a Slash 4X4 will
+    # happily do 50+ mph at full throttle.
+    max_throttle: 0.25
+    max_steering: 1.0
+    throttle_slew_per_s: 2.0
+
+    # Flip if the servo or ESC is wired opposite to the assumed convention.
+    invert_steering: false
+    invert_throttle: false
+
+    # Bench testing only: set false to pass commands through without waiting
+    # for the Arduino to report AUTO_ACTIVE.
+    require_auto_active: true
+
+cmd_vel_to_drive:
+  ros__parameters:
+    wheelbase: 0.324               # Traxxas Slash 4X4, metres
+    max_speed: 4.0                 # m/s that maps to full throttle
+    max_steering_angle: 0.40       # rad at full lock
+    min_speed_for_steering: 0.3    # floor speed for the bicycle model
+    cmd_timeout: 0.3
+    publish_rate_hz: 50.0
+
+path_follower:
+  ros__parameters:
+    # Keep these well below cmd_vel_to_drive's max_speed/max_steering_angle:
+    # path_follower has no obstacle awareness, it only tracks odometry.
+    cruise_speed: 0.3          # m/s on a STRAIGHT segment
+    turn_speed: 0.2            # m/s on a TURN segment (must stay nonzero, see path_geometry.hpp)
+    turn_rate: 0.5             # rad/s commanded on a TURN segment
+    heading_kp: 0.5            # P gain holding heading during a STRAIGHT segment
+    heading_deadband: 0.01     # rad, ignore stationary ZED yaw noise below ~0.6 deg
+    max_angular: 0.10          # rad/s clamp; limits steering response to ZED yaw noise
+    decel_distance: 0.3        # m, start slowing within this of a STRAIGHT target
+    decel_angle: 0.3           # rad, start slowing within this of a TURN target
+    min_creep_speed: 0.08      # m/s floor while decelerating a STRAIGHT segment
+    min_turn_rate: 0.15        # rad/s floor while decelerating a TURN segment
+    distance_tolerance: 0.03   # m, STRAIGHT segment considered complete within this
+    angle_tolerance: 0.02      # rad (~1.1 deg), TURN segment considered complete within this
+    control_rate_hz: 20.0
+    odom_timeout: 0.5          # s, abort the path if odometry goes stale
+    max_segment_duration: 20.0 # s, abort a segment that hasn't completed (wheel slip, stuck odometry)
+    keep_auto_active_when_idle: true
