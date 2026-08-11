@@ -10,42 +10,42 @@
 
 namespace cfr_arduino_bridge {
 
-class SerialPort {
-public:
-  SerialPort() = default;
-  ~SerialPort();
+  class SerialPort {
+   public:
+    SerialPort() = default;
+    ~SerialPort();
 
-  SerialPort(const SerialPort &) = delete;
-  SerialPort &operator=(const SerialPort &) = delete;
+    SerialPort(const SerialPort&) = delete;
+    SerialPort& operator=(const SerialPort&) = delete;
 
-  /// Open @p device in raw, non-blocking mode at @p baud.
-  /// Returns false on failure; LastError() describes what went wrong.
-  bool Open(const std::string &device, unsigned baud);
+    /// Open @p device in raw, non-blocking mode at @p baud.
+    /// Returns false on failure; LastError() describes what went wrong.
+    bool Open(const std::string& device, unsigned baud);
 
-  void Close();
+    void Close();
 
-  bool IsOpen() const { return fd_ >= 0; }
+    bool IsOpen() const { return fd_ >= 0; }
 
-  /// Write the whole payload.  Returns false on a hard error, in which case
-  /// the caller should Close() and reconnect.
-  bool Write(const std::string &payload);
+    /// Write the whole payload.  Returns false on a hard error, in which case
+    /// the caller should Close() and reconnect.
+    bool Write(const std::string& payload);
 
-  /// Drain everything currently readable and append every complete,
-  /// newline terminated line to @p lines (newline stripped).  Returns false
-  /// on a hard error.  Returning true with no new lines is normal.
-  bool ReadLines(std::vector<std::string> &lines);
+    /// Drain everything currently readable and append every complete,
+    /// newline terminated line to @p lines (newline stripped).  Returns false
+    /// on a hard error.  Returning true with no new lines is normal.
+    bool ReadLines(std::vector<std::string>& lines);
 
-  const std::string &LastError() const { return last_error_; }
+    const std::string& LastError() const { return last_error_; }
 
-private:
-  static bool BaudToSpeed(unsigned baud, unsigned &speed);
+   private:
+    static bool BaudToSpeed(unsigned baud, unsigned& speed);
 
-  /// Guard against a peer that never sends a newline.
-  static constexpr size_t kMaxBufferedBytes = 512;
+    /// Guard against a peer that never sends a newline.
+    static constexpr size_t kMaxBufferedBytes = 512;
 
-  int fd_ = -1;
-  std::string rx_buffer_;
-  std::string last_error_;
-};
+    int fd_ = -1;
+    std::string rx_buffer_;
+    std::string last_error_;
+  };
 
-} // namespace cfr_arduino_bridge
+}  // namespace cfr_arduino_bridge
