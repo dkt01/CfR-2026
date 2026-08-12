@@ -87,6 +87,9 @@ Messages transmitted each direction are ASCII serial where fields are comma-sepa
 | 2           | Manual Start  | Boolean   | `0` or `1` | `1` indicates robot should start autonomous driving without visual start signal |
 | 3           | Auto Mode     | Enum      | [0,4]      | `0` E-Stop, `1` RC Armed, `2` RC Active, `3` Auto Armed, `4` Auto Active        |
 | 4           | Battery Level | Integer   | [0,255]    | `0` is empty battery, `255` is full battery.                                    |
+| 5           | Spur RPM      | Integer   | [0,65535]  | Spur gear revolutions per minute.  `0` also means stopped or no sensor.          |
+
+`Deserialize()` on the Jetson requires exactly six fields, so firmware predating the RPM field is rejected outright rather than parsed with a stale speed.  Flash both sides together.
 
 ### Jetson -> Arduino
 

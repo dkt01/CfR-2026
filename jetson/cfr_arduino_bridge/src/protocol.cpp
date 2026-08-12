@@ -59,6 +59,24 @@ namespace cfr_arduino_bridge {
       return true;
     }
 
+    bool ParseUint16(const std::string& field, uint16_t& value) {
+      if (field.empty() || field.size() > 5) {
+        return false;
+      }
+      uint32_t accumulator = 0;
+      for (const char c : field) {
+        if (c < '0' || c > '9') {
+          return false;
+        }
+        accumulator = (accumulator * 10) + static_cast<uint32_t>(c - '0');
+      }
+      if (accumulator > 65535) {
+        return false;
+      }
+      value = static_cast<uint16_t>(accumulator);
+      return true;
+    }
+
   }  // namespace
 
   std::string Serialize(const JetsonToArduino& command) {
@@ -77,7 +95,7 @@ namespace cfr_arduino_bridge {
 
   bool Deserialize(const std::string& line, ArduinoToJetson& status) {
     const auto fields = SplitFields(line);
-    if (fields.size() != 5) {
+    if (fields.size() != 6) {
       return false;
     }
 
@@ -85,7 +103,7 @@ namespace cfr_arduino_bridge {
     uint8_t raw_mode = 0;
     if (!ParseBool(fields[0], parsed.estop) || !ParseBool(fields[1], parsed.auto_arm) ||
         !ParseBool(fields[2], parsed.manual_start) || !ParseUint8(fields[3], raw_mode) ||
-        !ParseUint8(fields[4], parsed.battery_level)) {
+        !ParseUint8(fields[4], parsed.battery_level) || !ParseUint16(fields[5], parsed.rpm)) {
       return false;
     }
     if (raw_mode > static_cast<uint8_t>(Mode::kAutoActive)) {

@@ -21,3 +21,8 @@ uint8 mode
 
 # 0 is empty, 255 is full.
 uint8 battery_level
+
+# Spur gear revolutions per minute, from the hall sensor and its single trigger
+# magnet.  This is spur revolutions, not motor or wheel revolutions.  Zero means
+# stopped, no sensor, or a dead link - use link_ok to tell the last case apart.
+uint16 rpm

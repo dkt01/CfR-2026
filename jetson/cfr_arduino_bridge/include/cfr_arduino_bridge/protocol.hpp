@@ -38,6 +38,11 @@ namespace cfr_arduino_bridge {
     bool manual_start = false;
     Mode mode = Mode::kEstop;
     uint8_t battery_level = 0;
+    /// Spur gear revolutions per minute.  One trigger magnet, so this counts
+    /// spur revolutions rather than motor or wheel revolutions.  Zero also
+    /// means stopped or no sensor connected, which the two are not
+    /// distinguishable on this link.
+    uint16_t rpm = 0;
   };
 
   /// Encode a command frame, including the trailing newline.

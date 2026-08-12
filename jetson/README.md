@@ -178,8 +178,33 @@ Integer fields are zero padded to three digits on purpose: the firmware's
 unpadded frame such as `1,0,0` would be dropped silently. Padding also keeps
 every frame a constant 10 bytes.
 
-Arduino -> Jetson matches the `ToJetson` struct: E-Stop, Auto Arm, Manual Start,
-Mode `[0,4]`, Battery Level `[0,255]`, with a trailing comma before the newline.
+Arduino -> Jetson matches the `ToJetson` struct, with a trailing comma before the
+newline:
+
+| Field | Description | Range |
+| ----- | ----------- | ----- |
+| 0 | E-Stop State | `0` or `1`, `1` is active |
+| 1 | Auto Arm | `0` or `1` |
+| 2 | Manual Start | `0` or `1` |
+| 3 | Mode | `[0,4]`, see the run mode table in the top level README |
+| 4 | Battery Level | `[0,255]`, `0` empty, `255` full |
+| 5 | Spur RPM | `[0,65535]` spur gear revolutions per minute |
+
+Unlike the command direction these are *not* zero padded, so field widths vary
+and frames run 12 to 19 bytes. `Deserialize()` requires exactly six fields,
+which means a firmware predating the RPM field is rejected outright rather than
+parsed with a stale speed. Flash both sides together.
+
+Spur RPM comes from a hall sensor watching a single trigger magnet in the spur
+gear, so it counts spur revolutions -- not motor and not wheel revolutions.
+Converting to ground speed needs the transmission ratio and tire circumference.
+Zero is ambiguous between stopped, no sensor fitted, and a dead link; check
+`link_ok` on `ArduinoStatus` to rule out the last.
+
+The firmware measures it by polling a pin change flag rather than taking an
+interrupt, which cannot lose an edge but can merge two that fall inside one
+loop stall. Expect a slight undercount at full throttle rather than a clean
+signal; see the Onboard I/O section of the top level README.
 
 ## Deploy from a development host
 
