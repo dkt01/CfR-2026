@@ -8,6 +8,10 @@ on:
 jobs:
   build-and-test:
     name: Build and test
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
     runs-on: ubuntu-latest
     container:
       image: ros:jazzy-ros-base
@@ -56,7 +60,8 @@ jobs:
         run: |
           arduino-cli core update-index
           arduino-cli core install arduino:avr
-          arduino-cli lib install XBee
+          git clone https://github.com/andrewrapp/xbee-arduino.git "$HOME/Arduino/libraries/XBee"
+          git -C "$HOME/Arduino/libraries/XBee" checkout --detach 39f236ea1827fd5fe3ce66ffcc07433ab8ab9197
 
       - name: Compile Arduino Uno firmware
         run: arduino-cli compile --fqbn arduino:avr:uno src/arduino_rcm
