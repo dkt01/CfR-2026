@@ -27,7 +27,7 @@ SoftwareSerial serXBee(2, 3);
 Tx16Request tx16 = Tx16Request();
 uint8_t offboardTxPayload[OFFBOARD_STATUS_LENGTH] = {};
 uint8_t onboardRxPayload[16] = {};
-uint8_t onboardTxPayload[14] = {};
+uint8_t onboardTxPayload[21] = {};
 uint8_t onboardDebugPayload[128] = {};
 
 const unsigned long commsTimeout_ms = 200;
@@ -374,12 +374,13 @@ typedef struct {
   bool AUTO_ARM{false};
   bool MANUAL_START{false};
   Mode MODE{Mode::ESTOP};
-  uint8_t BATTERY_LEVEL{255};
+  uint8_t BATTERY_LEVEL{0};
+  uint16_t RPM{0};
 
   bool serialize(uint8_t* buffer, uint8_t bufferSize) {
     // Need enough space for max size values with comma delimiter and trailing
-    // '\n' and '\0'
-    if (bufferSize < 14) {
+    // '\n' and '\0'.  RPM is the only five digit field: "1,1,1,4,255,65535,\n\0"
+    if (bufferSize < 21) {
       return false;
     }
 
@@ -388,6 +389,7 @@ typedef struct {
     ::serialize(MANUAL_START, &buffer);
     ::serialize(MODE, &buffer);
     ::serialize(BATTERY_LEVEL, &buffer);
+    ::serialize(RPM, &buffer);
     *buffer = '\n';
     ++(buffer);
     *buffer = '\0';
@@ -894,6 +896,7 @@ void loop() {
   onboardFeedback.MANUAL_START = offboardState.MANUAL_START;
   onboardFeedback.MODE = autoMode;
   onboardFeedback.BATTERY_LEVEL = batteryLevel;
+  onboardFeedback.RPM = tach.rpm;
   onboardFeedback.serialize((uint8_t*)onboardTxPayload, sizeof(onboardTxPayload));
 
   ToOffboard offboardFeedback;

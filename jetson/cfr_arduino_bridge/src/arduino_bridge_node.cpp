@@ -294,6 +294,9 @@ namespace cfr_arduino_bridge {
       msg.manual_start = link_ok ? status_.manual_start : false;
       msg.mode = link_ok ? static_cast<uint8_t>(status_.mode) : static_cast<uint8_t>(Mode::kEstop);
       msg.battery_level = link_ok ? status_.battery_level : 0;
+      // Zero on a dead link rather than the last known value: a stale speed is
+      // worse than no speed for anything closing a loop on it.
+      msg.rpm = link_ok ? status_.rpm : 0;
       status_publisher_->publish(msg);
     }
 

@@ -48,38 +48,55 @@ TEST(Serialize, AlwaysWithinArduinoLengthLimits) {
 TEST(Deserialize, TrailingCommaFrameFromArduino) {
   // ToJetson::serialize() emits a comma after every field, including the last.
   ArduinoToJetson status;
-  ASSERT_TRUE(Deserialize("1,0,1,4,200,", status));
+  ASSERT_TRUE(Deserialize("1,0,1,4,200,3200,", status));
   EXPECT_TRUE(status.estop);
   EXPECT_FALSE(status.auto_arm);
   EXPECT_TRUE(status.manual_start);
   EXPECT_EQ(status.mode, Mode::kAutoActive);
   EXPECT_EQ(status.battery_level, 200);
+  EXPECT_EQ(status.rpm, 3200);
 }
 
 TEST(Deserialize, WithoutTrailingComma) {
   ArduinoToJetson status;
-  ASSERT_TRUE(Deserialize("0,1,0,3,255", status));
+  ASSERT_TRUE(Deserialize("0,1,0,3,255,0", status));
   EXPECT_EQ(status.mode, Mode::kAutoArmed);
   EXPECT_EQ(status.battery_level, 255);
+  EXPECT_EQ(status.rpm, 0);
+}
+
+TEST(Deserialize, RpmSpansTheFullSixteenBitRange) {
+  // The firmware saturates rather than wrapping, so the top of the range is a
+  // value the Jetson will really see if the tachometer is misconfigured.
+  ArduinoToJetson status;
+  ASSERT_TRUE(Deserialize("0,0,0,2,128,65535", status));
+  EXPECT_EQ(status.rpm, 65535);
+  ASSERT_TRUE(Deserialize("0,0,0,2,128,1", status));
+  EXPECT_EQ(status.rpm, 1);
 }
 
 TEST(Deserialize, RejectsMalformedFrames) {
   ArduinoToJetson status;
   EXPECT_FALSE(Deserialize("", status));
   EXPECT_FALSE(Deserialize("0,1,0,3", status)) << "too few fields";
-  EXPECT_FALSE(Deserialize("0,1,0,3,255,7", status)) << "too many fields";
-  EXPECT_FALSE(Deserialize("0,1,0,9,255", status)) << "mode out of range";
-  EXPECT_FALSE(Deserialize("0,1,0,3,300", status)) << "battery out of range";
-  EXPECT_FALSE(Deserialize("2,1,0,3,255", status)) << "non-boolean flag";
-  EXPECT_FALSE(Deserialize("0,1,0,3,2a5", status)) << "non-numeric battery";
+  EXPECT_FALSE(Deserialize("0,1,0,3,255", status)) << "pre-RPM five field frame";
+  EXPECT_FALSE(Deserialize("0,1,0,3,255,7,9", status)) << "too many fields";
+  EXPECT_FALSE(Deserialize("0,1,0,9,255,7", status)) << "mode out of range";
+  EXPECT_FALSE(Deserialize("0,1,0,3,300,7", status)) << "battery out of range";
+  EXPECT_FALSE(Deserialize("0,1,0,3,255,65536", status)) << "rpm out of range";
+  EXPECT_FALSE(Deserialize("0,1,0,3,255,123456", status)) << "rpm too many digits";
+  EXPECT_FALSE(Deserialize("2,1,0,3,255,7", status)) << "non-boolean flag";
+  EXPECT_FALSE(Deserialize("0,1,0,3,2a5,7", status)) << "non-numeric battery";
+  EXPECT_FALSE(Deserialize("0,1,0,3,255,1e3", status)) << "non-numeric rpm";
 }
 
 TEST(Deserialize, LeavesOutputUntouchedOnFailure) {
   ArduinoToJetson status;
-  ASSERT_TRUE(Deserialize("1,1,1,4,42", status));
+  ASSERT_TRUE(Deserialize("1,1,1,4,42,900", status));
   ASSERT_FALSE(Deserialize("garbage", status));
   EXPECT_EQ(status.mode, Mode::kAutoActive);
   EXPECT_EQ(status.battery_level, 42);
+  EXPECT_EQ(status.rpm, 900);
 }
 
 TEST(NormalizedToCommand, EndpointsAndCenter) {

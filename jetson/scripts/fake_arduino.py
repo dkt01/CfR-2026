@@ -82,10 +82,20 @@ def main():
         default=200,
         help="reported battery level, 0-255 (default: 200)",
     )
+    parser.add_argument(
+        "--rpm",
+        type=int,
+        default=0,
+        help="reported spur gear RPM, 0-65535 (default: 0, i.e. stopped)",
+    )
     args = parser.parse_args()
 
     if not 0 <= args.battery <= 255:
         print("error: --battery must be 0-255", file=sys.stderr)
+        return 1
+
+    if not 0 <= args.rpm <= 65535:
+        print("error: --rpm must be 0-65535", file=sys.stderr)
         return 1
 
     master_fd, slave_fd = pty.openpty()
@@ -140,8 +150,11 @@ def main():
                 last_status = now
                 # estop=0, auto_arm=1, manual_start=0 -- fixed, since nothing
                 # here simulates the offboard link that would normally drive
-                # them.  Trailing comma on every field matches ToJetson::serialize().
-                status = f"0,1,0,{mode},{args.battery},\n"
+                # them.  RPM is a constant too: there is no drivetrain model
+                # here, so it is a knob for testing consumers rather than a
+                # simulation.  Trailing comma on every field matches
+                # ToJetson::serialize().
+                status = f"0,1,0,{mode},{args.battery},{args.rpm},\n"
                 try:
                     os.write(master_fd, status.encode("ascii"))
                 except OSError:
