@@ -116,9 +116,28 @@ def render_status(robotState: RobotState, controllerState: ControllerState) -> T
     ackText = "ACK" if robotState.tx_ack else f"NACK ({robotState.tx_status:#04x})"
     ackColor = "green" if robotState.tx_ack else "red"
     table.add_row("TX", f"[{ackColor}]{ackText}[/{ackColor}]")
-    table.add_row("TX DATA", repr(robotState.tx_message))
+    # The command frame is packed binary now, so hex is the only readable form.
+    table.add_row("TX DATA", robotState.tx_message.hex(" "))
     table.add_row("STEERING OUT", f"{robotState.steering_output_us} us")
     table.add_row("THROTTLE OUT", f"{robotState.throttle_output_us} us")
+    # Colour tracks cell voltage on a 3S pack, not the scaled level, so the
+    # thresholds stay meaningful if the reported endpoints are ever retuned.
+    if robotState.battery_mv == 0:
+        batteryText = "[grey58]--[/grey58]"
+    else:
+        cellMv = robotState.battery_mv / 3
+        if cellMv >= 3.7 * 1000:
+            batteryColor = "green"
+        elif cellMv >= 3.5 * 1000:
+            batteryColor = "yellow"
+        else:
+            batteryColor = "red"
+        batteryText = (
+            f"[{batteryColor}]{robotState.battery_mv / 1000:.2f} V[/{batteryColor}]"
+            f" [grey58]({robotState.battery_level}/255)[/grey58]"
+        )
+    table.add_row("BATTERY", batteryText)
+    table.add_row("SPUR RPM", f"{robotState.rpm}")
     table.add_row("CONTROLLER", connection(controllerState.comms_ok))
     table.add_row("", f"[grey58]{controllerState.device_name or '-'}[/grey58]")
     return table

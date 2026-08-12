@@ -5,6 +5,7 @@ box (estop.py) and the laptop terminal emulator (estop_tui.py).
 import dataclasses
 import os
 import platform
+import struct
 import threading
 import time
 import traceback
@@ -35,6 +36,55 @@ except ImportError:
 
 ROBOT_ADDR = b"\x00\x01"
 TX_OPT = b"\x00"
+
+# Offboard link wire format.  Must stay byte-for-byte identical to the constants
+# and bit assignments in src/arduino_rcm/arduino_rcm.ino.
+#
+# Both directions are packed binary rather than ASCII.  The reason is the
+# Arduino's interrupt budget, not bandwidth: SoftwareSerial disables interrupts
+# for a whole byte time while receiving, so the old ~50 byte ASCII command frame
+# blacked out the firmware's interrupts for nearly 9ms at a time and overran the
+# USB link to the Jetson.  Every byte removed here is ~174us of blackout removed
+# onboard.
+#
+# The one byte tag makes a version mismatch between this script and the firmware
+# fail closed instead of decoding stale ASCII as flag bits.
+CMD_TAG = 0xC1
+CMD_STRUCT = struct.Struct("<BBBBBBBB")  # tag, flagsA, flagsB, flagsC, 4 axes
+STATUS_TAG = 0x51
+# tag, mode, battery level, battery mV, steering us, throttle us, rpm
+STATUS_STRUCT = struct.Struct("<BBBHHHH")
+
+# Bit position of each boolean within its flag byte.  Order is arbitrary but
+# fixed; the firmware indexes the same way.
+CMD_FLAGS_A = (
+    "ESTOP",
+    "AUTO_ARM",
+    "MANUAL_START",
+    "RC_PRESENT",
+    "BUTTON_X",
+    "BUTTON_O",
+    "BUTTON_SQUARE",
+    "BUTTON_TRIANGLE",
+)
+CMD_FLAGS_B = (
+    "BUTTON_L1",
+    "BUTTON_R1",
+    "BUTTON_L2",
+    "BUTTON_R2",
+    "BUTTON_L3",
+    "BUTTON_R3",
+    "BUTTON_SELECT",
+    "BUTTON_START",
+)
+CMD_FLAGS_C = (
+    "BUTTON_PS",
+    "BUTTON_UP",
+    "BUTTON_RIGHT",
+    "BUTTON_DOWN",
+    "BUTTON_LEFT",
+)
+CMD_AXES = ("AXIS_LX", "AXIS_LY", "AXIS_RX", "AXIS_RY")
 
 TIMEOUT_CONTROLLER = 0.2
 # This drives only the TUI link indicator. Keep it longer than the Arduino's
@@ -141,14 +191,21 @@ class AutoMode(Enum):
 @dataclass
 class RobotState:
     auto_mode: AutoMode = AutoMode.UNKNOWN
-    battery_level: int = 255
+    battery_level: int = 0
+    # Raw pack millivolts as measured by the Arduino, before scaling to
+    # battery_level.  Reported separately because the scaled level cannot be
+    # inverted once its endpoints change.
+    battery_mv: int = 0
     steering_output_us: int = 1500
     throttle_output_us: int = 1500
+    # Spur gear RPM from the hall sensor.  One trigger magnet, so this is spur
+    # revolutions rather than motor or wheel revolutions.
+    rpm: int = 0
     comms_ok: bool = False
     comm_port: str = ""
     tx_ack: bool = False
     tx_status: int = 255
-    tx_message: str = ""
+    tx_message: bytes = b""
 
 
 KEYCODE_MAP = {
@@ -661,54 +718,49 @@ def controllerControlPygame(
         )  # Only need to notice a reconnect, not react instantly
 
 
+def _packFlags(source, names: tuple) -> int:
+    """Fold a run of named booleans into one byte, bit 0 first."""
+    field = 0
+    for bit, name in enumerate(names):
+        if getattr(source, name):
+            field |= 1 << bit
+    return field
+
+
 def serializeState(
     controllerState: ControllerState,
     controllerStateLock: threading.Lock,
     inputState: InputState,
     inputStateLock: threading.Lock,
-):
-    inputStateString = ""
+) -> bytes:
     with inputStateLock:
         estop = False
         if not inputState.estop_override:
             estop = inputState.estop
-        inputStateString = ",".join(
-            [
-                str(int(estop)),
-                str(int(inputState.auto_arm)),
-                str(int(inputState.manual_start)),
-            ]
-        )
-    controllerStateString = ""
-    with controllerStateLock:
-        controllerStateString = ",".join(
-            [
-                str(int(controllerState.comms_ok)),
-                str(controllerState.AXIS_LX),
-                str(controllerState.AXIS_LY),
-                str(controllerState.AXIS_RX),
-                str(controllerState.AXIS_RY),
-                str(int(controllerState.BUTTON_X)),
-                str(int(controllerState.BUTTON_O)),
-                str(int(controllerState.BUTTON_SQUARE)),
-                str(int(controllerState.BUTTON_TRIANGLE)),
-                str(int(controllerState.BUTTON_L1)),
-                str(int(controllerState.BUTTON_R1)),
-                str(int(controllerState.BUTTON_L2)),
-                str(int(controllerState.BUTTON_R2)),
-                str(int(controllerState.BUTTON_L3)),
-                str(int(controllerState.BUTTON_R3)),
-                str(int(controllerState.BUTTON_SELECT)),
-                str(int(controllerState.BUTTON_START)),
-                str(int(controllerState.BUTTON_PS)),
-                str(int(controllerState.BUTTON_UP)),
-                str(int(controllerState.BUTTON_RIGHT)),
-                str(int(controllerState.BUTTON_DOWN)),
-                str(int(controllerState.BUTTON_LEFT)),
-            ]
+        # The E-Stop and arming bits live in flag byte A alongside controller
+        # buttons, so they are collected here and merged below rather than
+        # packed independently.
+        inputBits = (
+            (1 << CMD_FLAGS_A.index("ESTOP") if estop else 0)
+            | (1 << CMD_FLAGS_A.index("AUTO_ARM") if inputState.auto_arm else 0)
+            | (1 << CMD_FLAGS_A.index("MANUAL_START") if inputState.manual_start else 0)
         )
 
-    return ",".join([inputStateString, controllerStateString]) + "\n"
+    with controllerStateLock:
+        # ControllerState carries comms_ok; the wire calls it RC_PRESENT.
+        controllerBits = 0
+        if controllerState.comms_ok:
+            controllerBits |= 1 << CMD_FLAGS_A.index("RC_PRESENT")
+        for bit, name in enumerate(CMD_FLAGS_A):
+            if name in ("ESTOP", "AUTO_ARM", "MANUAL_START", "RC_PRESENT"):
+                continue
+            if getattr(controllerState, name):
+                controllerBits |= 1 << bit
+        flagsB = _packFlags(controllerState, CMD_FLAGS_B)
+        flagsC = _packFlags(controllerState, CMD_FLAGS_C)
+        axes = [getattr(controllerState, name) & 0xFF for name in CMD_AXES]
+
+    return CMD_STRUCT.pack(CMD_TAG, inputBits | controllerBits, flagsB, flagsC, *axes)
 
 
 def deserializeState(
@@ -718,15 +770,27 @@ def deserializeState(
     recvTime: list[float],
 ):
     try:
-        # Make sure to strip trailing commas
-        parts = message.decode("utf-8").strip().strip(",").split(",")
-        if len(parts) != 4:
-            raise ValueError("Invalid received message length")
+        if len(message) != STATUS_STRUCT.size or message[0] != STATUS_TAG:
+            return False
+        (
+            _tag,
+            mode,
+            batteryLevel,
+            batteryMv,
+            steeringUs,
+            throttleUs,
+            rpm,
+        ) = STATUS_STRUCT.unpack(message)
+        # AutoMode() raises on an out-of-range value, which is the intended
+        # rejection path for a frame that passed the tag check but is garbage.
+        autoMode = AutoMode(mode)
         with robotStateLock:
-            robotState.auto_mode = AutoMode(int(parts[0]))
-            robotState.battery_level = int(parts[1])
-            robotState.steering_output_us = int(parts[2])
-            robotState.throttle_output_us = int(parts[3])
+            robotState.auto_mode = autoMode
+            robotState.battery_level = batteryLevel
+            robotState.battery_mv = batteryMv
+            robotState.steering_output_us = steeringUs
+            robotState.throttle_output_us = throttleUs
+            robotState.rpm = rpm
             recvTime[0] = time.monotonic()
             robotState.comms_ok = True
         return True
