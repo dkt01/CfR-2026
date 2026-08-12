@@ -2,13 +2,33 @@
 
 #include <XBee.h>
 
+// Offboard link wire format.
+//
+// Both directions are packed binary, not ASCII.  The reason is interrupt
+// blackout rather than bandwidth: SoftwareSerial disables interrupts for a full
+// byte time (~174us at 57600) and works through a frame's bytes back to back,
+// so a 50 byte ASCII command frame suppressed interrupts for nearly 9ms at a
+// stretch, twenty times a second.  The hardware USART's receive buffer is two
+// bytes deep and at 1Mbaud a byte lands every 10us, so every offboard frame
+// used to overrun the USB link and corrupt whatever Jetson frame was in flight.
+// Eight bytes cuts that window by more than six times.
+//
+// The XBee API frame already carries a length and a checksum, and the parser
+// validates both, so the payload needs no integrity field of its own - only a
+// format tag, so a mismatched firmware/offboard pair fails closed instead of
+// misreading old ASCII as flags.
+constexpr uint8_t OFFBOARD_CMD_TAG = 0xC1;
+constexpr uint8_t OFFBOARD_CMD_LENGTH = 8;
+constexpr uint8_t OFFBOARD_STATUS_TAG = 0x51;
+constexpr uint8_t OFFBOARD_STATUS_LENGTH = 11;
+
 XBee xbee;
 SoftwareSerial serXBee(2, 3);
 Tx16Request tx16 = Tx16Request();
-uint8_t offboardTxPayload[18] = {};
+uint8_t offboardTxPayload[OFFBOARD_STATUS_LENGTH] = {};
 uint8_t onboardRxPayload[16] = {};
 uint8_t onboardTxPayload[14] = {};
-uint8_t onboardDebugPayload[112] = {};
+uint8_t onboardDebugPayload[128] = {};
 
 const unsigned long commsTimeout_ms = 200;
 const bool enableOffboardTx = true;
@@ -121,77 +141,25 @@ void EncodeHex(const uint8_t* source, uint8_t sourceLength, char* destination) {
   destination[sourceLength * 2] = '\0';
 }
 
+// Packing helpers for the binary offboard messages
+
+bool UnpackBit(uint8_t field, uint8_t bit) {
+  return (field & (1U << bit)) != 0;
+}
+
+void PackBit(uint8_t& field, uint8_t bit, bool value) {
+  if (value) {
+    field |= (1U << bit);
+  }
+}
+
+// Little endian, matching the AVR's native byte order and Python's '<H'.
+void PackUint16(uint8_t* buffer, uint16_t value) {
+  buffer[0] = static_cast<uint8_t>(value & 0xFF);
+  buffer[1] = static_cast<uint8_t>(value >> 8);
+}
+
 // Serialization helpers for comma-delimited ascii messages
-
-bool deserialize(bool& val, const uint8_t*& data, const uint8_t* end) {
-  if (data == end) {
-    return true;
-  }
-
-  bool error = false;
-  switch (*data) {
-    case '0':
-      val = false;
-      break;
-    case '1':
-      val = true;
-      break;
-    default:
-      error = true;
-  }
-  while (data != end && *data != '\n' && *data != ',') {
-    ++data;
-  }
-  if (data != end && *data == ',') {
-    ++data;
-  }
-  return error;
-}
-
-bool deserialize(uint8_t& val, const uint8_t*& data, const uint8_t* end) {
-  if (data == end || *data == '\n' || *data == ',') {
-    return true;
-  }
-
-  uint32_t tempVal = 0;
-  bool error = false;
-  while (data != end && *data != '\n' && *data != ',') {
-    switch (*data) {
-      case '0':
-      case '1':
-      case '2':
-      case '3':
-      case '4':
-      case '5':
-      case '6':
-      case '7':
-      case '8':
-      case '9':
-        tempVal = tempVal * 10 + (*data - '0');
-        break;
-      default:
-        error = true;
-    }
-    ++data;
-  }
-  if (tempVal > 255) {
-    error = true;
-    val = 0;
-  } else {
-    val = static_cast<uint8_t>(tempVal);
-  }
-  if (data != end && *data == ',') {
-    ++data;
-  }
-  return error;
-}
-
-bool deserialize(Mode& val, const uint8_t*& data, const uint8_t* end) {
-  uint8_t intMode;
-  bool retVal = deserialize(intMode, data, end);
-  val = static_cast<Mode>(intMode);
-  return retVal;
-}
 
 bool serialize(const uint8_t& val, uint8_t** buffer) {
   uint8_t digits = 1;
@@ -282,71 +250,81 @@ typedef struct {
   bool BUTTON_DOWN{false};
   bool BUTTON_LEFT{false};
 
-  bool deSerialize(uint8_t* data, uint8_t dataLength) {
-    bool error = false;
-
-    // Variable length, but must have at least one character per field including
-    // comma delimiters and integer fields can be no longer than 3 characters
-    // each.  Optional trailing comma delimiter.
-    if (dataLength < 49 || dataLength > 58) {
+  // Byte 0 is the format tag.  Bytes 1-3 are packed booleans, bytes 4-7 the
+  // four axes.  Exact length is required: a truncated frame must be rejected
+  // rather than parsed with its missing axes left at whatever the defaults are.
+  bool deSerialize(const uint8_t* data, uint8_t dataLength) {
+    if (dataLength != OFFBOARD_CMD_LENGTH || data[0] != OFFBOARD_CMD_TAG) {
       return false;
     }
 
-    const uint8_t* cursor = data;
-    const uint8_t* end = data + dataLength;
+    const uint8_t flagsA = data[1];
+    const uint8_t flagsB = data[2];
+    const uint8_t flagsC = data[3];
 
-    error = deserialize(ESTOP, cursor, end) || error;
-    error = deserialize(AUTO_ARM, cursor, end) || error;
-    error = deserialize(MANUAL_START, cursor, end) || error;
-    error = deserialize(RC_PRESENT, cursor, end) || error;
-    error = deserialize(AXIS_LX, cursor, end) || error;
-    error = deserialize(AXIS_LY, cursor, end) || error;
-    error = deserialize(AXIS_RX, cursor, end) || error;
-    error = deserialize(AXIS_RY, cursor, end) || error;
-    error = deserialize(BUTTON_X, cursor, end) || error;
-    error = deserialize(BUTTON_O, cursor, end) || error;
-    error = deserialize(BUTTON_SQUARE, cursor, end) || error;
-    error = deserialize(BUTTON_TRIANGLE, cursor, end) || error;
-    error = deserialize(BUTTON_L1, cursor, end) || error;
-    error = deserialize(BUTTON_R1, cursor, end) || error;
-    error = deserialize(BUTTON_L2, cursor, end) || error;
-    error = deserialize(BUTTON_R2, cursor, end) || error;
-    error = deserialize(BUTTON_L3, cursor, end) || error;
-    error = deserialize(BUTTON_R3, cursor, end) || error;
-    error = deserialize(BUTTON_SELECT, cursor, end) || error;
-    error = deserialize(BUTTON_START, cursor, end) || error;
-    error = deserialize(BUTTON_PS, cursor, end) || error;
-    error = deserialize(BUTTON_UP, cursor, end) || error;
-    error = deserialize(BUTTON_RIGHT, cursor, end) || error;
-    error = deserialize(BUTTON_DOWN, cursor, end) || error;
-    error = deserialize(BUTTON_LEFT, cursor, end) || error;
+    // Reserved bits must be zero.  This is what makes a future format revision
+    // fail closed on old firmware instead of decoding into garbage flags.
+    if ((flagsC & 0xE0) != 0) {
+      return false;
+    }
 
-    return !error;
+    ESTOP = UnpackBit(flagsA, 0);
+    AUTO_ARM = UnpackBit(flagsA, 1);
+    MANUAL_START = UnpackBit(flagsA, 2);
+    RC_PRESENT = UnpackBit(flagsA, 3);
+    BUTTON_X = UnpackBit(flagsA, 4);
+    BUTTON_O = UnpackBit(flagsA, 5);
+    BUTTON_SQUARE = UnpackBit(flagsA, 6);
+    BUTTON_TRIANGLE = UnpackBit(flagsA, 7);
+
+    BUTTON_L1 = UnpackBit(flagsB, 0);
+    BUTTON_R1 = UnpackBit(flagsB, 1);
+    BUTTON_L2 = UnpackBit(flagsB, 2);
+    BUTTON_R2 = UnpackBit(flagsB, 3);
+    BUTTON_L3 = UnpackBit(flagsB, 4);
+    BUTTON_R3 = UnpackBit(flagsB, 5);
+    BUTTON_SELECT = UnpackBit(flagsB, 6);
+    BUTTON_START = UnpackBit(flagsB, 7);
+
+    BUTTON_PS = UnpackBit(flagsC, 0);
+    BUTTON_UP = UnpackBit(flagsC, 1);
+    BUTTON_RIGHT = UnpackBit(flagsC, 2);
+    BUTTON_DOWN = UnpackBit(flagsC, 3);
+    BUTTON_LEFT = UnpackBit(flagsC, 4);
+
+    AXIS_LX = data[4];
+    AXIS_LY = data[5];
+    AXIS_RX = data[6];
+    AXIS_RY = data[7];
+
+    return true;
   }
 
 } FromOffboard;
 
 typedef struct {
   Mode MODE{Mode::ESTOP};
-  uint8_t BATTERY_LEVEL{255};
+  uint8_t BATTERY_LEVEL{0};
+  uint16_t BATTERY_MV{0};
   uint16_t STEERING_OUTPUT_US{0};
   uint16_t THROTTLE_OUTPUT_US{0};
+  uint16_t RPM{0};
 
+  // Raw millivolts travel alongside the scaled 0-255 level so the offboard
+  // display can show an actual pack voltage; the scaled field alone cannot be
+  // inverted once the endpoints change.
   bool serialize(uint8_t* buffer, uint8_t bufferSize) {
-    // Need enough space for max size values with comma delimiter and trailing
-    // '\n' and '\0'
-    if (bufferSize < 18) {
+    if (bufferSize < OFFBOARD_STATUS_LENGTH) {
       return false;
     }
 
-    ::serialize(MODE, &buffer);
-    ::serialize(BATTERY_LEVEL, &buffer);
-    ::serialize(STEERING_OUTPUT_US, &buffer);
-    ::serialize(THROTTLE_OUTPUT_US, &buffer);
-    *buffer = '\n';
-    ++(buffer);
-    *buffer = '\0';
-    ++(buffer);
+    buffer[0] = OFFBOARD_STATUS_TAG;
+    buffer[1] = static_cast<uint8_t>(MODE);
+    buffer[2] = BATTERY_LEVEL;
+    PackUint16(&buffer[3], BATTERY_MV);
+    PackUint16(&buffer[5], STEERING_OUTPUT_US);
+    PackUint16(&buffer[7], THROTTLE_OUTPUT_US);
+    PackUint16(&buffer[9], RPM);
     return true;
   }
 
@@ -921,8 +899,10 @@ void loop() {
   ToOffboard offboardFeedback;
   offboardFeedback.MODE = autoMode;
   offboardFeedback.BATTERY_LEVEL = batteryLevel;
+  offboardFeedback.BATTERY_MV = battery.milliVolts();
   offboardFeedback.STEERING_OUTPUT_US = steeringCmd;
   offboardFeedback.THROTTLE_OUTPUT_US = throttleCmd;
+  offboardFeedback.RPM = tach.rpm;
   offboardFeedback.serialize((uint8_t*)offboardTxPayload, sizeof(offboardTxPayload));
 
   // Transmit immediately after a valid offboard frame. SoftwareSerial disables
@@ -932,7 +912,9 @@ void loop() {
     // Offboard Tx
     // tx16.setAddress16(rx16.getRemoteAddress16());
     tx16.setAddress16(0);
-    tx16.setPayload(offboardTxPayload, GetPacketSize(offboardTxPayload, sizeof(offboardTxPayload)));
+    // Fixed length: a binary payload can legitimately contain '\n', so scanning
+    // for a terminator the way the Jetson frame does would truncate it.
+    tx16.setPayload(offboardTxPayload, OFFBOARD_STATUS_LENGTH);
     if (enableOffboardTx) {
       xbee.send(tx16);
     }
