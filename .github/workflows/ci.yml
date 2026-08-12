@@ -1,0 +1,67 @@
+# Build and test the ROS 2 workspace
+
+name: CI
+
+on:
+  pull_request:
+
+jobs:
+  build-and-test:
+    name: Build and test
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
+    runs-on: ubuntu-latest
+    container:
+      image: ros:jazzy-ros-base
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install ROS dependencies
+        shell: bash
+        run: |
+          apt-get update
+          rosdep update
+          rosdep install \
+            --from-paths jetson \
+            --ignore-src \
+            --rosdistro jazzy \
+            --reinstall \
+            -r \
+            -y
+
+      - name: Build and test
+        shell: bash
+        env:
+          ROS2_WS: ${{ github.workspace }}/ros2_ws
+          ROS_DISTRO: jazzy
+        run: ./jetson/scripts/build.sh --test
+
+      - name: Publish test results
+        if: always()
+        uses: EnricoMi/publish-unit-test-result-action@d0a4676d0e0b938bc201470d88276b7c74c712b3 # v2.24.0
+        with:
+          files: |
+            ros2_ws/build/**/test_results/**/*.xml
+
+  arduino-build:
+    name: Build Arduino firmware
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Arduino CLI
+        uses: arduino/setup-arduino-cli@81d310742121c928ea9c8bbd407b4217b432ae02 # v2.0.0
+
+      - name: Install Arduino AVR core and libraries
+        run: |
+          arduino-cli core update-index
+          arduino-cli core install arduino:avr
+          git clone https://github.com/andrewrapp/xbee-arduino.git "$HOME/Arduino/libraries/XBee"
+          git -C "$HOME/Arduino/libraries/XBee" checkout --detach 39f236ea1827fd5fe3ce66ffcc07433ab8ab9197
+
+      - name: Compile Arduino Uno firmware
+        run: arduino-cli compile --fqbn arduino:avr:uno src/arduino_rcm
