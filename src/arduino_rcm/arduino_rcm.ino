@@ -30,6 +30,78 @@ uint16_t PulseUsToTicks(uint16_t pulse_us) {
   return pulse_us * PWM_TICKS_PER_US;
 }
 
+// Tachometer input (pin 8, PB0/PCINT0).
+//
+// The Traxxas RPM sensor is a hall switch watching a trigger magnet in the spur
+// gear, so it produces one pulse - two edges - per spur revolution.
+//
+// This deliberately does NOT install an interrupt handler.  SoftwareSerial
+// keeps interrupts disabled for a full byte time (~174us at 57600 baud) and
+// services the bytes of an XBee frame back to back, so any ISR can be starved
+// for milliseconds at a stretch; edges arriving in that window would be lost
+// outright.  Instead the pin's PCINT mask bit is set while its group interrupt
+// enable (PCIE0) is left clear.  The hardware still latches PCIF0 on every
+// edge, and a flag set by hardware is unaffected by cli() - it simply waits
+// until the main loop reads it.
+//
+// The cost is that PCIF0 is a single bit, so one poll observes "at least one
+// edge" rather than a count.  Polling happens at loop rate, and the only stalls
+// long enough to merge two edges at speed are the blocking SoftwareSerial
+// transmits, which the packed binary offboard frame keeps near 1ms.
+//
+// PIN CHOICE: pin 5 is the natural candidate (it is broken out on the shield,
+// and it is T1, the hardware counter input) but it does not work here.  T1 is
+// Timer1's external clock source and Timer1 is fully committed to the servo
+// PWM above (ICR1 as TOP, OCR1A/OCR1B as the two compare outputs).  Pin 5 also
+// sits in PORTD, whose PCINT2 group belongs to SoftwareSerial's receive
+// vector: adding a mask bit there would run the SoftwareSerial ISR on every
+// tach edge, and that ISR clears PCIF2 before the main loop could ever see it.
+// PORTB's group is unused, so pin 8 gets a latch of its own.
+constexpr uint8_t TACH_PCINT_BIT = PCINT0;
+// Minimum gate length.  Longer windows average more edges, at the cost of
+// slower response to a step in wheel speed.
+constexpr uint16_t TACH_WINDOW_MS = 200;
+// No edges for this long means stopped rather than "no new estimate".  Must
+// exceed the pulse interval at the slowest speed worth reporting.
+constexpr uint16_t TACH_STALL_MS = 500;
+// A pin change interrupt latches both the rising and the falling edge.
+constexpr uint8_t TACH_EDGES_PER_PULSE = 2;
+// Trigger magnets installed in the spur gear.
+constexpr uint8_t TACH_PULSES_PER_REV = 1;
+
+// Battery monitor (A0).
+//
+// Divider is 100k (pack) / 9.09k (ground), both 1%, with 100nF across the
+// bottom leg.  Ratio 9.09/109.09 = 0.083325 and a 8.3k Thevenin source
+// impedance, just inside the ADC's 10k guideline.
+//
+// The reference is the internal 1.1V bandgap rather than AVCC.  AVCC is the
+// board's 5V rail, which moves several percent with USB and regulator load;
+// referred back through the divider that is hundreds of millivolts of error at
+// the pack.  The bandgap is only specified to 1.0-1.2V but it is stable, so a
+// one-time calibration removes the offset.
+//
+// 1.1V / 1024 counts = 1.0742mV per count at the pin, / 0.083325 = 12.89mV per
+// count at the pack.  CALIBRATION: read a known pack voltage with a meter,
+// compare against the reported millivolts, and scale this constant by
+// (meter / reported).
+constexpr uint32_t BATTERY_UV_PER_COUNT = 12890UL;
+constexpr uint8_t BATTERY_ADC_CHANNEL = 0;
+// Averaging 64 conversions recovers roughly three bits, which puts the
+// quantization well below what the 8-bit BATTERY_LEVEL field can carry.
+constexpr uint8_t BATTERY_OVERSAMPLE = 64;
+// The bandgap needs time to settle after being selected as the reference; the
+// first few conversions after startup read low.
+constexpr uint8_t BATTERY_WARMUP_SAMPLES = 8;
+// Exponential filter over the averaged blocks.  A block is 64 * 104us = 6.7ms,
+// so shifting by 7 (N = 128) gives roughly a 0.85s time constant - slow enough
+// to ride through throttle sag instead of reporting it as a discharged pack.
+constexpr uint8_t BATTERY_FILTER_SHIFT = 7;
+// Endpoints of the reported 0-255 scale.  3S lithium polymer: 4.2V per cell
+// charged, and a 3.33V per cell floor.
+constexpr uint16_t BATTERY_EMPTY_MV = 10000;
+constexpr uint16_t BATTERY_FULL_MV = 12600;
+
 void CopyRejectedJetsonFrame(const uint8_t* source,
                              uint8_t sourceLength,
                              uint8_t* destination,
@@ -377,6 +449,151 @@ bool IsNearlyCenter(uint8_t value, uint8_t centerValue = 127, uint8_t tolerance 
   return (value >= (centerValue - tolerance)) && (value <= (centerValue + tolerance));
 }
 
+// Sensors
+
+struct Tachometer {
+  uint16_t edgeCount{0};
+  unsigned long firstEdgeUs{0};
+  unsigned long latestEdgeUs{0};
+  unsigned long latestEdgeMs{0};
+  unsigned long windowStartMs{0};
+  uint16_t rpm{0};
+
+  void begin() {
+    DDRB &= ~_BV(DDB0);     // input
+    PORTB &= ~_BV(PORTB0);  // no internal pullup; the sensor supplies its own
+    PCMSK0 = _BV(TACH_PCINT_BIT);
+    PCICR &= ~_BV(PCIE0);  // flag only.  Deliberately no vector - see above.
+    PCIFR = _BV(PCIF0);    // write 1 to clear anything latched during boot
+  }
+
+  // Cheap enough to call every loop iteration, and worth calling again
+  // immediately after anything that blocks.
+  void poll(unsigned long nowMs) {
+    if (!(PCIFR & _BV(PCIF0))) {
+      return;
+    }
+    PCIFR = _BV(PCIF0);
+    const unsigned long nowUs = micros();
+    if (edgeCount == 0) {
+      firstEdgeUs = nowUs;
+    }
+    latestEdgeUs = nowUs;
+    latestEdgeMs = nowMs;
+    ++edgeCount;
+  }
+
+  void update(unsigned long nowMs) {
+    if (IsTimedOut(latestEdgeMs, nowMs, TACH_STALL_MS)) {
+      rpm = 0;
+      edgeCount = 0;
+      windowStartMs = nowMs;
+      return;
+    }
+    if ((nowMs - windowStartMs) < TACH_WINDOW_MS) {
+      return;
+    }
+    windowStartMs = nowMs;
+    if (edgeCount < 2) {
+      // Not enough edges to bound an interval.  Hold the previous estimate
+      // rather than reporting a spuriously low speed; the stall check above is
+      // what decides the wheels have actually stopped.
+      return;
+    }
+
+    // Timing the span between the first and last edge of the window, rather
+    // than counting edges inside a fixed gate, keeps resolution usable: a plain
+    // 200ms gate quantizes to 300 RPM per count, while this is limited only by
+    // the poll latency at each end of the span.
+    const unsigned long spanUs = latestEdgeUs - firstEdgeUs;
+    const uint32_t spanMs = (spanUs + 500UL) / 1000UL;
+    if (spanMs > 0) {
+      constexpr uint32_t edgesPerRev = static_cast<uint32_t>(TACH_EDGES_PER_PULSE) * TACH_PULSES_PER_REV;
+      const uint32_t scaled = (static_cast<uint32_t>(edgeCount - 1) * 60000UL) / (spanMs * edgesPerRev);
+      rpm = (scaled > 0xFFFFUL) ? 0xFFFFU : static_cast<uint16_t>(scaled);
+    }
+
+    // Carry the closing edge forward as the opening edge of the next window so
+    // the measurement stays continuous instead of discarding one interval per
+    // window.
+    edgeCount = 1;
+    firstEdgeUs = latestEdgeUs;
+  }
+};
+
+struct BatteryMonitor {
+  uint32_t accumulator{0};
+  uint8_t sampleCount{0};
+  uint8_t warmup{BATTERY_WARMUP_SAMPLES};
+  int32_t filteredMvQ8{0};
+  bool valid{false};
+
+  void begin() {
+    // REFS1:0 = 11 selects the internal 1.1V bandgap.
+    ADMUX = _BV(REFS1) | _BV(REFS0) | BATTERY_ADC_CHANNEL;
+    // /128 prescaler = 125kHz, inside the 50-200kHz window the datasheet wants
+    // for full 10-bit accuracy.  13 clocks per conversion = 104us, and because
+    // conversions are started and collected by polling, none of that blocks.
+    ADCSRA = _BV(ADEN) | _BV(ADPS2) | _BV(ADPS1) | _BV(ADPS0);
+    ADCSRB = 0;
+    DIDR0 = _BV(ADC0D);  // disable the digital input buffer to cut ADC noise
+    ADCSRA |= _BV(ADSC);
+  }
+
+  // NOTE: this owns ADMUX/ADCSRA outright.  Calling analogRead() anywhere in
+  // this sketch would reset the reference selection back to AVCC and silently
+  // scale every reading by 4.5x.
+  void poll() {
+    if (ADCSRA & _BV(ADSC)) {
+      return;  // conversion still running
+    }
+    const uint16_t raw = ADC;
+    ADCSRA |= _BV(ADSC);  // chain the next conversion immediately
+
+    if (warmup > 0) {
+      --warmup;
+      return;
+    }
+
+    accumulator += raw;
+    if (++sampleCount < BATTERY_OVERSAMPLE) {
+      return;
+    }
+    // 64 * 1023 * 12890 fits comfortably inside 32 bits.
+    const uint16_t mv = static_cast<uint16_t>((accumulator * BATTERY_UV_PER_COUNT) / (1000UL * BATTERY_OVERSAMPLE));
+    accumulator = 0;
+    sampleCount = 0;
+
+    const int32_t sampleQ8 = static_cast<int32_t>(mv) << 8;
+    if (!valid) {
+      filteredMvQ8 = sampleQ8;  // seed rather than ramping up from zero
+      valid = true;
+    } else {
+      filteredMvQ8 += (sampleQ8 - filteredMvQ8) >> BATTERY_FILTER_SHIFT;
+    }
+  }
+
+  uint16_t milliVolts() const { return static_cast<uint16_t>(filteredMvQ8 >> 8); }
+
+  uint8_t level() const {
+    if (!valid) {
+      return 0;
+    }
+    const uint16_t mv = milliVolts();
+    if (mv <= BATTERY_EMPTY_MV) {
+      return 0;
+    }
+    if (mv >= BATTERY_FULL_MV) {
+      return 255;
+    }
+    return static_cast<uint8_t>((static_cast<uint32_t>(mv - BATTERY_EMPTY_MV) * 255UL) /
+                                (BATTERY_FULL_MV - BATTERY_EMPTY_MV));
+  }
+};
+
+Tachometer tach;
+BatteryMonitor battery;
+
 struct XBeeRx16Parser {
   static const uint8_t maxFrameLength = 64;
 
@@ -516,6 +733,9 @@ void setup() {
   ICR1 = PWM_PERIOD_TICKS - 1;
   OCR1A = PulseUsToTicks(1500);  // steering, centered
   OCR1B = PulseUsToTicks(1500);  // throttle, centered
+
+  tach.begin();
+  battery.begin();
 }
 
 void loop() {
@@ -539,6 +759,12 @@ void loop() {
   static uint8_t lastRejectedJetsonFrame[sizeof(onboardRxPayload)] = {};
   static uint8_t lastRejectedJetsonFrameLength = 0;
   bool receivedOffboardMessage = false;
+
+  // Sensors.  Both are polled rather than interrupt driven, so they cost a few
+  // register reads here and nothing anywhere else.
+  tach.poll(now);
+  tach.update(now);
+  battery.poll();
 
   // Offboard Rx
   uint8_t* offboardPayload = nullptr;
@@ -682,8 +908,7 @@ void loop() {
   OCR1B = PulseUsToTicks(throttleCmd);
   OCR1A = PulseUsToTicks(steeringCmd);
 
-  /// @todo Read battery level
-  uint8_t batteryLevel = 255;
+  const uint8_t batteryLevel = battery.level();
 
   ToJetson onboardFeedback;
   onboardFeedback.ESTOP = offboardState.ESTOP;
@@ -712,6 +937,10 @@ void loop() {
       xbee.send(tx16);
     }
     lastXBeeTx = now;
+    // send() busy-waits with interrupts off for the whole frame.  PCIF0 held any
+    // edge that arrived during it; collect it now so the timestamp is as close
+    // to the edge as this architecture allows.
+    tach.poll(millis());
   }
 
   if (now - lastOnboardTx >= 50) {
@@ -723,7 +952,7 @@ void loop() {
       // five-field status frame consumed by the Jetson bridge.
       const int debugLength = snprintf(reinterpret_cast<char*>(onboardDebugPayload),
                                        sizeof(onboardDebugPayload),
-                                       "D,%lu,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s\n",
+                                       "D,%lu,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s\n",
                                        now,
                                        validJetsonFrames,
                                        invalidJetsonFrames,
@@ -733,6 +962,8 @@ void loop() {
                                        static_cast<uint8_t>(autoMode),
                                        steeringCmd,
                                        throttleCmd,
+                                       tach.rpm,
+                                       battery.milliVolts(),
                                        lastRejectedJetsonFrameLength,
                                        rejectedHex);
       if (debugLength > 0 && debugLength < static_cast<int>(sizeof(onboardDebugPayload))) {
