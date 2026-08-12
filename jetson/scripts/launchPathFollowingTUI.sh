@@ -153,6 +153,28 @@ source "/opt/ros/$ROS_DISTRO_NAME/setup.bash"
 source "$ROS2_WS/install/setup.bash"
 set -u
 
+echo "waiting for ZED odometry"
+odom_ready=false
+for _ in {1..30}; do
+    if [[ "$NO_STACK" != true ]] && ! kill -0 "$STACK_PID" 2>/dev/null; then
+        echo "error: actuator/camera stack exited before ZED odometry became available" >&2
+        tail -n 20 "$LOG_DIR/stack.log" >&2
+        exit 1
+    fi
+    if ros2 topic list 2>/dev/null | grep -qx "/zed/zed_node/odom"; then
+        odom_ready=true
+        break
+    fi
+    sleep 1
+done
+if [[ "$odom_ready" != true ]]; then
+    echo "error: ZED odometry topic /zed/zed_node/odom did not appear" >&2
+    if [[ "$NO_STACK" != true ]]; then
+        tail -n 20 "$LOG_DIR/stack.log" >&2
+    fi
+    exit 1
+fi
+
 echo "starting path_follower_node (log: $LOG_DIR/path_follower.log)"
 setsid ros2 launch cfr_arduino_bridge path_follower.launch.py \
     "cmd_vel_topic:=/path_follower/cmd_vel" >"$LOG_DIR/path_follower.log" 2>&1 &
