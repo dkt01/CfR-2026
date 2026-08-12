@@ -20,6 +20,7 @@ repos:
     rev: 'v22.1.8'
     hooks:
     -   id: clang-format
+        files: \.(c|cc|cpp|cxx|h|hh|hpp|hxx|ino)$
 -   repo: https://github.com/astral-sh/ruff-pre-commit
     # Ruff version.
     rev: v0.15.22
