@@ -102,10 +102,18 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-command -v rsync >/dev/null || {
-  echo "error: rsync is not installed on this host" >&2
+HAS_RSYNC=false
+if command -v rsync >/dev/null; then
+  HAS_RSYNC=true
+elif ! command -v scp >/dev/null; then
+  echo "error: neither rsync nor scp is installed on this host" >&2
   exit 1
-}
+fi
+
+if [[ "${HAS_RSYNC}" != true && "${DELETE}" == true ]]; then
+  echo "error: --delete requires rsync; scp fallback cannot remove remote files" >&2
+  exit 1
+fi
 
 if [[ ! -d "${SOURCE_DIR}/cfr_arduino_bridge" ]]; then
   echo "error: ${SOURCE_DIR} does not look like the jetson source directory" >&2
@@ -131,7 +139,35 @@ echo "syncing ${SOURCE_DIR}/ -> ${REMOTE_HOST}:${REMOTE_DIR}/"
 
 # Trailing slashes matter: copy the contents of jetson/, not the directory.
 ssh "${REMOTE_HOST}" "mkdir -p ${REMOTE_DIR}"
-rsync "${rsync_args[@]}" "${SOURCE_DIR}/" "${REMOTE_HOST}:${REMOTE_DIR}/"
+if [[ "${HAS_RSYNC}" == true ]]; then
+  rsync "${rsync_args[@]}" "${SOURCE_DIR}/" "${REMOTE_HOST}:${REMOTE_DIR}/"
+else
+  echo "rsync unavailable; using scp fallback"
+  while IFS= read -r source_file; do
+    relative_file="${source_file#"${SOURCE_DIR}/"}"
+    remote_file="${REMOTE_DIR}/${relative_file}"
+    if [[ "${DRY_RUN}" == true ]]; then
+      printf 'would copy %s -> %s:%s\n' "${source_file}" "${REMOTE_HOST}" "${remote_file}"
+    else
+      remote_directory="${REMOTE_DIR}/$(dirname "${relative_file}")"
+      ssh "${REMOTE_HOST}" "mkdir -p ${remote_directory}"
+      scp "${source_file}" "${REMOTE_HOST}:${remote_file}"
+    fi
+  done < <(find "${SOURCE_DIR}" -type f \
+    ! -path "${SOURCE_DIR}/.git/*" \
+    ! -path "${SOURCE_DIR}/build/*" \
+    ! -path "${SOURCE_DIR}/install/*" \
+    ! -path "${SOURCE_DIR}/log/*" \
+    ! -path "${SOURCE_DIR}/logs/*" \
+    ! -path "${SOURCE_DIR}/bin/*" \
+    ! -path "${SOURCE_DIR}/lib/*" \
+    ! -path '*/__pycache__/*' \
+    ! -name '*.pyc' \
+    ! -name '*.swp' \
+    ! -name '*~' \
+    ! -name '.DS_Store' \
+    -print)
+fi
 
 if [[ "${DRY_RUN}" == true ]]; then
   echo "dry run complete"
