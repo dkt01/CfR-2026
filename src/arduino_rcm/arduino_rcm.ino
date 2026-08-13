@@ -685,6 +685,152 @@ int PctToPulseLength(uint8_t throttle, bool deadband = true, uint8_t scaleDiviso
   }
 }
 
+// Low speed throttle dithering.
+//
+// The VXL-3S ignores +/-50us around 1500us outright, and the slowest speed it
+// will actually hold - a hair past that deadband - is already faster than path
+// following wants.  The ESC's floor, not the command resolution, is what sets
+// minimum speed, so no amount of finer pulse width buys anything.
+//
+// That deadband is expensive at the scaling this sketch uses.  THROTTLE_SCALE_
+// DIVISOR makes the auto-mode map exactly 1us per count over [1373us,1628us],
+// so the dead +/-50us swallows 101 of the 255 command counts - roughly 40% of
+// the Jetson's authority - and leaves only ~73us of live pulse on the forward
+// side.
+//
+// Instead the output stage time-averages.  For a request smaller than the
+// smallest pulse the ESC responds to, it alternates that pulse with neutral
+// frame by frame and lets the vehicle's inertia average the result.  This also
+// removes the need for a separate deadband compensation: the region the ESC
+// used to ignore outright is now the duty-controlled crawl region, so the
+// command to motion map is monotonic all the way down to neutral.
+//
+// Duty comes from a first order sigma-delta rather than a divide-by-N counter
+// because the error feedback spreads the active frames as evenly as a 50Hz
+// frame rate allows, which keeps the ripple high frequency enough for the car
+// to smooth mechanically.
+//
+// The averaged speed is monotonic in duty but NOT linear - the car accelerates
+// on an active frame and coasts against drag on an idle one - and below some
+// duty static friction wins and it does not move at all.  Open loop this is
+// enough to crawl; linearizing it is a job for closing the loop on the
+// tachometer.
+constexpr uint16_t THROTTLE_NEUTRAL_US = 1500;
+// Smallest offset from neutral the ESC actually responds to.  The measured
+// deadband edge is 50us, and a pulse sitting exactly on that edge responds
+// weakly and inconsistently, so this carries a little margin past it.
+//
+// MEASURE THIS: on blocks, walk the pulse up from 1500us until the wheels turn
+// every time rather than sometimes.  Too low and the active frames do nothing,
+// which reads as a dead zone that got wider rather than narrower; too high and
+// each active frame is a bigger kick, so the crawl is coarser and lurchier than
+// it needs to be.  Setting it to 0 disables dithering entirely and restores the
+// previous straight-through behavior.
+constexpr uint16_t THROTTLE_DITHER_ACTIVE_US = 55;
+// Duty is carried as a fraction of this.  A power of two keeps the sigma-delta
+// down to an add and a compare.
+constexpr uint16_t THROTTLE_DITHER_SCALE = 256;
+// Duty times the 50Hz frame rate is the rate at which torque pulses arrive at
+// the drivetrain.  Below roughly 10Hz they stop blending into motion and read
+// as lurching, so anything under this floor is dropped to neutral rather than
+// hammering the gear lash for no useful speed.
+constexpr uint16_t THROTTLE_DITHER_MIN_DUTY = 51;  // 20% of scale -> 10Hz
+// Dithering the reverse side would walk the ESC from neutral to reverse-side
+// throttle tens of times a second, and the VXL-3S arbitrates brake against
+// reverse on exactly that transition.  Sub-minimum reverse requests are held at
+// neutral instead, which is what the ESC already does with them today.
+constexpr bool THROTTLE_DITHER_REVERSE = false;
+
+// Owns OCR1B outright.  Nothing else may write it: a write from elsewhere in
+// the main loop would land in the same double buffer and silently drop a
+// dither frame.
+struct ThrottleOutput {
+  uint16_t idleUs{THROTTLE_NEUTRAL_US};
+  uint16_t activeUs{THROTTLE_NEUTRAL_US};
+  uint16_t duty{0};
+  uint16_t accumulator{0};
+  int8_t activeSign{0};
+
+  void begin() {
+    OCR1B = PulseUsToTicks(THROTTLE_NEUTRAL_US);
+    TIFR1 = _BV(TOV1);  // write 1 to clear anything latched during boot
+  }
+
+  // Requested pulse in microseconds - exactly the value that used to be written
+  // straight to OCR1B.  Cheap enough to call every loop iteration.
+  void set(uint16_t pulseUs) {
+    const int16_t offset = static_cast<int16_t>(pulseUs) - static_cast<int16_t>(THROTTLE_NEUTRAL_US);
+    const int16_t magnitude = (offset < 0) ? -offset : offset;
+    const int8_t sign = (offset < 0) ? -1 : ((offset > 0) ? 1 : 0);
+
+    // Big enough for the ESC to act on by itself - pass it through untouched.
+    if (magnitude >= static_cast<int16_t>(THROTTLE_DITHER_ACTIVE_US)) {
+      setSteady(pulseUs, sign);
+      return;
+    }
+    // Reverse side with reverse dithering off.  The ESC ignores this request
+    // today, so holding neutral keeps that behavior instead of inventing a
+    // lurch the caller did not ask for.
+    if (sign < 0 && !THROTTLE_DITHER_REVERSE) {
+      setSteady(THROTTLE_NEUTRAL_US, 0);
+      return;
+    }
+
+    const uint16_t requestedDuty =
+        static_cast<uint16_t>((static_cast<uint32_t>(magnitude) * THROTTLE_DITHER_SCALE) / THROTTLE_DITHER_ACTIVE_US);
+    if (requestedDuty < THROTTLE_DITHER_MIN_DUTY) {
+      setSteady(THROTTLE_NEUTRAL_US, 0);
+      return;
+    }
+
+    if (sign != activeSign) {
+      accumulator = 0;  // no carrying accumulated error across a direction change
+    }
+    activeSign = sign;
+    idleUs = THROTTLE_NEUTRAL_US;
+    activeUs = (sign > 0) ? (THROTTLE_NEUTRAL_US + THROTTLE_DITHER_ACTIVE_US) :
+                            (THROTTLE_NEUTRAL_US - THROTTLE_DITHER_ACTIVE_US);
+    duty = requestedDuty;
+  }
+
+  // Advances one dither frame per PWM period.  Polled from the main loop rather
+  // than driven by an ISR for the same reason the tachometer is: SoftwareSerial
+  // holds interrupts off for milliseconds at a stretch, but TOV1 is set by
+  // hardware and simply waits.  Missing a poll repeats one frame, which nudges
+  // the realized duty rather than glitching the pulse, so it degrades quietly.
+  void poll() {
+    if (!(TIFR1 & _BV(TOV1))) {
+      return;
+    }
+    TIFR1 = _BV(TOV1);
+
+    uint16_t pulseUs = idleUs;
+    accumulator += duty;
+    if (accumulator >= THROTTLE_DITHER_SCALE) {
+      accumulator -= THROTTLE_DITHER_SCALE;
+      pulseUs = activeUs;
+    }
+    // TOV1 is set as the counter wraps, which in fast PWM is also when the
+    // compare double buffer latches, so this write takes effect on the
+    // following frame - the same latency the direct OCR1B write it replaces
+    // already had.
+    OCR1B = PulseUsToTicks(pulseUs);
+  }
+
+ private:
+  void setSteady(uint16_t pulseUs, int8_t sign) {
+    if (sign != activeSign) {
+      accumulator = 0;
+    }
+    activeSign = sign;
+    idleUs = pulseUs;
+    activeUs = pulseUs;
+    duty = 0;  // sigma-delta never fires, so every frame emits idleUs
+  }
+};
+
+ThrottleOutput throttle;
+
 // Main Code
 
 void setup() {
@@ -712,8 +858,8 @@ void setup() {
   TCCR1B = _BV(WGM13) | _BV(WGM12) | _BV(CS11);
   ICR1 = PWM_PERIOD_TICKS - 1;
   OCR1A = PulseUsToTicks(1500);  // steering, centered
-  OCR1B = PulseUsToTicks(1500);  // throttle, centered
 
+  throttle.begin();  // owns OCR1B, and centers it
   tach.begin();
   battery.begin();
 }
@@ -745,6 +891,10 @@ void loop() {
   tach.poll(now);
   tach.update(now);
   battery.poll();
+  // Polled here as well as after the command is computed below, so a PWM frame
+  // that elapses during the blocking transmits at the end of the previous
+  // iteration still advances the dither on schedule.
+  throttle.poll();
 
   // Offboard Rx
   uint8_t* offboardPayload = nullptr;
@@ -885,7 +1035,8 @@ void loop() {
       steeringCmd = PctToPulseLength(127);
   }
 
-  OCR1B = PulseUsToTicks(throttleCmd);
+  throttle.set(throttleCmd);
+  throttle.poll();
   OCR1A = PulseUsToTicks(steeringCmd);
 
   const uint8_t batteryLevel = battery.level();
@@ -924,8 +1075,10 @@ void loop() {
     lastXBeeTx = now;
     // send() busy-waits with interrupts off for the whole frame.  PCIF0 held any
     // edge that arrived during it; collect it now so the timestamp is as close
-    // to the edge as this architecture allows.
+    // to the edge as this architecture allows.  TOV1 was latched through it the
+    // same way, so a PWM frame that elapsed during the send is not lost.
     tach.poll(millis());
+    throttle.poll();
   }
 
   if (now - lastOnboardTx >= 50) {
@@ -937,7 +1090,12 @@ void loop() {
       // five-field status frame consumed by the Jetson bridge.
       const int debugLength = snprintf(reinterpret_cast<char*>(onboardDebugPayload),
                                        sizeof(onboardDebugPayload),
-                                       "D,%lu,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s\n",
+                                       // Dither duty is appended last, out of
+                                       // THROTTLE_DITHER_SCALE, and reads 0
+                                       // whenever the pulse is going out
+                                       // steady.  throttleCmd remains the
+                                       // requested pulse, not the dithered one.
+                                       "D,%lu,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,%u\n",
                                        now,
                                        validJetsonFrames,
                                        invalidJetsonFrames,
@@ -950,7 +1108,8 @@ void loop() {
                                        tach.rpm,
                                        battery.milliVolts(),
                                        lastRejectedJetsonFrameLength,
-                                       rejectedHex);
+                                       rejectedHex,
+                                       throttle.duty);
       if (debugLength > 0 && debugLength < static_cast<int>(sizeof(onboardDebugPayload))) {
         Serial.write(onboardDebugPayload, static_cast<size_t>(debugLength));
       }
