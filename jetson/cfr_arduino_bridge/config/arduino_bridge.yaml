@@ -23,7 +23,7 @@ arduino_bridge:
 
     # Actuator limits.  Start conservative: the VXL-3S on a Slash 4X4 will
     # happily do 50+ mph at full throttle.
-    max_throttle: 0.25
+    max_throttle: 1.0
     max_steering: 1.0
     throttle_slew_per_s: 2.0
 
@@ -38,7 +38,7 @@ arduino_bridge:
 cmd_vel_to_drive:
   ros__parameters:
     wheelbase: 0.324               # Traxxas Slash 4X4, metres
-    max_speed: 4.0                 # m/s that maps to full throttle
+    max_speed: 8.0                 # m/s that maps to full throttle
     max_steering_angle: 0.40       # rad at full lock
     min_speed_for_steering: 0.3    # floor speed for the bicycle model
     cmd_timeout: 0.3
@@ -48,8 +48,8 @@ path_follower:
   ros__parameters:
     # Keep these well below cmd_vel_to_drive's max_speed/max_steering_angle:
     # path_follower has no obstacle awareness, it only tracks odometry.
-    cruise_speed: 0.3          # m/s on a STRAIGHT segment
-    turn_speed: 0.2            # m/s on a TURN segment (must stay nonzero, see path_geometry.hpp)
+    cruise_speed: 3.2          # m/s on a STRAIGHT segment
+    turn_speed: 3.2            # m/s on a TURN segment (must stay nonzero, see path_geometry.hpp)
     turn_rate: 0.5             # rad/s commanded on a TURN segment
     heading_kp: 0.5            # P gain holding heading during a STRAIGHT segment
     heading_deadband: 0.01     # rad, ignore stationary ZED yaw noise below ~0.6 deg
