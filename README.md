@@ -152,3 +152,8 @@ Conversions are started and collected by polling, so the ADC never blocks and ne
 * [Traxxas VXL-3S ESC](https://traxxas.com/media/productattach/3350R/8/KC2014-R02-3355R-VXL-3s-Installation%20Instruction_160217-ML_WEB_EN.pdf)
 * [ATmega328P datasheet](https://ww1.microchip.com/downloads/en/DeviceDoc/Atmel-7810-Automotive-Microcontrollers-ATmega328P_Datasheet.pdf) — timer, pin change interrupt, and ADC chapters
 * [SparkFun XBee Shield hookup guide](https://learn.sparkfun.com/tutorials/xbee-shield-hookup-guide)
+
+### Gotchas
+
+* The VXL-3S ESC has a 50us deadband around 1500us pulse length.
+* The VXL-3S ESC does not power on when the Arduino is already sending signals.  One work around is to power on the autonomy layer after powering on the ESC.
