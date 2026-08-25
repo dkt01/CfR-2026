@@ -44,13 +44,25 @@ cmd_vel_to_drive:
     cmd_timeout: 0.3
     publish_rate_hz: 50.0
 
+sim_vehicle:
+  ros__parameters:
+    # Model ESC neutral as a coast, rather than a zero wheel-speed command.
+    # Lower deceleration makes the simulated Slash roll farther after throttle
+    # returns to neutral. Gazebo's tire contact brakes forward motion more than
+    # reverse, so these command-side values compensate to make world-space
+    # coast distance symmetric.
+    neutral_throttle_deadband: 0.03
+    neutral_coast_deceleration: 0.3  # m/s^2 fallback for both directions
+    forward_neutral_coast_deceleration: 0.1  # m/s^2
+    reverse_neutral_coast_deceleration: 0.3  # m/s^2
+
 path_follower:
   ros__parameters:
     # Keep these well below cmd_vel_to_drive's max_speed/max_steering_angle:
     # path_follower has no obstacle awareness, it only tracks odometry.
     cruise_speed: 3.2          # m/s on a STRAIGHT segment
     turn_speed: 3.2            # m/s on a TURN segment (must stay nonzero, see path_geometry.hpp)
-    turn_rate: 0.5             # rad/s commanded on a TURN segment
+    turn_rate: 2.0             # rad/s commanded on a TURN segment
     heading_kp: 0.5            # P gain holding heading during a STRAIGHT segment
     heading_deadband: 0.01     # rad, ignore stationary ZED yaw noise below ~0.6 deg
     max_angular: 0.10          # rad/s clamp; limits steering response to ZED yaw noise

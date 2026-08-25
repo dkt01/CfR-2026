@@ -48,6 +48,9 @@ ament_target_dependencies(arduino_bridge_node rclcpp cfr_interfaces)
 add_executable(cmd_vel_to_drive_node src/cmd_vel_to_drive_node.cpp)
 ament_target_dependencies(cmd_vel_to_drive_node rclcpp cfr_interfaces geometry_msgs)
 
+add_executable(sim_vehicle_node src/sim_vehicle_node.cpp)
+ament_target_dependencies(sim_vehicle_node rclcpp cfr_interfaces geometry_msgs)
+
 add_executable(path_follower_node src/path_follower_node.cpp)
 target_link_libraries(path_follower_node cfr_path_geometry)
 ament_target_dependencies(path_follower_node rclcpp rclcpp_action cfr_interfaces geometry_msgs nav_msgs std_srvs)
@@ -62,19 +65,23 @@ install(TARGETS cfr_arduino_protocol cfr_path_geometry
 # `ros2 run` and launch_ros resolve executables from lib/<package>, so that
 # copy has to stay.  bin/ is installed alongside it so the nodes can also be
 # invoked directly off the install prefix.
-install(TARGETS arduino_bridge_node cmd_vel_to_drive_node path_follower_node
+install(TARGETS arduino_bridge_node cmd_vel_to_drive_node sim_vehicle_node path_follower_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
-install(TARGETS arduino_bridge_node cmd_vel_to_drive_node path_follower_node
+install(TARGETS arduino_bridge_node cmd_vel_to_drive_node sim_vehicle_node path_follower_node
   RUNTIME DESTINATION bin
+)
+
+install(PROGRAMS src/teleport_api.py
+  DESTINATION lib/${PROJECT_NAME}
 )
 
 install(DIRECTORY include/
   DESTINATION include
 )
 
-install(DIRECTORY config launch
+install(DIRECTORY config launch worlds
   DESTINATION share/${PROJECT_NAME}
 )
 

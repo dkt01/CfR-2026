@@ -1,0 +1,171 @@
+:root {
+    color: #17242a;
+    background: #dce5dc;
+    font-family: Georgia, "Times New Roman", serif;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    min-width: 320px;
+}
+
+main {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto auto;
+    height: 100vh;
+    padding: 18px;
+    gap: 12px;
+}
+
+header,
+footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+}
+
+.eyebrow {
+    margin: 0 0 2px;
+    color: #a33a18;
+    font: 700 12px/1.2 ui-monospace, monospace;
+    letter-spacing: 0;
+    text-transform: uppercase;
+}
+
+h1 {
+    margin: 0;
+    font-size: 28px;
+    line-height: 1;
+}
+
+p {
+    margin: 0;
+}
+
+#gz-scene {
+    min-height: 0;
+    overflow: hidden;
+    border: 3px solid #17242a;
+    background: #92a884;
+}
+
+#gz-scene canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+.status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font: 600 13px/1.2 ui-monospace, monospace;
+}
+
+.status span {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #c97119;
+}
+
+.status span.ready {
+    background: #2e7d46;
+}
+
+footer {
+    font: 13px/1.2 ui-monospace, monospace;
+}
+
+.viewer-controls {
+    display: flex;
+    gap: 8px;
+}
+
+.teleport-controls {
+    display: grid;
+    grid-template-columns: minmax(150px, 1fr) auto auto;
+    align-items: end;
+    gap: 16px;
+    padding: 12px;
+    border: 1px solid #17242a;
+    background: #edf1e8;
+}
+
+h2 {
+    margin: 0;
+    font-size: 18px;
+    line-height: 1.1;
+}
+
+.pose-inputs,
+.teleport-actions {
+    display: flex;
+    gap: 8px;
+}
+
+label {
+    display: grid;
+    gap: 4px;
+    color: #44504a;
+    font: 700 11px/1 ui-monospace, monospace;
+    text-transform: uppercase;
+}
+
+input {
+    width: 82px;
+    border: 1px solid #17242a;
+    border-radius: 0;
+    background: #fffdf6;
+    color: #17242a;
+    padding: 7px;
+    font: 14px/1 ui-monospace, monospace;
+}
+
+button:disabled,
+input:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+}
+
+button {
+    border: 1px solid #17242a;
+    background: #f4f0e6;
+    color: #17242a;
+    padding: 8px 12px;
+    font: inherit;
+    cursor: pointer;
+}
+
+button:hover {
+    background: #e8bd56;
+}
+
+@media (max-width: 560px) {
+    main {
+        padding: 12px;
+    }
+
+    h1 {
+        font-size: 24px;
+    }
+
+    footer {
+        align-items: flex-end;
+    }
+
+    .teleport-controls {
+        grid-template-columns: 1fr;
+        gap: 12px;
+    }
+
+    .pose-inputs,
+    .teleport-actions {
+        flex-wrap: wrap;
+    }
+}
