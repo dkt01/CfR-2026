@@ -6,7 +6,7 @@ set -euo pipefail
 
 readonly SELF_PID=$$
 readonly PARENT_PID=$PPID
-readonly PROCESS_PATTERN='(^|/)(ros2|_ros2_daemon)( |$)|/opt/ros/|/ros2_ws/install/|ros2 launch|launch(PathFollowingTUI)?[.]sh|launch_zed[.]sh|arduino_bridge_node|cmd_vel_to_drive_node|path_follower_node|zed_wrapper|rosboard|path_tui[.]py|fake_arduino[.]py'
+readonly PROCESS_PATTERN='(^|[[:space:]/])(ros2|_ros2_daemon|gz|gz-launch)([[:space:]]|$)|/opt/ros/|/ros2_ws/install/|ros2 launch|launch(PathFollowingTUI)?[.]sh|launch_zed[.]sh|arduino_bridge_node|cmd_vel_to_drive_node|path_follower_node|zed_wrapper|rosboard|path_tui[.]py|fake_arduino[.]py'
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
     cat <<EOF
@@ -37,11 +37,11 @@ stop_pids() {
 mapfile -t ROS_PIDS < <(find_ros_pids)
 
 if [[ ${#ROS_PIDS[@]} -eq 0 ]]; then
-    echo "no ROS software found"
+    echo "no ROS or Gazebo software found"
     exit 0
 fi
 
-echo "stopping ROS processes: ${ROS_PIDS[*]}"
+echo "stopping ROS/Gazebo processes: ${ROS_PIDS[*]}"
 stop_pids TERM "${ROS_PIDS[@]}"
 
 for _ in {1..20}; do

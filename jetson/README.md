@@ -9,6 +9,32 @@ Traxxas Slash 4X4 through the Arduino over the USB serial link described in the
 | [`cfr_interfaces`](cfr_interfaces/) | `DriveCommand`, `ArduinoStatus`, `PathSegment` messages; `DrivePath` action |
 | [`cfr_arduino_bridge`](cfr_arduino_bridge/) | `arduino_bridge_node`, `cmd_vel_to_drive_node`, `path_follower_node` |
 
+## Gazebo Simulation
+
+Simulation can be run in a container using the [unfrobotics/docker-ros2-jazzy-gz-rviz2:latest](https://github.com/UNF-Robotics/docker-ros2-jazzy-gz-rviz2) image.
+
+`simulation.launch.py` mounts an RGB-D camera pair at the front of the simulated
+Slash. It provides ZED-compatible ROS interfaces while the simulator is running:
+
+| Topic | Type | Source |
+| ----- | ---- | ------ |
+| `/zed/zed_node/odom` | `nav_msgs/Odometry` | Gazebo vehicle odometry |
+| `/zed/zed_node/left/image_rect_color` | `sensor_msgs/Image` | simulated left color camera |
+| `/zed/zed_node/left/image_rect_color/camera_info` | `sensor_msgs/CameraInfo` | simulated left camera calibration |
+| `/zed/zed_node/depth/depth_registered` | `sensor_msgs/Image` | simulated depth camera |
+| `/zed/zed_node/depth/depth_registered/camera_info` | `sensor_msgs/CameraInfo` | simulated depth camera calibration |
+| `/zed/zed_node/point_cloud/cloud_registered` | `sensor_msgs/PointCloud2` | simulated registered depth point cloud |
+
+The camera sensors use a $110^\circ$ horizontal field of view, $640 \times 360$
+resolution, 15 Hz update rate, and a 0.2 m to 20 m depth range.
+
+The default headless world leaves Gazebo's rendered sensor system disabled so it
+can run on systems without an EGL/OpenGL context; `/zed/zed_node/odom` remains
+available for autonomy and the visual ZED 2i mount remains on the vehicle. The
+image, depth, and point-cloud bridges require a GPU-capable container with the
+NVIDIA OpenGL/EGL libraries exposed before enabling `gz-sim-sensors-system` in
+the world.
+
 ## Nodes
 
 ### `arduino_bridge_node`
@@ -301,6 +327,46 @@ Preflight covers the three things that usually go wrong: the device is missing,
 the user is not in `dialout`, or `ModemManager` is probing the port.
 `--skip-checks` bypasses them. The ZED node comes from `zed_wrapper`, built per
 [../zed/README.md](../zed/README.md); `--no-zed` runs without it.
+
+### Gazebo speed-course simulation
+
+The Gazebo launch replaces the USB Arduino and ZED camera with simulation. It
+runs the existing `cmd_vel_to_drive_node` and `path_follower_node` unchanged:
+the simulator consumes `/drive_cmd`, publishes simulated Arduino status on
+`/arduino_bridge/status`, and bridges Gazebo's collision-aware odometry to
+`/zed/zed_node/odom`.
+
+Install Gazebo Harmonic plus its ROS 2 Jazzy integration on the development
+machine:
+
+```bash
+sudo apt install gz-harmonic ros-jazzy-ros-gz-sim ros-jazzy-ros-gz-bridge
+```
+
+Build, source, then start the simulation:
+
+```bash
+~/software/scripts/build.sh
+source "${ROS2_WS:-$HOME/ros2_ws}/install/setup.bash"
+ros2 launch cfr_arduino_bridge simulation.launch.py
+```
+
+`ROS2_WS` must name the workspace built by `build.sh` (it defaults to
+`~/ros2_ws`). Source that workspace's `install/setup.bash`, rather than an
+unrelated ROS overlay, before sending `DrivePath` goals.
+
+The launch defaults to headless Gazebo, suitable for containers. To use GUI,
+pass `gui:=true` from an authorized desktop X session; `DISPLAY` alone is not
+enough because the container must also have permission to open that display.
+
+`speed_course.sdf` is a 44.7 m by 34.5 m field scaled from the supplied speed
+course SVG's 2640 by 2040 drawing area. It contains a basic 0.324 m-wheelbase
+Slash model, collision bales, and the course perimeter/chicanes. Gazebo is the
+odometry source, so collisions and vehicle motion feed the same closed-loop
+path follower used on the car. Send `/path_follower/drive_path` goals with the
+same command shown above. No Arduino, ZED, XBee, or physical E-Stop is present;
+simulation status is always link-healthy and must never be treated as a safety
+test.
 
 ### No Arduino attached
 
