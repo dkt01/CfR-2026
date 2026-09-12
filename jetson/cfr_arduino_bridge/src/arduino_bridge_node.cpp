@@ -17,6 +17,7 @@
 #include <string>
 #include <vector>
 
+#include "cfr_arduino_bridge/drivetrain.hpp"
 #include "cfr_arduino_bridge/protocol.hpp"
 #include "cfr_arduino_bridge/serial_port.hpp"
 #include "cfr_interfaces/msg/arduino_status.hpp"
@@ -45,6 +46,8 @@ namespace cfr_arduino_bridge {
       invert_steering_ = declare_parameter<bool>("invert_steering", false);
       invert_throttle_ = declare_parameter<bool>("invert_throttle", false);
       require_auto_active_ = declare_parameter<bool>("require_auto_active", true);
+      spur_to_wheel_ratio_ = declare_parameter<double>("spur_to_wheel_ratio", kSpurToWheelRatio);
+      tire_diameter_ = declare_parameter<double>("tire_diameter", kTireDiameterM);
 
       if (tx_rate_hz_ < 10.0) {
         RCLCPP_WARN(get_logger(),
@@ -55,6 +58,17 @@ namespace cfr_arduino_bridge {
       }
       max_throttle_ = std::clamp(max_throttle_, 0.0, 1.0);
       max_steering_ = std::clamp(max_steering_, 0.0, 1.0);
+      if (!(spur_to_wheel_ratio_ > 0.0)) {
+        RCLCPP_WARN(get_logger(),
+                    "spur_to_wheel_ratio %.3f must be positive, using %.2f",
+                    spur_to_wheel_ratio_,
+                    kSpurToWheelRatio);
+        spur_to_wheel_ratio_ = kSpurToWheelRatio;
+      }
+      if (!(tire_diameter_ > 0.0)) {
+        RCLCPP_WARN(get_logger(), "tire_diameter %.4f must be positive, using %.4f m", tire_diameter_, kTireDiameterM);
+        tire_diameter_ = kTireDiameterM;
+      }
       if (!tx_trace_path_.empty()) {
         tx_trace_.open(tx_trace_path_, std::ios::out | std::ios::trunc | std::ios::binary);
         if (!tx_trace_) {
@@ -297,6 +311,9 @@ namespace cfr_arduino_bridge {
       // Zero on a dead link rather than the last known value: a stale speed is
       // worse than no speed for anything closing a loop on it.
       msg.rpm = link_ok ? status_.rpm : 0;
+      const double wheel_rpm = SpurRpmToWheelRpm(msg.rpm, spur_to_wheel_ratio_);
+      msg.wheel_rpm = static_cast<float>(wheel_rpm);
+      msg.speed = static_cast<float>(WheelRpmToSpeed(wheel_rpm, tire_diameter_));
       status_publisher_->publish(msg);
     }
 
@@ -318,6 +335,8 @@ namespace cfr_arduino_bridge {
     bool invert_steering_ = false;
     bool invert_throttle_ = false;
     bool require_auto_active_ = true;
+    double spur_to_wheel_ratio_ = kSpurToWheelRatio;
+    double tire_diameter_ = kTireDiameterM;
 
     // State
     SerialPort port_;

@@ -97,6 +97,10 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_path_geometry test/test_path_geometry.cpp)
   target_link_libraries(test_path_geometry cfr_path_geometry)
+
+  # Header only; linking the protocol library just brings its include path.
+  ament_add_gtest(test_drivetrain test/test_drivetrain.cpp)
+  target_link_libraries(test_drivetrain cfr_arduino_protocol)
 endif()
 
 ament_export_include_directories(include)

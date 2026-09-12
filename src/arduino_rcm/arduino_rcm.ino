@@ -445,8 +445,10 @@ struct Tachometer {
   uint16_t rpm{0};
 
   void begin() {
-    DDRB &= ~_BV(DDB0);     // input
-    PORTB &= ~_BV(PORTB0);  // no internal pullup; the sensor supplies its own
+    DDRB &= ~_BV(DDB0);  // input
+    // The sensor output is open collector: it only ever pulls the line low and
+    // leaves it floating otherwise, so without a pullup no edge is ever latched.
+    PORTB |= _BV(PORTB0);
     PCMSK0 = _BV(TACH_PCINT_BIT);
     PCICR &= ~_BV(PCIE0);  // flag only.  Deliberately no vector - see above.
     PCIFR = _BV(PCIF0);    // write 1 to clear anything latched during boot

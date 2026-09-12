@@ -26,3 +26,11 @@ uint8 battery_level
 # magnet.  This is spur revolutions, not motor or wheel revolutions.  Zero means
 # stopped, no sensor, or a dead link - use link_ok to tell the last case apart.
 uint16 rpm
+
+# rpm divided by the arduino_bridge spur_to_wheel_ratio parameter.
+float32 wheel_rpm
+
+# Ground speed in metres per second from wheel_rpm and the tire_diameter
+# parameter, assuming no wheel slip.  The sensor cannot see direction, so this
+# is a magnitude: it is positive in reverse too.
+float32 speed
