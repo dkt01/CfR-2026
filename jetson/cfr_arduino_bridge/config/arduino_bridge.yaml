@@ -35,6 +35,13 @@ arduino_bridge:
     # for the Arduino to report AUTO_ACTIVE.
     require_auto_active: true
 
+    # Drivetrain, for the wheel_rpm and speed fields of ArduinoStatus.  The
+    # Arduino reports spur gear RPM; the Slash 4X4 reduces spur to wheel 2.85:1
+    # whatever pinion is fitted.  Tire is the Traxxas 6764 Gravix 2.8" at a
+    # nominal 4.5" outer diameter - calibrate with a measured roll-out.
+    spur_to_wheel_ratio: 2.85
+    tire_diameter: 0.1143   # metres
+
 cmd_vel_to_drive:
   ros__parameters:
     wheelbase: 0.324               # Traxxas Slash 4X4, metres

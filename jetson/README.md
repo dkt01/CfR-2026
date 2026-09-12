@@ -223,7 +223,13 @@ parsed with a stale speed. Flash both sides together.
 
 Spur RPM comes from a hall sensor watching a single trigger magnet in the spur
 gear, so it counts spur revolutions -- not motor and not wheel revolutions.
-Converting to ground speed needs the transmission ratio and tire circumference.
+`arduino_bridge` converts it into the `wheel_rpm` and `speed` (m/s) fields of
+`ArduinoStatus` using the `spur_to_wheel_ratio` (default `2.85`, the Slash 4X4
+transmission, independent of pinion) and `tire_diameter` (default `0.1143` m,
+the nominal 4.5" Traxxas 6764 Gravix 2.8" tire) parameters. `speed` is a
+magnitude, since the sensor cannot see direction, and assumes no wheel slip.
+Foam tires grow with speed, so calibrate `tire_diameter` with a measured
+roll-out if accuracy matters.
 Zero is ambiguous between stopped, no sensor fitted, and a dead link; check
 `link_ok` on `ArduinoStatus` to rule out the last.
 
