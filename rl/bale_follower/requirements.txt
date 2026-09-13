@@ -1,0 +1,10 @@
+# rclpy is NOT listed here -- it comes from /opt/ros/jazzy via a venv created
+# with --system-site-packages. See README.md.
+gymnasium
+stable-baselines3[extra]
+torch
+numpy
+requests
+PyYAML
+matplotlib
+casadi
