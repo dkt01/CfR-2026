@@ -389,8 +389,8 @@ class PathTui:
             feedback.commanded_linear_x, feedback.commanded_angular_z
         )
         if self.latest_drive_command is not None:
-            commands += "  throttle={:+.3f} steering={:+.3f}".format(
-                self.latest_drive_command.throttle,
+            commands += "  target={:+.3f} m/s steering={:+.3f}".format(
+                self.latest_drive_command.velocity,
                 self.latest_drive_command.steering,
             )
         self.stdscr.addstr(10, 2, commands)

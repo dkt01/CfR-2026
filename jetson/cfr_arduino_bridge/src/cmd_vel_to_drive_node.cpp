@@ -1,5 +1,7 @@
 // Converts geometry_msgs/Twist velocity commands from the autonomy stack into
-// the normalized DriveCommand that arduino_bridge_node puts on the wire.
+// the DriveCommand that arduino_bridge_node puts on the wire.  Speed passes
+// straight through as a velocity target for the Arduino's speed controller;
+// only steering needs a model.
 //
 // The Slash is an Ackermann platform, so the yaw rate in a Twist is turned into
 // a steering angle with the bicycle model:
@@ -64,7 +66,7 @@ namespace cfr_arduino_bridge {
       msg.header.frame_id = "base_link";
       msg.auto_ready = fresh;
       msg.steering = 0.0F;
-      msg.throttle = 0.0F;
+      msg.velocity = 0.0F;
 
       if (fresh) {
         const double speed = last_twist_.linear.x;
@@ -74,7 +76,7 @@ namespace cfr_arduino_bridge {
         const double steering_angle = std::atan2(wheelbase_ * yaw_rate, steering_speed);
 
         msg.steering = static_cast<float>(std::clamp(steering_angle / max_steering_angle_, -1.0, 1.0));
-        msg.throttle = static_cast<float>(std::clamp(speed / max_speed_, -1.0, 1.0));
+        msg.velocity = static_cast<float>(std::clamp(speed, -max_speed_, max_speed_));
       } else if (last_twist_time_.nanoseconds() != 0) {
         RCLCPP_WARN_THROTTLE(
             get_logger(), *get_clock(), 2000, "cmd_vel stale (> %.2f s), commanding neutral", cmd_timeout_);
