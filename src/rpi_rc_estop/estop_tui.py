@@ -26,6 +26,8 @@ from estop_core import (
     commControl,
     compute_led_state,
     controllerControlPygame,
+    spur_rpm_to_wheel_rpm,
+    wheel_rpm_to_speed,
 )
 
 # Emulates a momentary/held key via a refresh timeout, mirroring TIMEOUT_CONTROLLER,
@@ -137,7 +139,10 @@ def render_status(robotState: RobotState, controllerState: ControllerState) -> T
             f" [grey58]({robotState.battery_level}/255)[/grey58]"
         )
     table.add_row("BATTERY", batteryText)
+    wheelRpm = spur_rpm_to_wheel_rpm(robotState.rpm)
     table.add_row("SPUR RPM", f"{robotState.rpm}")
+    table.add_row("WHEEL RPM", f"{wheelRpm:.0f}")
+    table.add_row("SPEED", f"{wheel_rpm_to_speed(wheelRpm):.2f} m/s")
     table.add_row("CONTROLLER", connection(controllerState.comms_ok))
     table.add_row("", f"[grey58]{controllerState.device_name or '-'}[/grey58]")
     return table

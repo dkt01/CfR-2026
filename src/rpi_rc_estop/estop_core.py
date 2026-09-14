@@ -3,6 +3,7 @@ box (estop.py) and the laptop terminal emulator (estop_tui.py).
 """
 
 import dataclasses
+import math
 import os
 import platform
 import struct
@@ -186,6 +187,24 @@ class AutoMode(Enum):
     RC_ACTIVE = 2
     AUTO_ARMED = 3
     AUTO_ACTIVE = 4
+
+
+# Drivetrain, for turning the Arduino's spur RPM into wheel RPM and ground speed.
+# Keep in step with jetson/cfr_arduino_bridge/include/cfr_arduino_bridge/drivetrain.hpp.
+# The Slash 4X4 manual gives the final ratio as (spur / pinion) x 2.85, so spur to
+# wheel is 2.85:1 whatever pinion is fitted.  The Traxxas 6764 Gravix 2.8" tire
+# is a nominal 4.5" outer diameter; calibrate with a measured roll-out.
+SPUR_TO_WHEEL_RATIO = 2.85
+TIRE_DIAMETER_M = 0.1143
+
+
+def spur_rpm_to_wheel_rpm(spurRpm: float) -> float:
+    return spurRpm / SPUR_TO_WHEEL_RATIO
+
+
+def wheel_rpm_to_speed(wheelRpm: float) -> float:
+    """Ground speed in m/s, assuming no slip.  A magnitude: the sensor has no direction."""
+    return wheelRpm * math.pi * TIRE_DIAMETER_M / 60.0
 
 
 @dataclass

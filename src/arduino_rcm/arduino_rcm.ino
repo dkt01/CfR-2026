@@ -105,7 +105,12 @@ constexpr uint8_t TACH_PULSES_PER_REV = 1;
 // count at the pack.  CALIBRATION: read a known pack voltage with a meter,
 // compare against the reported millivolts, and scale this constant by
 // (meter / reported).
-constexpr uint32_t BATTERY_UV_PER_COUNT = 12890UL;
+//
+// Calibrated 2026-09-12: meter 12.31V against 12.63V reported, so
+// 12890 * (12310 / 12630) = 12563.  That implies an effective bandgap of
+// 1.1V * 0.9746 = 1.072V, inside the datasheet's 1.0-1.2V spread, so the
+// correction is the reference tolerance and not a divider fault.
+constexpr uint32_t BATTERY_UV_PER_COUNT = 12563UL;
 constexpr uint8_t BATTERY_ADC_CHANNEL = 0;
 // Averaging 64 conversions recovers roughly three bits, which puts the
 // quantization well below what the 8-bit BATTERY_LEVEL field can carry.
@@ -440,8 +445,10 @@ struct Tachometer {
   uint16_t rpm{0};
 
   void begin() {
-    DDRB &= ~_BV(DDB0);     // input
-    PORTB &= ~_BV(PORTB0);  // no internal pullup; the sensor supplies its own
+    DDRB &= ~_BV(DDB0);  // input
+    // The sensor output is open collector: it only ever pulls the line low and
+    // leaves it floating otherwise, so without a pullup no edge is ever latched.
+    PORTB |= _BV(PORTB0);
     PCMSK0 = _BV(TACH_PCINT_BIT);
     PCICR &= ~_BV(PCIE0);  // flag only.  Deliberately no vector - see above.
     PCIFR = _BV(PCIF0);    // write 1 to clear anything latched during boot
@@ -539,7 +546,7 @@ struct BatteryMonitor {
     if (++sampleCount < BATTERY_OVERSAMPLE) {
       return;
     }
-    // 64 * 1023 * 12890 fits comfortably inside 32 bits.
+    // 64 * 1023 * BATTERY_UV_PER_COUNT fits comfortably inside 32 bits.
     const uint16_t mv = static_cast<uint16_t>((accumulator * BATTERY_UV_PER_COUNT) / (1000UL * BATTERY_OVERSAMPLE));
     accumulator = 0;
     sampleCount = 0;
