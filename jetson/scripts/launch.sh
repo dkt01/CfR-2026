@@ -54,7 +54,7 @@ Examples:
   $(basename "$0") --no-zed --device /dev/ttyACM1
   $(basename "$0") --rosboard
   $(basename "$0") --fake-arduino --no-zed
-  $(basename "$0") max_throttle:=0.15
+  $(basename "$0") max_speed:=1.0
 EOF
 }
 

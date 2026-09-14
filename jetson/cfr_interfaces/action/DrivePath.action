@@ -37,6 +37,6 @@ float64 error_y
 float64 error_yaw
 
 # Twist produced by the path controller before cmd_vel_to_drive maps it to
-# normalized throttle and steering.
+# a velocity target and normalized steering.
 float64 commanded_linear_x
 float64 commanded_angular_z
