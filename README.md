@@ -200,7 +200,9 @@ With those gains, still on blocks:
 | Stop from 2500 RPM, coasting            | Reads zero after 2.2 s                                                                   |
 | Stop from 2500 RPM, Brake Limit 40 µs   | Steady 1400 µs brake, reads zero after 1.7 s and stays there                             |
 
-None of this says much about the loaded car.  Retune on the ground before relying on it; `jetson/README.md` has a procedure.
+None of this says much about the loaded car.  Retune on the ground before relying on it.  The ground retune, and the rest of the work needed to make the Gazebo simulator a twin of the car rather than a plausible-looking stand-in, is [docs/characterization.md](docs/characterization.md); [docs/field-card.md](docs/field-card.md) is the printable version to take to the test site.
+
+The whole campaign runs through the runtime `speed_*` parameters and the `D,` debug line this firmware already emits, so **no step requires reflashing the Arduino** — which matters, because the sequences that need sweeping gains are the ones run furthest from a bench.
 
 ## Onboard I/O
 
@@ -251,6 +253,7 @@ Conversions are started and collected by polling, so the ADC never blocks and ne
 
 ## Documentation
 
+* [Characterization procedure](docs/characterization.md) and its [printable field card](docs/field-card.md)
 * [Traxxas Slash 4X4 VXL Ultimate](https://traxxas.com/media/productattach/C-68277-4/2/68277-4-OM-EN-R01.pdf)
 * [Traxxas VXL-3S ESC](https://traxxas.com/media/productattach/3350R/8/KC2014-R02-3355R-VXL-3s-Installation%20Instruction_160217-ML_WEB_EN.pdf)
 * [ATmega328P datasheet](https://ww1.microchip.com/downloads/en/DeviceDoc/Atmel-7810-Automotive-Microcontrollers-ATmega328P_Datasheet.pdf) — timer, pin change interrupt, and ADC chapters

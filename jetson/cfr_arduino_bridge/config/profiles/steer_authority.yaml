@@ -1,0 +1,49 @@
+# B1 - steering authority.  THE highest-value run in the campaign.
+#
+# max_steering_angle = 0.40 rad has never been measured.  It is the only scale
+# factor turning a commanded yaw rate into a steering command, and the simulator
+# inverts it with the same constant - so sim and car agree with each other by
+# construction while both may be wrong about reality.  This measures it.
+#
+# Crawl speed keeps the tires inside their linear range, so the arc radius is
+# the kinematic one and the effective bicycle steering angle falls straight out:
+#
+#     delta_eff = atan(wheelbase * yaw_rate / speed)
+#
+# Radius comes from telemetry (R = v / yaw_rate), so nothing needs marking on the
+# ground and a 120 degree arc is plenty - full circles would only waste time.
+# 0.6 m/s is deliberately above the tachometer's ~0.3 m/s floor so spur RPM is
+# meaningful too.
+#
+# Both directions are here on purpose: real Ackermann linkages are asymmetric,
+# and the left and right limits are separate numbers in vehicle.yaml.
+# Alternating them also leaves the car near where it started.
+name: steer_authority
+description: Crawl-speed arcs at six steering commands, both directions.
+
+gains:
+  speed_trace: true
+
+limits:
+  max_distance: 15.0
+  max_duration: 300.0
+  max_speed: 1.0
+
+steps:
+  - {hold: 3.0, steering: 0.0, velocity: 0.0, label: settle}
+  - {hold: 4.0, steering: 0.0, velocity: 0.6, label: straight_reference}
+  - {hold: 14.0, steering: 0.25, velocity: 0.6, label: left_025}
+  - {hold: 3.0, steering: 0.0, velocity: 0.6, label: between}
+  - {hold: 14.0, steering: 0.50, velocity: 0.6, label: left_050}
+  - {hold: 3.0, steering: 0.0, velocity: 0.6, label: between}
+  - {hold: 14.0, steering: 1.00, velocity: 0.6, label: left_full}
+  - {hold: 4.0, steering: 0.0, velocity: 0.0, label: settle}
+  - {hold: 14.0, steering: -0.25, velocity: 0.6, label: right_025}
+  - {hold: 3.0, steering: 0.0, velocity: 0.6, label: between}
+  - {hold: 14.0, steering: -0.50, velocity: 0.6, label: right_050}
+  - {hold: 3.0, steering: 0.0, velocity: 0.6, label: between}
+  - {hold: 14.0, steering: -1.00, velocity: 0.6, label: right_full}
+  - {hold: 3.0, steering: 0.0, velocity: 0.0, label: settle}
+
+return:
+  mode: none

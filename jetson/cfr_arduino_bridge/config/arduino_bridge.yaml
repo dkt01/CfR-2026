@@ -18,6 +18,13 @@ arduino_bridge:
     # from the Uno, including its debug lines and, with speed_trace on, the
     # speed controller's per-tick trace.
     rx_trace_path: /tmp/cfr-arduino-rx.log
+    # Prefix each trace line with a host timestamp and a space.  The Arduino
+    # stamps its own lines with millis() since ITS boot, which cannot be aligned
+    # to a rosbag or to a run's telemetry.csv; this is what makes the serial
+    # traces joinable with everything else.  characterize.launch.py sets it, and
+    # also redirects both paths into the run directory - these defaults are
+    # truncated on every node start, so each run would otherwise destroy the last.
+    trace_timestamps: false
 
     # Watchdogs
     command_timeout: 0.2    # zero speed if the autonomy stack goes quiet
@@ -39,7 +46,9 @@ arduino_bridge:
     require_auto_active: true
 
     # Drivetrain, for converting between m/s and the Arduino's spur RPM in both
-    # directions.  The Slash 4X4 reduces spur to wheel 2.85:1 whatever pinion is
+    # directions.  Measured values and their provenance live in vehicle.yaml;
+    # these must agree with it.  Runtime-settable, so a calibration sweep does
+    # not need a restart.  The Slash 4X4 reduces spur to wheel 2.85:1 whatever pinion is
     # fitted.  Tire is the Traxxas 6764 Gravix 2.8" at a nominal 4.5" outer
     # diameter - calibrate with a measured roll-out.
     spur_to_wheel_ratio: 2.85

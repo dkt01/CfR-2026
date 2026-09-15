@@ -1,0 +1,54 @@
+# C3 - braking effort.
+#
+# speed_brake_limit is 0 by default, meaning the car coasts to a stop.  This
+# sweeps it to find out what firmer stopping costs and whether it is safe to
+# enable.
+#
+# Watch for the failure the firmware guards against: the VXL-3S reads a reverse
+# side pulse as a brake only until it sees neutral, after which the SAME pulse
+# drives in reverse.  The tachometer cannot see direction, so driving away
+# backwards reads as more forward speed.  The firmware locks braking out if
+# speed climbs 300 RPM above its low-water mark (SPEED_BRAKE_RUNAWAY_RPM), but
+# keep a thumb on the E-Stop for this one regardless.
+#
+# Reverse never brakes - its far side of neutral is forward drive - so the
+# reverse legs here are purely to get the car back down the path.
+name: brake_sweep
+description: Stops from 3 m/s at four brake limits, with reverse return legs.
+
+gains:
+  speed_brake_limit: 0.0
+  speed_trace: true
+
+limits:
+  max_distance: 40.0
+  max_duration: 300.0
+  max_speed: 3.2
+
+steps:
+  - {hold: 3.0, steering: 0.0, velocity: 0.0, label: settle}
+
+  - {hold: 5.0, steering: 0.0, velocity: 3.0, label: accel_brake000, gains: {speed_brake_limit: 0.0}}
+  - {hold: 10.0, steering: 0.0, velocity: 0.0, label: stop_brake000}
+  - {hold: 8.0, steering: 0.0, velocity: -1.5, label: return_leg}
+  - {hold: 3.0, steering: 0.0, velocity: 0.0, label: settle}
+
+  - {hold: 5.0, steering: 0.0, velocity: 3.0, label: accel_brake040, gains: {speed_brake_limit: 40.0}}
+  - {hold: 10.0, steering: 0.0, velocity: 0.0, label: stop_brake040}
+  - {hold: 8.0, steering: 0.0, velocity: -1.5, label: return_leg}
+  - {hold: 3.0, steering: 0.0, velocity: 0.0, label: settle}
+
+  - {hold: 5.0, steering: 0.0, velocity: 3.0, label: accel_brake080, gains: {speed_brake_limit: 80.0}}
+  - {hold: 10.0, steering: 0.0, velocity: 0.0, label: stop_brake080}
+  - {hold: 8.0, steering: 0.0, velocity: -1.5, label: return_leg}
+  - {hold: 3.0, steering: 0.0, velocity: 0.0, label: settle}
+
+  - {hold: 5.0, steering: 0.0, velocity: 3.0, label: accel_brake120, gains: {speed_brake_limit: 120.0}}
+  - {hold: 10.0, steering: 0.0, velocity: 0.0, label: stop_brake120}
+  - {hold: 3.0, steering: 0.0, velocity: 0.0, label: settle}
+
+return:
+  mode: reverse_to_start
+  speed: 1.5
+  tolerance: 2.0
+  timeout: 90.0

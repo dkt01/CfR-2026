@@ -69,3 +69,8 @@ __pycache__/
 
 # Core dumps
 core.*
+
+# Characterization run data pulled off the Orin by scripts/sync_runs.sh.
+# Runs are recorded on the car and are far too large to version; the numbers
+# fitted from them live in cfr_arduino_bridge/config/vehicle.yaml instead.
+/runs/

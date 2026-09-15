@@ -1,0 +1,42 @@
+# B2 - understeer gradient, and a free lower bound on lateral grip.
+#
+# Steering is held while speed climbs.  Plot the effective steering angle
+# against lateral acceleration (a_y = v^2 / R): the slope above the kinematic
+# value is the understeer gradient.
+#
+# This exposes a gap the simulator cannot currently show at all.  With mu=50 on
+# the ground and all four wheels, the simulated car ALWAYS achieves the pure
+# kinematic radius wheelbase/tan(delta).  The real car understeers and runs
+# wider, by more at higher speed.  That is a first-order path-following error.
+#
+# Where the sweep stops being linear is the onset of grip limit, which is a
+# lower bound on lateral mu for free - no sliding, no run-off, no risk to the
+# car.  That is why no deliberate slide test is in this campaign.
+name: skidpad
+description: Half-lock arcs at four speeds, both directions.
+
+gains:
+  speed_trace: true
+
+limits:
+  # At 3.0 m/s a strongly understeering car can run a 6 m radius, so give the
+  # abort guard room without letting it wander across the lot.
+  max_distance: 20.0
+  max_duration: 300.0
+  max_speed: 3.2
+
+steps:
+  - {hold: 3.0, steering: 0.0, velocity: 0.0, label: settle}
+  - {hold: 9.0, steering: 0.50, velocity: 1.0, label: left_1p0}
+  - {hold: 9.0, steering: 0.50, velocity: 1.5, label: left_1p5}
+  - {hold: 9.0, steering: 0.50, velocity: 2.2, label: left_2p2}
+  - {hold: 9.0, steering: 0.50, velocity: 3.0, label: left_3p0}
+  - {hold: 5.0, steering: 0.0, velocity: 0.0, label: settle}
+  - {hold: 9.0, steering: -0.50, velocity: 1.0, label: right_1p0}
+  - {hold: 9.0, steering: -0.50, velocity: 1.5, label: right_1p5}
+  - {hold: 9.0, steering: -0.50, velocity: 2.2, label: right_2p2}
+  - {hold: 9.0, steering: -0.50, velocity: 3.0, label: right_3p0}
+  - {hold: 4.0, steering: 0.0, velocity: 0.0, label: settle}
+
+return:
+  mode: none

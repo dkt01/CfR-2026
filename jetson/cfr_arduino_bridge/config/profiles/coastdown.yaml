@@ -1,0 +1,56 @@
+# C2 - coastdown.  The single most valuable longitudinal run.
+#
+# Accelerate, settle, then command zero with braking disabled and let the car
+# roll to a stop while logging speed.  Fit
+#
+#     m dv/dt = -(f0 + f1 v + f2 v^2)
+#
+# to get rolling resistance, driveline drag and aero separately.  Those three
+# numbers replace the forward/reverse coast decelerations in arduino_bridge.yaml
+# - a pair the file itself describes as compensating for Gazebo tire contact
+# braking forward motion more than reverse, which is to say they model the
+# simulator, not the car.
+#
+# Running each speed forward AND reverse is what settles that: if the real car's
+# coastdown is symmetric, the asymmetry in the simulator was always an artifact
+# and should simply be deleted.  Alternating also keeps the excursion bounded,
+# which matters because the 4.5 m/s forward leg is the longest run in the
+# campaign at roughly 40 m including its coast.
+#
+# speed_brake_limit MUST stay 0.  A nonzero brake limit is the opposite of this
+# experiment.
+name: coastdown
+description: Roll-down from three speeds, forward and reverse, brakes disabled.
+
+gains:
+  speed_brake_limit: 0.0
+  speed_trace: true
+
+limits:
+  max_distance: 48.0
+  max_duration: 300.0
+  max_speed: 4.5
+
+steps:
+  - {hold: 3.0, steering: 0.0, velocity: 0.0, label: settle}
+
+  - {hold: 5.0, steering: 0.0, velocity: 2.0, label: accel_fwd_2p0}
+  - {hold: 12.0, steering: 0.0, velocity: 0.0, label: coast_fwd_2p0}
+  - {hold: 5.0, steering: 0.0, velocity: -2.0, label: accel_rev_2p0}
+  - {hold: 12.0, steering: 0.0, velocity: 0.0, label: coast_rev_2p0}
+
+  - {hold: 6.0, steering: 0.0, velocity: 3.2, label: accel_fwd_3p2}
+  - {hold: 15.0, steering: 0.0, velocity: 0.0, label: coast_fwd_3p2}
+  - {hold: 6.0, steering: 0.0, velocity: -3.2, label: accel_rev_3p2}
+  - {hold: 15.0, steering: 0.0, velocity: 0.0, label: coast_rev_3p2}
+
+  - {hold: 6.0, steering: 0.0, velocity: 4.5, label: accel_fwd_4p5}
+  - {hold: 18.0, steering: 0.0, velocity: 0.0, label: coast_fwd_4p5}
+  - {hold: 6.0, steering: 0.0, velocity: -4.5, label: accel_rev_4p5}
+  - {hold: 18.0, steering: 0.0, velocity: 0.0, label: coast_rev_4p5}
+
+return:
+  mode: reverse_to_start
+  speed: 1.5
+  tolerance: 2.0
+  timeout: 90.0
