@@ -4,48 +4,77 @@
 
 arduino_bridge:
   ros__parameters:
-    # Serial link
+    # Serial link.  115200 rather than faster: see Onboard Protocol in the top
+    # level README for why a higher rate loses Jetson frames.
     device: /dev/ttyACM0
-    baud: 1000000
+    baud: 115200
     tx_rate_hz: 50.0        # Arduino drops to neutral after 200 ms of silence
     boot_delay: 2.0         # Uno bootloader window after the port is opened
     reconnect_period: 1.0
-    # Debug trace: each line is the exact ten-byte frame accepted by the USB
-    # serial write.  Clear this after diagnosing command instability.
+    # Debug trace: each line is the exact frame accepted by the USB serial
+    # write.  Clear this after diagnosing command instability.
     tx_trace_path: /tmp/cfr-arduino-tx.log
     # Captures each complete newline-delimited status or diagnostic line read
-    # from the Uno, including its Arduino-side command and PWM diagnostics.
+    # from the Uno, including its debug lines and, with speed_trace on, the
+    # speed controller's per-tick trace.
     rx_trace_path: /tmp/cfr-arduino-rx.log
+    # Prefix each trace line with a host timestamp and a space.  The Arduino
+    # stamps its own lines with millis() since ITS boot, which cannot be aligned
+    # to a rosbag or to a run's telemetry.csv; this is what makes the serial
+    # traces joinable with everything else.  characterize.launch.py sets it, and
+    # also redirects both paths into the run directory - these defaults are
+    # truncated on every node start, so each run would otherwise destroy the last.
+    trace_timestamps: false
 
     # Watchdogs
-    command_timeout: 0.2    # neutral if the autonomy stack goes quiet
+    command_timeout: 0.2    # zero speed if the autonomy stack goes quiet
     link_timeout: 0.5       # link_ok drops if no status frame arrives
 
-    # Actuator limits.  Start conservative: the VXL-3S on a Slash 4X4 will
-    # happily do 50+ mph at full throttle.
-    max_throttle: 1.0
+    # Limits.  DriveCommand.velocity is clamped to max_speed and rate limited
+    # by speed_slew_rate before it becomes the Arduino's speed target.  The
+    # Arduino separately caps the throttle pulse at speed_output_limit.
+    max_speed: 8.0          # m/s
     max_steering: 1.0
-    throttle_slew_per_s: 2.0
+    speed_slew_rate: 2.0    # m/s per second, both directions
 
-    # Flip if the servo or ESC is wired opposite to the assumed convention.
+    # Flip if the servo or drive is wired opposite to the assumed convention.
     invert_steering: false
-    invert_throttle: false
+    invert_speed: false
 
     # Bench testing only: set false to pass commands through without waiting
     # for the Arduino to report AUTO_ACTIVE.
     require_auto_active: true
 
-    # Drivetrain, for the wheel_rpm and speed fields of ArduinoStatus.  The
-    # Arduino reports spur gear RPM; the Slash 4X4 reduces spur to wheel 2.85:1
-    # whatever pinion is fitted.  Tire is the Traxxas 6764 Gravix 2.8" at a
-    # nominal 4.5" outer diameter - calibrate with a measured roll-out.
+    # Drivetrain, for converting between m/s and the Arduino's spur RPM in both
+    # directions.  Measured values and their provenance live in vehicle.yaml;
+    # these must agree with it.  Runtime-settable, so a calibration sweep does
+    # not need a restart.  The Slash 4X4 reduces spur to wheel 2.85:1 whatever pinion is
+    # fitted.  Tire is the Traxxas 6764 Gravix 2.8" (nominal 4.5" outer
+    # diameter); the value below is the A5 measured roll-out.
     spur_to_wheel_ratio: 2.85
-    tire_diameter: 0.1143   # metres
+    tire_diameter: 0.1132   # metres
+
+    # Arduino speed controller, see "Speed controller tuning" in
+    # jetson/README.md.  Output is throttle pulse microseconds (us) from the
+    # 1500 us neutral.  These may be changed at runtime with `ros2 param set`.
+    #
+    # TUNED WITH THE CAR ON BLOCKS.  Expect speed_ks/speed_kv to rise and
+    # speed_kp/speed_ki to need retuning with the car on the ground.
+    speed_ks: 28.0           # us whenever the target is nonzero
+    speed_kv: 4.52           # us per m/s of target
+    speed_kp: 7.62           # us per m/s of error
+    speed_ki: 4.76           # us per m/s of error, per second
+    speed_kd: 0.0            # us per m/s per second of measured speed change
+    speed_i_limit: 60.0      # us
+    speed_output_limit: 128.0  # us, at most 500
+    speed_brake_limit: 0.0   # us, at most 440; 0 coasts instead of braking
+    speed_trace: false       # per-tick controller trace into rx_trace_path
+    gains_resend_period: 1.0 # s between resends until the Arduino applies them
 
 cmd_vel_to_drive:
   ros__parameters:
     wheelbase: 0.324               # Traxxas Slash 4X4, metres
-    max_speed: 8.0                 # m/s that maps to full throttle
+    max_speed: 8.0                 # m/s, linear.x is clamped to this
     max_steering_angle: 0.40       # rad at full lock
     min_speed_for_steering: 0.3    # floor speed for the bicycle model
     cmd_timeout: 0.3
@@ -53,12 +82,13 @@ cmd_vel_to_drive:
 
 sim_vehicle:
   ros__parameters:
-    # Model ESC neutral as a coast, rather than a zero wheel-speed command.
-    # Lower deceleration makes the simulated Slash roll farther after throttle
-    # returns to neutral. Gazebo's tire contact brakes forward motion more than
-    # reverse, so these command-side values compensate to make world-space
-    # coast distance symmetric.
-    neutral_throttle_deadband: 0.03
+    # The simulated car holds the commanded velocity, and models a zero target
+    # as a coast rather than a zero wheel-speed command.  Lower deceleration
+    # makes the simulated Slash roll farther after the target returns to zero.
+    # Gazebo's tire contact brakes forward motion more than reverse, so these
+    # command-side values compensate to make world-space coast distance
+    # symmetric.
+    neutral_speed_deadband: 0.05  # m/s
     neutral_coast_deceleration: 0.3  # m/s^2 fallback for both directions
     forward_neutral_coast_deceleration: 0.1  # m/s^2
     reverse_neutral_coast_deceleration: 0.3  # m/s^2

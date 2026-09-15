@@ -5,8 +5,12 @@ attached.
 Opens a pseudo-terminal and symlinks it to a stable path, then speaks just
 enough of the onboard protocol (see ../README.md "Wire format") to unblock
 arduino_bridge_node's AUTO_ARMED -> AUTO_ACTIVE handshake: once it sees a
-Jetson frame with auto_ready=1 and both axes centered, it reports
-mode=AUTO_ACTIVE and stays there.
+Jetson frame with auto_ready=1, steering centered and a zero speed target, it
+reports mode=AUTO_ACTIVE and stays there.
+
+Speed is a first order lag toward the commanded spur RPM, standing in for the
+real firmware's closed loop controller.  Gains frames are checksum validated
+and their sequence number echoed, so the bridge sees them applied.
 
 This does NOT simulate the offboard XBee/RC/E-Stop link
 
@@ -19,6 +23,7 @@ or just:
 """
 
 import argparse
+import math
 import os
 import pty
 import select
@@ -30,6 +35,8 @@ DEFAULT_LINK = "/tmp/fake_arduino"
 CENTER = 127
 DEADBAND = 5
 STATUS_RATE_HZ = 20
+MAX_TARGET_RPM = 20000
+GAINS_FRAME_LENGTH = 82
 
 MODE_ESTOP = 0
 MODE_AUTO_ARMED = 3
@@ -40,22 +47,37 @@ def is_centered(value):
     return abs(value - CENTER) <= DEADBAND
 
 
-def parse_frame(line):
-    """Parse a Jetson -> Arduino frame: auto_ready,steering,throttle (no
-    trailing comma, see protocol.cpp Serialize()).  Returns None if malformed,
-    same as the firmware silently dropping a bad frame."""
-    parts = line.strip().split(",")
-    if len(parts) != 3:
+def parse_command(line):
+    """Parse a drive command, always exactly "C,b,sss,+rrrrr" (see
+    protocol.cpp Serialize()).  Returns None if malformed, same as the firmware
+    silently dropping a bad frame."""
+    if len(line) != 14 or line[:2] != "C," or line[3] != "," or line[7] != ",":
+        return None
+    if line[2] not in "01" or line[8] not in "+-":
+        return None
+    if not (line[4:7].isdigit() and line[9:14].isdigit()):
+        return None
+    steering = int(line[4:7])
+    target = int(line[8:14])
+    if steering > 255 or abs(target) > MAX_TARGET_RPM:
+        return None
+    return line[2] == "1", steering, target
+
+
+def parse_gains_seq(line):
+    """Validate a gains frame's layout and checksum; return its sequence
+    number, or None.  The gains themselves are not used by the fake."""
+    if len(line) != GAINS_FRAME_LENGTH or not line.startswith("G,"):
         return None
     try:
-        auto_ready = parts[0] == "1"
-        steering = int(parts[1])
-        throttle = int(parts[2])
+        checksum = int(line[-2:], 16)
     except ValueError:
         return None
-    if not (0 <= steering <= 255 and 0 <= throttle <= 255):
+    if sum(line[:-2].encode("ascii", errors="replace")) & 0xFF != checksum:
         return None
-    return auto_ready, steering, throttle
+    if not line[2:5].isdigit() or int(line[2:5]) > 255:
+        return None
+    return int(line[2:5])
 
 
 def _handle_sigterm(signum, frame):
@@ -83,10 +105,10 @@ def main():
         help="reported battery level, 0-255 (default: 200)",
     )
     parser.add_argument(
-        "--rpm",
-        type=int,
-        default=0,
-        help="reported spur gear RPM, 0-65535 (default: 0, i.e. stopped)",
+        "--tau",
+        type=float,
+        default=0.5,
+        help="time constant in seconds of the simulated speed response (default: 0.5)",
     )
     args = parser.parse_args()
 
@@ -94,8 +116,8 @@ def main():
         print("error: --battery must be 0-255", file=sys.stderr)
         return 1
 
-    if not 0 <= args.rpm <= 65535:
-        print("error: --rpm must be 0-65535", file=sys.stderr)
+    if args.tau <= 0.0:
+        print("error: --tau must be positive", file=sys.stderr)
         return 1
 
     master_fd, slave_fd = pty.openpty()
@@ -113,8 +135,12 @@ def main():
     sys.stdout.flush()
 
     mode = MODE_AUTO_ARMED
+    target = 0
+    gains_seq = 0
+    rpm = 0.0
     rx_buffer = b""
     last_status = 0.0
+    last_step = time.monotonic()
     period = 1.0 / STATUS_RATE_HZ
 
     try:
@@ -132,29 +158,44 @@ def main():
                     break
                 rx_buffer += chunk
                 while b"\n" in rx_buffer:
-                    line, rx_buffer = rx_buffer.split(b"\n", 1)
-                    frame = parse_frame(line.decode("ascii", errors="replace"))
+                    raw, rx_buffer = rx_buffer.split(b"\n", 1)
+                    line = raw.decode("ascii", errors="replace").rstrip("\r")
+                    seq = parse_gains_seq(line)
+                    if seq is not None:
+                        gains_seq = seq
+                        continue
+                    frame = parse_command(line)
                     if frame is None:
                         continue
-                    auto_ready, steering, throttle = frame
+                    auto_ready, steering, requested = frame
                     if (
                         mode == MODE_AUTO_ARMED
                         and auto_ready
                         and is_centered(steering)
-                        and is_centered(throttle)
+                        and requested == 0
                     ):
                         mode = MODE_AUTO_ACTIVE
+                    target = requested if mode == MODE_AUTO_ACTIVE else 0
 
             now = time.monotonic()
+            dt = now - last_step
+            last_step = now
+            rpm += (target - rpm) * (1.0 - math.exp(-dt / args.tau))
+
             if now - last_status >= period:
                 last_status = now
                 # estop=0, auto_arm=1, manual_start=0 -- fixed, since nothing
                 # here simulates the offboard link that would normally drive
-                # them.  RPM is a constant too: there is no drivetrain model
-                # here, so it is a knob for testing consumers rather than a
-                # simulation.  Trailing comma on every field matches
+                # them.  The throttle field is a nominal feedforward, not a
+                # model of anything.  Trailing comma on every field matches
                 # ToJetson::serialize().
-                status = f"0,1,0,{mode},{args.battery},{args.rpm},\n"
+                reported = int(round(rpm))
+                throttle = (
+                    1500 + int(math.copysign(28 + 9.5 * abs(target) / 1000, target))
+                    if target
+                    else 1500
+                )
+                status = f"0,1,0,{mode},{args.battery},{reported},{target},{throttle},{gains_seq},\n"
                 try:
                     os.write(master_fd, status.encode("ascii"))
                 except OSError:

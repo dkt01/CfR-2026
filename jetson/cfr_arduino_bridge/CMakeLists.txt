@@ -15,6 +15,7 @@ endif()
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 find_package(ament_cmake REQUIRED)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
 find_package(cfr_interfaces REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
@@ -73,7 +74,7 @@ install(TARGETS arduino_bridge_node cmd_vel_to_drive_node sim_vehicle_node path_
   RUNTIME DESTINATION bin
 )
 
-install(PROGRAMS src/teleport_api.py
+install(PROGRAMS src/teleport_api.py src/maneuver_runner_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -101,6 +102,24 @@ if(BUILD_TESTING)
   # Header only; linking the protocol library just brings its include path.
   ament_add_gtest(test_drivetrain test/test_drivetrain.cpp)
   target_link_libraries(test_drivetrain cfr_arduino_protocol)
+
+  # Offline characterization analysis: trace parsers, fits, the run loader and
+  # the vehicle.yaml patcher.  Plain unittest, so it also runs as a bare script
+  # on a laptop with no test runner installed - which is where runs get analysed.
+  find_package(ament_cmake_pytest REQUIRED)
+  ament_add_pytest_test(test_characterize test/test_characterize.py)
+
+  # The Gazebo vehicle model is generated from config/vehicle.yaml.  This fails
+  # the build if someone edited one without regenerating the other, rather than
+  # letting the simulator quietly describe a different car.
+  find_package(ament_cmake_test REQUIRED)
+  ament_add_test(test_vehicle_model_up_to_date
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/generate_vehicle_model.py"
+            --check
+            --vehicle "${CMAKE_CURRENT_SOURCE_DIR}/config/vehicle.yaml"
+            --world "${CMAKE_CURRENT_SOURCE_DIR}/worlds/speed_course.sdf"
+    OUTPUT_FILE "${CMAKE_BINARY_DIR}/test_results/${PROJECT_NAME}/test_vehicle_model_up_to_date.txt"
+  )
 endif()
 
 ament_export_include_directories(include)

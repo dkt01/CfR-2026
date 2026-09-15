@@ -1,0 +1,95 @@
+# C1 - open-loop throttle pulse to ground speed, the loaded equivalent of the
+# on-blocks table in the top level README.
+#
+# THE TRICK, and why this needs no firmware change: the controller computes
+#
+#     output = kS + kV*|target| + kP*error + I - kD*d(measured)/dt
+#
+# so with kV, kP, kI and kD all zero, the output is EXACTLY kS microseconds for
+# any nonzero target.  Sweeping speed_ks is therefore an open-loop pulse sweep,
+# driven entirely through runtime ROS parameters.  The target's magnitude is
+# irrelevant here; only its sign matters, for direction.
+#
+# Alternating forward and reverse is not decoration - it is what keeps the car
+# inside a 60 m path.  Nine forward legs in a row would cover well over 100 m.
+# It also yields the reverse branch of the map for free.
+#
+# The zero-velocity steps between legs are generous because the car has to
+# actually STOP before the firmware will drive the other way: the tachometer is
+# direction-blind, so a reversal is tracked as a zero target until the wheels
+# read stopped for a further 100 ms.  Those coast-downs are usable data in their
+# own right.
+#
+# SPACE: the top points are the greedy ones.  A leg at kS=105 plus its coast can
+# reach 40 m.  If the path is shorter than 60 m, drop the last two steps or
+# shorten their holds - the runner will abort safely on max_distance either way,
+# but an abort costs the rest of the run.
+name: pulse_staircase
+description: Open-loop throttle pulse sweep, forward and reverse, via speed_ks.
+
+gains:
+  # Feedforward only.  Everything that could close the loop is zeroed so the
+  # output is a pure function of kS.
+  speed_kv: 0.0
+  speed_kp: 0.0
+  speed_ki: 0.0
+  speed_kd: 0.0
+  speed_i_limit: 0.0
+  speed_output_limit: 200.0
+  speed_brake_limit: 0.0
+  speed_trace: true
+  speed_ks: 10.0
+
+limits:
+  max_distance: 45.0
+  max_duration: 420.0
+  max_speed: 5.0
+
+steps:
+  - {hold: 3.0, steering: 0.0, velocity: 0.0, label: settle}
+
+  - {hold: 5.0, steering: 0.0, velocity: 2.0, label: fwd_ks010, gains: {speed_ks: 10.0}}
+  - {hold: 5.0, steering: 0.0, velocity: 0.0, label: coast}
+  - {hold: 5.0, steering: 0.0, velocity: -2.0, label: rev_ks010}
+  - {hold: 5.0, steering: 0.0, velocity: 0.0, label: coast}
+
+  - {hold: 5.0, steering: 0.0, velocity: 2.0, label: fwd_ks020, gains: {speed_ks: 20.0}}
+  - {hold: 5.0, steering: 0.0, velocity: 0.0, label: coast}
+  - {hold: 5.0, steering: 0.0, velocity: -2.0, label: rev_ks020}
+  - {hold: 5.0, steering: 0.0, velocity: 0.0, label: coast}
+
+  - {hold: 5.0, steering: 0.0, velocity: 2.0, label: fwd_ks030, gains: {speed_ks: 30.0}}
+  - {hold: 6.0, steering: 0.0, velocity: 0.0, label: coast}
+  - {hold: 5.0, steering: 0.0, velocity: -2.0, label: rev_ks030}
+  - {hold: 6.0, steering: 0.0, velocity: 0.0, label: coast}
+
+  - {hold: 5.0, steering: 0.0, velocity: 2.0, label: fwd_ks040, gains: {speed_ks: 40.0}}
+  - {hold: 6.0, steering: 0.0, velocity: 0.0, label: coast}
+  - {hold: 5.0, steering: 0.0, velocity: -2.0, label: rev_ks040}
+  - {hold: 6.0, steering: 0.0, velocity: 0.0, label: coast}
+
+  - {hold: 4.5, steering: 0.0, velocity: 2.0, label: fwd_ks050, gains: {speed_ks: 50.0}}
+  - {hold: 7.0, steering: 0.0, velocity: 0.0, label: coast}
+  - {hold: 4.5, steering: 0.0, velocity: -2.0, label: rev_ks050}
+  - {hold: 7.0, steering: 0.0, velocity: 0.0, label: coast}
+
+  - {hold: 4.0, steering: 0.0, velocity: 2.0, label: fwd_ks065, gains: {speed_ks: 65.0}}
+  - {hold: 8.0, steering: 0.0, velocity: 0.0, label: coast}
+  - {hold: 4.0, steering: 0.0, velocity: -2.0, label: rev_ks065}
+  - {hold: 8.0, steering: 0.0, velocity: 0.0, label: coast}
+
+  - {hold: 4.0, steering: 0.0, velocity: 2.0, label: fwd_ks085, gains: {speed_ks: 85.0}}
+  - {hold: 9.0, steering: 0.0, velocity: 0.0, label: coast}
+  - {hold: 4.0, steering: 0.0, velocity: -2.0, label: rev_ks085}
+  - {hold: 9.0, steering: 0.0, velocity: 0.0, label: coast}
+
+  - {hold: 3.5, steering: 0.0, velocity: 2.0, label: fwd_ks105, gains: {speed_ks: 105.0}}
+  - {hold: 10.0, steering: 0.0, velocity: 0.0, label: coast}
+  - {hold: 3.5, steering: 0.0, velocity: -2.0, label: rev_ks105}
+  - {hold: 10.0, steering: 0.0, velocity: 0.0, label: coast}
+
+return:
+  mode: reverse_to_start
+  speed: 1.2
+  tolerance: 2.0
+  timeout: 90.0

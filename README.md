@@ -74,30 +74,135 @@ The bit assignments are defined in `CMD_FLAGS_A`/`B`/`C` in `src/rpi_rc_estop/es
 
 ## Onboard Protocol
 
-The robot features an Arduino that controls the car's actuators and an NVIDIA Jetson Orin Nano Super.  The two components communicate over a USB serial interface at 1000000 Baud.
+The robot features an Arduino that controls the car's actuators and an NVIDIA Jetson Orin Nano Super.  The two components communicate over a USB serial interface at 115200 Baud.
 
 Messages transmitted each direction are ASCII serial where fields are comma-separated and messages are separated by a new line character (`\n`).
 
+The rate is deliberately modest.  `SoftwareSerial` holds interrupts off for about 174 µs per XBee byte, while at 1000000 Baud a Jetson byte arrives every 10 µs, so each blackout could overrun the Uno's two byte receive buffer: on the bench 14% of Jetson frames arrived with bytes missing.  At 115200 Baud a byte takes 868 µs and the loss fell below 1%.  Both Jetson frames are also fixed width and the Arduino requires the exact length, so a byte that does go missing rejects the frame instead of changing what it says.
+
 ### Arduino -> Jetson
 
-| Field Index | Description   | Data Type | Data Range | Notes                                                                           |
-| ----------- | ------------- | --------- | ---------- | ------------------------------------------------------------------------------- |
-| 0           | E-Stop State  | Boolean   | `0` or `1` | `1` indicates E-Stop active                                                     |
-| 1           | Auto Arm      | Boolean   | `0` or `1` | `1` indicates autonomous mode active.  `0` indicates RC only                    |
-| 2           | Manual Start  | Boolean   | `0` or `1` | `1` indicates robot should start autonomous driving without visual start signal |
-| 3           | Auto Mode     | Enum      | [0,4]      | `0` E-Stop, `1` RC Armed, `2` RC Active, `3` Auto Armed, `4` Auto Active        |
-| 4           | Battery Level | Integer   | [0,255]    | `0` is empty battery, `255` is full battery.                                    |
-| 5           | Spur RPM      | Integer   | [0,65535]  | Spur gear revolutions per minute.  `0` also means stopped or no sensor.          |
+Every field is followed by a comma, including the last.
 
-`Deserialize()` on the Jetson requires exactly six fields, so firmware predating the RPM field is rejected outright rather than parsed with a stale speed.  Flash both sides together.
+| Field Index | Description     | Data Type      | Data Range     | Notes                                                                           |
+| ----------- | --------------- | -------------- | -------------- | ------------------------------------------------------------------------------- |
+| 0           | E-Stop State    | Boolean        | `0` or `1`     | `1` indicates E-Stop active                                                     |
+| 1           | Auto Arm        | Boolean        | `0` or `1`     | `1` indicates autonomous mode active.  `0` indicates RC only                    |
+| 2           | Manual Start    | Boolean        | `0` or `1`     | `1` indicates robot should start autonomous driving without visual start signal |
+| 3           | Auto Mode       | Enum           | [0,4]          | `0` E-Stop, `1` RC Armed, `2` RC Active, `3` Auto Armed, `4` Auto Active        |
+| 4           | Battery Level   | Integer        | [0,255]        | `0` is empty battery, `255` is full battery.                                    |
+| 5           | Spur RPM        | Signed Integer | [-20000,20000] | Spur gear revolutions per minute.  The sensor cannot see direction, so the sign is the speed controller's estimate: the direction it last drove, positive when unknown.  `0` also means stopped or no sensor. |
+| 6           | Target RPM      | Signed Integer | [-20000,20000] | Spur RPM the speed controller is tracking.  Held at `0` while it stops the car ahead of a reversal. |
+| 7           | Throttle Output | Integer        | [1000,2000]    | Requested throttle pulse in microseconds, before low speed dithering.           |
+| 8           | Gains Sequence  | Integer        | [0,255]        | Sequence number of the speed gains in use.  `0` is the firmware's compiled-in defaults. |
+
+`Deserialize()` on the Jetson requires exactly nine fields, so firmware predating closed loop speed control is rejected outright.  Flash both sides together.
+
+The same link carries diagnostic lines that the Jetson skips: a `D,` debug line at 20 Hz, and a `T,` speed controller trace every 20 ms while the trace flag of the gains frame is set.  Their fields are listed beside the `snprintf` calls that produce them in `src/arduino_rcm/arduino_rcm.ino`.
 
 ### Jetson -> Arduino
 
-| Field Index | Description    | Data Type | Data Range | Notes                                      |
-| ----------- | -------------- | --------- | ---------- | ------------------------------------------ |
-| 0           | Auto Ready     | Boolean   | `0` or `1` | `1` indicates auto control requested       |
-| 1           | Steering Angle | Integer   | [0,255]    | `0` is full right, `255` is full left      |
-| 2           | Velocity       | Integer   | [0,255]    | `0` is full reverse, `255` is full forward |
+#### Drive Command
+
+Sent at 50 Hz, always exactly `C,b,sss,+rrrrr`.  Only this frame feeds the Arduino's 200 ms watchdog.
+
+| Field Index | Description    | Data Type         | Data Range      | Notes                                                           |
+| ----------- | -------------- | ----------------- | --------------- | --------------------------------------------------------------- |
+| 0           | Frame Type     | Character         | `C`             |                                                                 |
+| 1           | Auto Ready     | Boolean           | `0` or `1`      | `1` indicates auto control requested                            |
+| 2           | Steering Angle | Integer, 3 digits | [0,255]         | `0` is full right, `255` is full left                           |
+| 3           | Target RPM     | Sign and 5 digits | [-20000,+20000] | Spur RPM for the speed controller, positive forward.  `+00000` stops. |
+
+The Arduino enters Auto Active from Auto Armed only while Auto Ready is `1`, steering is within `127 ± 5`, and the target is `+00000`.
+
+The target is spur RPM rather than a ground speed so the drivetrain geometry lives in one place.  The Jetson converts from m/s with its `spur_to_wheel_ratio` and `tire_diameter` parameters; see `jetson/README.md`.
+
+#### Speed Gains
+
+Sent by the Jetson at startup and whenever its gain parameters change, and repeated until the Arduino reports the frame's sequence number back in Gains Sequence.  Always exactly `G,qqq,t,`, then eight `±nnnnnnn,` fields, then a two digit checksum: 82 bytes before the newline.  Values are signed thousandths, so `+0009500` is 9.5.  Speed is in spur RPM and the output is a throttle pulse offset from 1500 µs.
+
+| Field Index | Description  | Units                                | Notes                                                     |
+| ----------- | ------------ | ------------------------------------ | --------------------------------------------------------- |
+| 0           | Frame Type   | `G`                                  |                                                           |
+| 1           | Sequence     | [0,255], 3 digits                    | Echoed in Gains Sequence once applied.  The Jetson never sends `000`. |
+| 2           | Trace        | `0` or `1`                           | `1` enables the `T,` trace line                           |
+| 3           | kS           | µs                                   | Static feedforward, added whenever the target is nonzero  |
+| 4           | kV           | µs per 1000 RPM                      | Velocity feedforward                                      |
+| 5           | kP           | µs per 1000 RPM of error             |                                                           |
+| 6           | kI           | µs per 1000 RPM of error, per second |                                                           |
+| 7           | kD           | µs per 1000 RPM per second           | Acts on measured speed, not error                         |
+| 8           | I Limit      | µs, non-negative                     | Integrator clamp                                          |
+| 9           | Output Limit | µs, [0,500]                          | Largest drive offset                                      |
+| 10          | Brake Limit  | µs, [0,440]                          | Braking effort past the ESC's brake threshold.  `0` coasts instead of braking. |
+| 11          | Checksum     | 2 uppercase hex digits               | 8-bit sum of every preceding byte                         |
+
+Unlike a drive command, which is replaced 50 times a second, a corrupted gain would persist, which is why only this frame carries a checksum.  A frame that fails any check leaves the gains in use untouched, and a gains frame never feeds the watchdog.
+
+## Speed Control
+
+In Auto Active the Arduino closes the loop from the target spur RPM to the throttle pulse once per 20 ms PWM frame, in `SpeedController` in `src/arduino_rcm/arduino_rcm.ino`:
+
+```text
+output = kS + kV * |target| + kP * error + I - kD * d(measured)/dt     [us]
+I      = I + kI * error * dt, clamped to +/- I Limit
+pulse  = 1500 +/- output                                               [us]
+```
+
+with the rate gains per 1000 RPM.  Feedforward carries most of the output and the PID terms trim it, so set kS and kV first.  The integrator is held while the output is pinned at a limit, and cleared whenever the target is zero.  The controller resets every time Auto Active is left, and RC mode remains open loop.
+
+**Speed measurement.**  The tachometer timestamps every revolution and averages the whole revolutions inside a 100 ms window, but always at least one.  A revolution still in progress that has already outlasted the last measured period caps the estimate, so a stopping wheel reads low promptly, and 400 ms without a revolution reads as stopped.  That puts the slowest speed the controller can see at 150 spur RPM, about 0.3 m/s; slower targets run on feedforward alone.  At 1500 spur RPM (3.2 m/s) a new timestamp arrives every 40 ms.  A pin change with no change in level is counted as a whole pulse swallowed by a loop stall, which on the bench happened to roughly 5% of revolutions, and a revolution shorter than 3 ms is rejected as noise.
+
+**Actuator.**  The output passes through the existing low speed dithering, so the region inside the ESC's ±50 µs deadband is the bottom of the controller's range rather than a dead zone.  Reverse is now dithered the same way as forward.
+
+**Direction.**  The sensor cannot see direction, so the controller takes the direction it last drove as the direction of travel and changes it only after the wheels have read stopped for a further 100 ms.  Until then a reversal is tracked as a zero target, so the car coasts (or brakes) to a stop first.
+
+**Braking.**  Off by default: with Brake Limit `0`, a lower target or a stop coasts.  The VXL-3S reads a reverse side pulse as a brake only until it sees neutral, and after that the same pulse drives in reverse, so braking is never dithered.  When Brake Limit is nonzero and the car is moving forward, an output below -5 µs sends a steady pulse starting 60 µs below neutral, until the output returns to zero or the wheels stop.  If speed climbs 300 RPM above its lowest point since braking began, the ESC has gone to reverse drive and the direction-blind sensor would read that as more forward speed, so braking locks out until the wheels stop.  Reverse never brakes, because its far side of neutral is forward drive.
+
+### Bench Characterization
+
+Open loop through the dithering, car on blocks, 11.8 V pack:
+
+| Throttle Pulse | Steady Spur RPM       | Notes                                                 |
+| -------------- | --------------------- | ----------------------------------------------------- |
+| 1500-1525 µs   | 0                     | Too little dither duty to break static friction       |
+| 1530-1550 µs   | 225-2300, ~105 RPM/µs | Dithered and roughly linear                           |
+| 1555-1585 µs   | ~2900                 | Flat: the ESC's own minimum steady speed              |
+| 1590-1600 µs   | 3100-3550, ~50 RPM/µs |                                                       |
+| 1470, 1460 µs  | 240, 1070 in reverse  | From a standstill, reverse dithering mirrors forward  |
+
+Steps behave like a first order lag with a 450-650 ms time constant and little dead time.  Coasting down at neutral is slower, 700-1000 ms.  A steady 1440 µs pulse from forward speed braked to a stop and held there, while a dithered 1470 µs braked and then drove away in reverse, which is what shaped the braking rules above.
+
+### Bench Tuning
+
+The compiled-in defaults, and the matching per m/s defaults in `jetson/cfr_arduino_bridge/config/arduino_bridge.yaml`, are kS 28 µs; kV 9.5, kP 16, kI 10 and kD 0 per 1000 RPM; I Limit 60 µs, Output Limit 128 µs and Brake Limit 0.  kS and kV come from the characterization above.  kP and kI came from sweeping them with the car on blocks over a path following-like profile of 0, 1.5, 3.2, 0.8, 0, -1.0 and 0 m/s, each held 3-4 s, scored in spur RPM:
+
+| kP  | kI  | Mean Abs. Error | Settled Mean Abs. Error | Settled Std. Dev. | Time to 90% of Step |
+| --- | --- | --------------- | ----------------------- | ----------------- | ------------------- |
+| 16  | 0   | 132             | 100                     | 161               | 0.48 s              |
+| 12  | 10  | 126             | 96                      | 103               | 0.46 s              |
+| 16  | 10  | 121             | 95                      | 106               | 0.44 s              |
+| 16  | 20  | 143             | 131                     | 193               | 0.44 s              |
+| 24  | 10  | 124             | 84                      | 98                | 0.40 s              |
+
+kP 24 was marginally sharper on blocks, but kP 16 leaves more margin for a loaded car.  Larger kI winds up during the ~0.4 s after a start before the tachometer has timed a revolution, and then overshoots.  I Limit has to cover the ESC's plateau: holding 3000 RPM takes about 30 µs more than the straight line feedforward predicts.
+
+Most of the remaining error is ripple at low speed, where the dithering drives the free wheels in bursts: a standard deviation of roughly 200-350 RPM around targets of 150-500 RPM, though the means land close.  The car's own inertia on the ground should smooth much of that out.
+
+With those gains, still on blocks:
+
+| Check                                   | Result                                                                                   |
+| --------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Compiled-in defaults, no gains frame    | 1000, 2000 and -800 RPM targets settled at 1052, 2081 and -812 RPM                       |
+| Jetson drive commands stop              | Neutral pulse 208 ms later, from the 200 ms watchdog                                     |
+| XBee E-Stop                             | Neutral pulse and E-Stop mode within 81 ms                                               |
+| Auto Ready cleared                      | Neutral pulse within one 20 ms control tick                                              |
+| +1200 to -1200 RPM                      | No reverse side pulse until the wheels read stopped; reverse began 1.15 s after the command and settled at -1240 RPM |
+| Stop from 2500 RPM, coasting            | Reads zero after 2.2 s                                                                   |
+| Stop from 2500 RPM, Brake Limit 40 µs   | Steady 1400 µs brake, reads zero after 1.7 s and stays there                             |
+
+None of this says much about the loaded car.  Retune on the ground before relying on it.  The ground retune, and the rest of the work needed to make the Gazebo simulator a twin of the car rather than a plausible-looking stand-in, is [docs/characterization.md](docs/characterization.md); [docs/field-card.md](docs/field-card.md) is the printable version to take to the test site.
+
+The whole campaign runs through the runtime `speed_*` parameters and the `D,` debug line this firmware already emits, so **no step requires reflashing the Arduino** — which matters, because the sequences that need sweeping gains are the ones run furthest from a bench.
 
 ## Onboard I/O
 
@@ -105,7 +210,7 @@ The Arduino Uno carries the [FlippinDisaster shield](https://github.com/dkt01/Fl
 
 | Pin    | Assignment                       | Notes                                                                        |
 | ------ | -------------------------------- | ---------------------------------------------------------------------------- |
-| D0/D1  | USB serial to the Jetson         | Hardware USART, 1000000 baud.                                                |
+| D0/D1  | USB serial to the Jetson         | Hardware USART, 115200 baud.                                                 |
 | D2/D3  | XBee                             | `SoftwareSerial`, 57600 baud, via the XBee shield's `DLINE` switch position.  |
 | D5     | *unused*                         | Shield `FR` header.  See the note below before reusing it.                    |
 | D8     | RPM sensor input                 | Shield prototyping area or the Uno header.                                    |
@@ -125,7 +230,7 @@ Consequently the ATmega328P has **no free hardware pulse counter** in this confi
 
 A [Traxxas 6520/6522 RPM sensor](https://www.traxxas.com/products/parts/6520) — a hall switch reading a trigger magnet in the spur gear — wired to **D8**.  Its output is open collector. It pulls the line low and otherwise leaves it floating so the firmware enables D8's internal pull-up; without a pull-up no edge is ever latched and RPM reads 0.  One magnet gives one pulse per spur revolution, so the reported figure is spur RPM, not motor or wheel RPM.  The Slash 4X4 reduces spur to wheel 2.85:1 (the manual's final ratio is spur/pinion × 2.85, so the fitted 9T pinion does not enter into it), and the Traxxas 6764 Gravix 2.8″ tire is a nominal 4.5″ (114.3 mm) outer diameter, giving `wheel RPM = spur RPM / 2.85` and `speed (m/s) = wheel RPM × π × 0.1143 / 60`.  The Jetson bridge publishes both (see `jetson/README.md`) and the TUI displays them; the firmware stays on raw spur RPM.  A stock Slash 4x4 spurs at roughly 12,000 RPM flat out, around 200 Hz.
 
-The firmware does **not** install an interrupt handler for it.  Instead the pin's `PCINT` mask bit is set while its group enable (`PCIE0`) is left clear, so the hardware latches `PCIF0` on every edge without dispatching a vector.  A hardware flag is unaffected by `cli()`, so an edge arriving during a `SoftwareSerial` blackout waits for the main loop instead of being lost.  The trade-off is that `PCIF0` is a single bit: one poll observes *at least one* edge rather than a count, so sustained loop stalls longer than half the pulse interval undercount.  Polling runs at loop rate and the only stalls that come close are the blocking XBee transmits.
+The firmware does **not** install an interrupt handler for it.  Instead the pin's `PCINT` mask bit is set while its group enable (`PCIE0`) is left clear, so the hardware latches `PCIF0` on every edge without dispatching a vector.  A hardware flag is unaffected by `cli()`, so an edge arriving during a `SoftwareSerial` blackout waits for the main loop instead of being lost.  The trade-off is that `PCIF0` is a single bit: one poll observes *at least one* edge rather than a count.  The firmware reads the pin level alongside the flag, so a poll that finds the level unchanged counts the whole pulse that fit inside a loop stall, and only that revolution's timestamp is late.  The hall pulse is only about 10% of a revolution, so the blocking XBee transmits do swallow one now and then: about 5% of revolutions on the bench.
 
 Pin 5 is the tempting choice — it is broken out on the shield's `FR` header *and* it is `T1`, the hardware counter input — but it does not work for either purpose here:
 
@@ -148,6 +253,7 @@ Conversions are started and collected by polling, so the ADC never blocks and ne
 
 ## Documentation
 
+* [Characterization procedure](docs/characterization.md) and its [printable field card](docs/field-card.md)
 * [Traxxas Slash 4X4 VXL Ultimate](https://traxxas.com/media/productattach/C-68277-4/2/68277-4-OM-EN-R01.pdf)
 * [Traxxas VXL-3S ESC](https://traxxas.com/media/productattach/3350R/8/KC2014-R02-3355R-VXL-3s-Installation%20Instruction_160217-ML_WEB_EN.pdf)
 * [ATmega328P datasheet](https://ww1.microchip.com/downloads/en/DeviceDoc/Atmel-7810-Automotive-Microcontrollers-ATmega328P_Datasheet.pdf) — timer, pin change interrupt, and ADC chapters

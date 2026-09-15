@@ -1,0 +1,408 @@
+# Canonical physical description of the car.
+#
+# This file is the single source of truth for vehicle geometry, mass, actuator
+# and sensor behaviour.  Before it existed, the wheelbase was a bare literal in
+# five places, the steering limit in five more, and the Gazebo wheel radius
+# disagreed with the drivetrain tire diameter by 3.6% without anything noticing.
+#
+# It is NOT a ROS parameter file.  It is read by:
+#   * scripts/generate_vehicle_model.py, which writes the <model name="slash">
+#     block of worlds/speed_course.sdf from it, and
+#   * scripts/characterize/*, which write measured values back into it.
+# Nodes get their values through config/arduino_bridge.yaml; a test asserts the
+# two agree, so a value changed here and not there is a build failure, not a
+# silent divergence between the car and its twin.
+#
+# EVERY entry carries a provenance tag.  This is the point of the file:
+#
+#   measured   taken from a characterization run, with `experiment` naming it
+#   estimated  derived or calculated, not directly observed
+#   guess      a catalog figure, a round number, or an assumption nobody checked
+#
+# A `guess` is not a failure, it is a to-do with a name on it.  The experiment
+# IDs refer to docs/characterization.md.  Do not change a tag to `measured`
+# without pointing `run` at the run directory that justifies it.
+
+meta:
+  vehicle: Traxxas Slash 4X4 VXL Ultimate
+  configuration: race-ready (3S pack, Jetson Orin Nano, ZED 2i, Arduino Uno + shields)
+  surface: asphalt
+  updated: '2026-09-14'
+  # Vehicle frame, matching the Gazebo model frame: origin at ground level
+  # midway between the axles, x forward, y left, z up (REP-103).
+  frame: ground-projected wheelbase midpoint, x forward, y left, z up
+
+geometry:
+  wheelbase:
+    value: 0.324
+    units: m
+    provenance: measured
+    experiment: A4
+    run: 'Session A 2026-09-14'
+    note: Measured on the car; matches the Traxxas manual figure.
+  track_front:
+    value: 0.290
+    units: m
+    provenance: measured
+    experiment: A4
+    run: 'Session A 2026-09-14'
+    note: Measured on the car; matches the Traxxas manual figure.
+  track_rear:
+    value: 0.290
+    units: m
+    provenance: measured
+    experiment: A4
+    run: 'Session A 2026-09-14'
+    note: Measured on the car; matches the Traxxas manual figure.
+  ride_height:
+    value: 0.050
+    units: m
+    provenance: measured
+    experiment: A4
+    run: 'Session A 2026-09-14'
+    note: Ground clearance at race weight, shocks free (natural sag).
+  chassis_length:
+    value: 0.550
+    units: m
+    provenance: guess
+    experiment: A4
+  chassis_width:
+    value: 0.300
+    units: m
+    provenance: guess
+    experiment: A4
+  chassis_height:
+    value: 0.120
+    units: m
+    provenance: guess
+    experiment: A4
+
+mass:
+  total:
+    value: 3.599
+    units: kg
+    provenance: measured
+    experiment: A1
+    run: 'Session A 2026-09-14'
+    note: Race-ready, single weighing.  The old 4.08 kg guess was 13% heavy.
+  cg_x:
+    value: -0.0118
+    units: m
+    provenance: measured
+    experiment: A1
+    run: 'Session A 2026-09-14'
+    note: >
+      Positive forward of the wheelbase midpoint.  Axles weighed level: front
+      1698 g, rear 1966 g.  They sum to 3664 g against a 3599 g total (+1.8%,
+      likely a small height mismatch between scale and block), so the front
+      share is taken as 1698 / 3664 = 46.3%, giving 0.324 * (0.463 - 0.5).
+      Using the total or the rear reading instead moves it -9 to -15 mm.
+  cg_y:
+    value: 0.0
+    units: m
+    provenance: estimated
+    experiment: A1
+    note: >
+      Not weighed left/right; the layout is judged evenly balanced side to
+      side.  Weigh left and right to replace this.
+  cg_z:
+    value: 0.065
+    units: m
+    provenance: estimated
+    experiment: A2
+    run: 'Session A 2026-09-14'
+    note: >
+      Whole-car CG height above the ground.  Shocks blocked, front axle raised
+      H = 120 mm (tan theta = 0.3987).  Front reading, both properly tared:
+      level 1698 g, tilted 1661 g, so dW = 37 g and
+      0.0566 + 0.037 * 0.324 / (3.599 * 0.3987) = 0.065 m.
+      NOISE-LIMITED: each gram of dW is 0.23 mm of height, and the level axle
+      readings disagree with the total by 65 g, so this is +/-10 mm at best.
+      (Normalising the level front reading to the total instead gives
+      dW = 7 g and 0.058 m.)  Redo level and tilted readings back to back on
+      the same supports, with a larger H, to promote it.
+  wheel_mass:
+    value: 0.12
+    units: kg
+    provenance: guess
+    experiment: A4
+    note: >
+      Per wheel, including hub.  Accepted as-is for now (2026-09-14); Traxxas
+      publishes no mass for the 6764 assembly, so only weighing one replaces it.
+  steering_knuckle_mass:
+    value: 0.05
+    units: kg
+    provenance: guess
+    experiment: A4
+    note: Accepted as-is for now (2026-09-14).
+
+# Estimated from a parts-list breakdown (A3), deliberately not measured: a
+# bifilar pendulum was ruled out as too fiddly for the value it adds.  izz is
+# validated in the loop by the B3 step-steer response instead - if simulated
+# yaw response does not match the car, suspect this before the tires.
+inertia:
+  ixx:
+    value: 0.08
+    units: kg m^2
+    provenance: guess
+    experiment: A3
+  iyy:
+    value: 0.12
+    units: kg m^2
+    provenance: guess
+    experiment: A3
+  izz:
+    value: 0.16
+    units: kg m^2
+    provenance: guess
+    experiment: A3
+    note: Validate against B3 step-steer rise time rather than trusting it.
+
+tire:
+  # Effective ROLLING diameter at race weight, not the catalog figure.  This and
+  # spur_to_wheel_ratio only ever appear as a ratio in the code, so A5 pins the
+  # pair; the ratio is fixed independently by counting wheel turns per spur turn.
+  diameter:
+    value: 0.1132
+    units: m
+    provenance: measured
+    experiment: A5
+    run: 'Session A 2026-09-14'
+    note: >
+      Roll-out at race weight: ten wheel revolutions = 140 in (3.556 m), so
+      3.556 / (10 pi) = 0.1132 m, 1.0% under the nominal 4.5 in (0.1143 m) of
+      the Traxxas 6764 Gravix 2.8 in tire.  Tape read to the nearest inch, so
+      +/-0.4%.  Shocks free, so the tires carried their normal static load.
+      Static roll-out only; foam tires grow with speed.
+  width:
+    value: 0.035
+    units: m
+    provenance: guess
+    experiment: A4
+    note: >
+      Accepted as-is for now (2026-09-14); Traxxas publishes no width for the
+      6764 Gravix tire.  Only the simulator's contact cylinder uses it.
+  spur_to_wheel_ratio:
+    value: 2.85
+    units: dimensionless
+    provenance: guess
+    experiment: A5
+    note: >
+      Slash 4X4 transmission and differentials, independent of pinion.  From the
+      manual, accepted without the hand count for now (2026-09-14); confirm by
+      rotating the spur 28.5 turns and counting 10 wheel turns.  tire.diameter
+      was measured by roll-out, which is independent of this ratio, but the
+      code uses diameter / ratio, so a wrong ratio still skews speed.
+
+steering:
+  # The single most consequential unmeasured number in the system: it is the only
+  # scale factor turning a commanded yaw rate into a steering command
+  # (cmd_vel_to_drive_node.cpp), and the simulator inverts it with the same
+  # constant - so sim and car agree with each other by construction while both
+  # may be wrong about reality.
+  max_angle_left:
+    value: 0.40
+    units: rad
+    provenance: guess
+    experiment: B1
+  max_angle_right:
+    value: 0.40
+    units: rad
+    provenance: guess
+    experiment: B1
+    note: Real Ackermann linkages are rarely symmetric; measure both ends.
+  center_offset:
+    value: 0.0
+    units: normalized steering command
+    provenance: guess
+    experiment: A6
+    note: >
+      Command value that produces zero road-wheel angle.  Note the firmware's
+      auto-mode centre is 1504 us, not 1500: PctToPulseLength(255 - 127) is
+      (128 - 127) * 4 + 1500.
+  backlash:
+    value: 0.0
+    units: rad
+    provenance: guess
+    experiment: A6
+    note: Half the hysteresis between rising and falling sweeps in A6.
+  slew_rate:
+    value: 8.7
+    units: rad/s
+    provenance: guess
+    experiment: A7
+    note: >
+      ~500 deg/s, a typical hobby servo.  NOT negligible against the 2.0 rad/s
+      turn_rate the path follower commands.  The servo runs on regulated 5 V, so
+      this does not vary with pack state - measure it once.
+  tau:
+    value: 0.05
+    units: s
+    provenance: guess
+    experiment: A7
+  # Effective bicycle-model steering angle against normalized command, from the
+  # B1 constant-radius arcs.  This table, not max_angle_*, is what the simulator
+  # should interpolate once it exists.  Rows are [command, angle_rad].
+  effective_angle_table:
+    provenance: guess
+    experiment: B1
+    units: [normalized, rad]
+    rows:
+      - [-1.0, -0.40]
+      - [-0.5, -0.20]
+      - [0.0, 0.0]
+      - [0.5, 0.20]
+      - [1.0, 0.40]
+
+longitudinal:
+  # Coastdown fit: m dv/dt = -(f0 + f1 v + f2 v^2).  These replace the
+  # forward/reverse coast deceleration pair in arduino_bridge.yaml, which the
+  # file itself admits is a fudge compensating for a Gazebo contact asymmetry
+  # rather than anything the car does.
+  f0_rolling:
+    value: 2.0
+    units: N
+    provenance: guess
+    experiment: C2
+  f1_viscous:
+    value: 0.0
+    units: N/(m/s)
+    provenance: guess
+    experiment: C2
+  f2_aero:
+    value: 0.05
+    units: N/(m/s)^2
+    provenance: guess
+    experiment: C2
+  tau_accel:
+    value: 0.55
+    units: s
+    provenance: measured
+    experiment: bench
+    run: 'README.md Bench Characterization'
+    note: >
+      450-650 ms measured ON BLOCKS.  Loaded on the ground this will be larger;
+      C1/C4 supersede it.
+  dead_time:
+    value: 0.0
+    units: s
+    provenance: guess
+    experiment: C1
+  esc_deadband:
+    value: 50.0
+    units: us
+    provenance: measured
+    experiment: bench
+    note: VXL-3S ignores +/-50 us around the 1500 us neutral pulse.
+  voltage_sensitivity:
+    value: 0.0
+    units: (m/s)/V
+    provenance: guess
+    experiment: C1
+    note: >
+      Regressed across the whole campaign as the pack drains, not from a
+      dedicated sweep - pack millivolts are already in every D, line.
+
+lateral:
+  min_turn_radius:
+    value: 0.766
+    units: m
+    provenance: estimated
+    experiment: B1
+    note: >
+      wheelbase / tan(max_angle), i.e. entirely derived from the unmeasured
+      steering limit.  Appears nowhere in the codebase today.
+  understeer_gradient:
+    value: 0.0
+    units: rad/(m/s^2)
+    provenance: guess
+    experiment: B2
+    note: >
+      Zero means the kinematic radius is achieved at any speed, which is what
+      the simulator does today with mu=50.  The real car runs wider.
+  mu_lateral:
+    value: 1.0
+    units: dimensionless
+    provenance: guess
+    experiment: B2
+    note: >
+      Lower bound from where the B2 skidpad sweep goes non-linear.  No slide
+      test was run.  Replaces the mu=50 in the SDF, which makes tire slip
+      physically impossible.
+
+sensors:
+  odom_rate:
+    value: 30.0
+    units: Hz
+    provenance: guess
+    experiment: B0
+  odom_yaw_noise:
+    value: 0.01
+    units: rad
+    provenance: guess
+    experiment: B0
+    note: >
+      Standard deviation at rest.  path_follower's heading_deadband of 0.01 rad
+      was chosen to reject exactly this, so B0 is what makes that parameter
+      tunable in simulation instead of only on the car.
+  odom_position_noise:
+    value: 0.01
+    units: m
+    provenance: guess
+    experiment: B0
+  odom_yaw_drift:
+    value: 0.0
+    units: rad/s
+    provenance: guess
+    experiment: B0
+  odom_scale_error:
+    value: 0.0
+    units: fraction
+    provenance: guess
+    experiment: C2
+  odom_latency:
+    value: 0.05
+    units: s
+    provenance: guess
+    experiment: C4
+  odom_dropout_rate:
+    value: 0.0
+    units: fraction of expected messages
+    provenance: guess
+    experiment: B0
+    note: Paved surfaces are low-texture and a known stressor for visual odometry.
+  command_latency:
+    value: 0.03
+    units: s
+    provenance: guess
+    experiment: C4
+    note: Jetson drive command to first throttle pulse change.
+  # Tachometer behaviour is fixed by the firmware, not measured - it is here so
+  # the simulator can reproduce what the controller actually sees rather than a
+  # perfect speed signal.
+  tach_window:
+    value: 0.1
+    units: s
+    provenance: measured
+    experiment: firmware
+    note: TACH_WINDOW_US in arduino_rcm.ino.
+  tach_stall_timeout:
+    value: 0.4
+    units: s
+    provenance: measured
+    experiment: firmware
+    note: TACH_STALL_US; sets the ~150 spur RPM (~0.3 m/s) floor.
+  tach_pulses_per_rev:
+    value: 1
+    units: count
+    provenance: measured
+    experiment: firmware
+    note: One trigger magnet in the spur gear, so the sensor is direction-blind.
+  tach_merged_pulse_rate:
+    value: 0.05
+    units: fraction of revolutions
+    provenance: measured
+    experiment: bench
+    note: >
+      Revolutions whose edges both fell inside a loop stall.  ~5% on the bench;
+      C-session D, counters say what it is under real vibration.

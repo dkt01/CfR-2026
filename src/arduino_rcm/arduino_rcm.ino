@@ -26,13 +26,27 @@ XBee xbee;
 SoftwareSerial serXBee(2, 3);
 Tx16Request tx16 = Tx16Request();
 uint8_t offboardTxPayload[OFFBOARD_STATUS_LENGTH] = {};
-uint8_t onboardRxPayload[16] = {};
-uint8_t onboardTxPayload[21] = {};
-uint8_t onboardDebugPayload[128] = {};
+// Sized for the gains frame, by far the longest Jetson frame.
+uint8_t onboardRxPayload[96] = {};
+uint8_t onboardTxPayload[48] = {};
+uint8_t onboardDebugPayload[160] = {};
+// Bytes of a rejected Jetson frame kept for the debug line.
+constexpr uint8_t REJECTED_FRAME_CAPTURE = 16;
 
 const unsigned long commsTimeout_ms = 200;
 const bool enableOffboardTx = true;
 const bool enableOnboardDebug = true;
+
+// USB serial to the Jetson.
+//
+// 115200 rather than 1000000 because of the same SoftwareSerial blackout as
+// above, seen from the other side.  At 1Mbaud a Jetson byte lands every 10us,
+// so one ~174us blackout overruns the USART's two byte buffer; on the bench
+// 14% of Jetson frames arrived with bytes missing.  At 115200 a byte takes
+// 868us, longer than any single blackout, and the loss fell below 1%.  Worst
+// case traffic, with the tuning trace on, is ~5kB/s against the 11.5kB/s the
+// link carries.
+constexpr unsigned long ONBOARD_BAUD = 115200UL;
 
 enum class Mode : uint8_t { ESTOP, RC_ARMED, RC_ACTIVE, AUTO_ARMED, AUTO_ACTIVE };
 
@@ -65,9 +79,13 @@ uint16_t PulseUsToTicks(uint16_t pulse_us) {
 // until the main loop reads it.
 //
 // The cost is that PCIF0 is a single bit, so one poll observes "at least one
-// edge" rather than a count.  Polling happens at loop rate, and the only stalls
-// long enough to merge two edges at speed are the blocking SoftwareSerial
-// transmits, which the packed binary offboard frame keeps near 1ms.
+// edge" rather than a count.  Reading the pin level alongside the flag recovers
+// most of that: a changed level is one edge, an unchanged level is both edges
+// of a pulse that fit inside one loop stall.  Measured on the bench the hall
+// pulse is only ~10% of a revolution (~2ms at 3000 spur RPM), shorter than a
+// blocking XBee transmit, and roughly 5% of revolutions arrived merged that
+// way.  Counting them keeps the revolution count exact; only that one
+// revolution's timestamp is late, by at most the stall.
 //
 // PIN CHOICE: pin 5 is the natural candidate (it is broken out on the shield,
 // and it is T1, the hardware counter input) but it does not work here.  T1 is
@@ -78,14 +96,19 @@ uint16_t PulseUsToTicks(uint16_t pulse_us) {
 // tach edge, and that ISR clears PCIF2 before the main loop could ever see it.
 // PORTB's group is unused, so pin 8 gets a latch of its own.
 constexpr uint8_t TACH_PCINT_BIT = PCINT0;
-// Minimum gate length.  Longer windows average more edges, at the cost of
-// slower response to a step in wheel speed.
-constexpr uint16_t TACH_WINDOW_MS = 200;
-// No edges for this long means stopped rather than "no new estimate".  Must
-// exceed the pulse interval at the slowest speed worth reporting.
-constexpr uint16_t TACH_STALL_MS = 500;
-// A pin change interrupt latches both the rising and the falling edge.
-constexpr uint8_t TACH_EDGES_PER_PULSE = 2;
+// Revolution timestamps kept for the speed estimate.  Must be a power of two.
+constexpr uint8_t TACH_HISTORY = 8;
+// The estimate averages the whole revolutions that fit inside this span.  Wider
+// is smoother but lags a speed change by about half the span.  One magnet gives
+// only ~25 timestamps a second at 1500 spur RPM, so at path following speeds
+// this is usually a single revolution anyway.
+constexpr uint32_t TACH_WINDOW_US = 100000UL;
+// No revolution for this long reads as stopped.  This is also the slowest speed
+// the controller can see: 60s / 0.4s = 150 spur RPM, about 0.3 m/s.
+constexpr uint32_t TACH_STALL_US = 400000UL;
+// A revolution shorter than this is noise, not rotation: 3ms is 20000 spur RPM,
+// well past the ~12000 a stock Slash reaches flat out.
+constexpr uint32_t TACH_MIN_PERIOD_US = 3000UL;
 // Trigger magnets installed in the spur gear.
 constexpr uint8_t TACH_PULSES_PER_REV = 1;
 
@@ -131,7 +154,7 @@ void CopyRejectedJetsonFrame(const uint8_t* source,
                              uint8_t sourceLength,
                              uint8_t* destination,
                              uint8_t& destinationLength) {
-  destinationLength = min(sourceLength, static_cast<uint8_t>(sizeof(onboardRxPayload)));
+  destinationLength = min(sourceLength, REJECTED_FRAME_CAPTURE);
   for (uint8_t index = 0; index < destinationLength; ++index) {
     destination[index] = source[index];
   }
@@ -164,66 +187,46 @@ void PackUint16(uint8_t* buffer, uint16_t value) {
   buffer[1] = static_cast<uint8_t>(value >> 8);
 }
 
-// Serialization helpers for comma-delimited ascii messages
+// Parsing helpers for the fixed width ASCII Jetson frames
 
-bool serialize(const uint8_t& val, uint8_t** buffer) {
-  uint8_t digits = 1;
-  uint8_t tempVal = val;
-  if (val >= 100) {
-    digits = 3;
-  } else if (val >= 10) {
-    digits = 2;
-  }
-  while (digits > 0) {
-    --digits;
-    uint8_t digitMultiplier;
-    switch (digits) {
-      case 0:
-        digitMultiplier = 1;
-        break;
-      case 1:
-        digitMultiplier = 10;
-        break;
-      case 2:
-        digitMultiplier = 100;
-        break;
+// Exactly `width` decimal digits.  Every Jetson frame is fixed width, so a
+// dropped or duplicated byte anywhere moves a delimiter or a sign onto a digit
+// position and fails here or in the caller, rather than shifting a value.
+bool ParseDigits(const uint8_t* data, uint8_t width, uint32_t& value) {
+  value = 0;
+  for (uint8_t index = 0; index < width; ++index) {
+    if (data[index] < '0' || data[index] > '9') {
+      return false;
     }
-    uint8_t newDigit = (tempVal - (tempVal % digitMultiplier)) / digitMultiplier;
-    tempVal -= (newDigit * digitMultiplier);
-    **buffer = '0' + newDigit;
-    ++(*buffer);
+    value = value * 10 + static_cast<uint32_t>(data[index] - '0');
   }
-  **buffer = ',';
-  ++(*buffer);
   return true;
 }
 
-bool serialize(const uint16_t& val, uint8_t** buffer) {
-  uint16_t divisor = 1;
-  while (divisor <= val / 10) {
-    divisor *= 10;
+// A '+' or '-' followed by exactly `width` digits.
+bool ParseSigned(const uint8_t* data, uint8_t width, int32_t& value) {
+  if (data[0] != '+' && data[0] != '-') {
+    return false;
   }
-  while (divisor > 0) {
-    **buffer = '0' + (val / divisor) % 10;
-    ++(*buffer);
-    divisor /= 10;
+  uint32_t magnitude = 0;
+  if (!ParseDigits(data + 1, width, magnitude)) {
+    return false;
   }
-  **buffer = ',';
-  ++(*buffer);
+  value = (data[0] == '-') ? -static_cast<int32_t>(magnitude) : static_cast<int32_t>(magnitude);
   return true;
 }
 
-bool serialize(Mode& val, uint8_t** buffer) {
-  uint8_t intMode = static_cast<uint8_t>(val);
-  return serialize(intMode, buffer);
-}
-
-bool serialize(bool& val, uint8_t** buffer) {
-  **buffer = val ? '1' : '0';
-  ++(*buffer);
-  **buffer = ',';
-  ++(*buffer);
-  return true;
+// Uppercase only, matching what the Jetson emits.
+bool ParseHexNibble(uint8_t character, uint8_t& value) {
+  if (character >= '0' && character <= '9') {
+    value = character - '0';
+    return true;
+  }
+  if (character >= 'A' && character <= 'F') {
+    value = character - 'A' + 10;
+    return true;
+  }
+  return false;
 }
 
 // Onboard and offboard messages
@@ -335,44 +338,126 @@ typedef struct {
 
 } ToOffboard;
 
+// Largest target the Jetson may request, in either direction.
+constexpr int16_t MAX_TARGET_RPM = 20000;
+
 typedef struct {
   bool AUTO_READY{false};
   uint8_t CMD_STEERING{127};
-  uint8_t CMD_THROTTLE{127};
+  // Signed spur RPM, positive forward.  Spur RPM rather than a ground speed
+  // keeps the drivetrain geometry in one place - the Jetson, which converts
+  // from m/s - instead of two that could disagree.
+  int16_t TARGET_RPM{0};
 
   bool deSerialize(const uint8_t* data, uint8_t dataLength) {
-    // Jetson Serialize() always emits exactly "b,nnn,nnn\\n".  Requiring
-    // the nine-byte payload before its newline prevents a damaged complete
-    // line from being interpreted as a shortened but valid command.
-    if (dataLength != 9 || (data[0] != '0' && data[0] != '1') || data[1] != ',' || data[5] != ',') {
+    // Always exactly "C,b,sss,+rrrrr".  The exact length check is what turns
+    // a byte lost on the USB link into a rejected frame.
+    if (dataLength != 14 || data[0] != 'C' || data[1] != ',' || (data[2] != '0' && data[2] != '1') || data[3] != ',' ||
+        data[7] != ',') {
       return false;
     }
 
-    uint16_t steering = 0;
-    uint16_t throttle = 0;
-    for (uint8_t index = 2; index < 5; ++index) {
-      if (data[index] < '0' || data[index] > '9') {
-        return false;
-      }
-      steering = steering * 10 + static_cast<uint16_t>(data[index] - '0');
+    uint32_t steering = 0;
+    int32_t target = 0;
+    if (!ParseDigits(data + 4, 3, steering) || !ParseSigned(data + 8, 5, target)) {
+      return false;
     }
-    for (uint8_t index = 6; index < 9; ++index) {
-      if (data[index] < '0' || data[index] > '9') {
-        return false;
-      }
-      throttle = throttle * 10 + static_cast<uint16_t>(data[index] - '0');
-    }
-    if (steering > 255 || throttle > 255) {
+    if (steering > 255 || target > MAX_TARGET_RPM || target < -MAX_TARGET_RPM) {
       return false;
     }
 
-    AUTO_READY = data[0] == '1';
+    AUTO_READY = data[2] == '1';
     CMD_STEERING = static_cast<uint8_t>(steering);
-    CMD_THROTTLE = static_cast<uint8_t>(throttle);
+    TARGET_RPM = static_cast<int16_t>(target);
     return true;
   }
 
 } FromJetson;
+
+// Always exactly "G,qqq,t," then the eight SpeedGains values in declaration
+// order as "+nnnnnnn," in thousandths, then "hh": the 8-bit sum of every
+// preceding byte in uppercase hex.  Unlike a drive command, which is replaced
+// 50 times a second, a corrupted gain would persist, so this frame carries a
+// checksum.
+constexpr uint8_t GAINS_FIELDS = 8;
+constexpr uint8_t GAINS_HEADER_LENGTH = 8;
+constexpr uint8_t GAINS_FIELD_LENGTH = 9;
+constexpr uint8_t GAINS_FRAME_LENGTH = GAINS_HEADER_LENGTH + GAINS_FIELDS * GAINS_FIELD_LENGTH + 2;
+
+// Speed controller tuning.  The Jetson sends a set at startup and whenever its
+// parameters change, so the car can be retuned under load without a reflash;
+// these compiled-in values only apply until then.
+//
+// Output is a throttle pulse offset from neutral in microseconds and speed is
+// spur RPM.  Scaling per 1000 RPM keeps the numbers readable.  Keep these in
+// step with the defaults in jetson/cfr_arduino_bridge/config/arduino_bridge.yaml.
+//
+// TUNED ON BLOCKS, see Speed Control in the top level README.  A car on the
+// ground carries several times the inertia and more drag, so expect kS/kV to
+// rise and kP/kI to need retuning.
+struct SpeedGains {
+  float kS{28.0f};         // us, added whenever the target is nonzero
+  float kV{9.5f};          // us per 1000 RPM of target
+  float kP{16.0f};         // us per 1000 RPM of error
+  float kI{10.0f};         // us per 1000 RPM of error, per second
+  float kD{0.0f};          // us per 1000 RPM per second of measured speed change
+  float iLimit{60.0f};     // us, integrator clamp
+  float outLimit{128.0f};  // us, largest drive offset
+  float brakeLimit{0.0f};  // us of braking past SPEED_BRAKE_THRESHOLD_US; 0 coasts
+  uint8_t seq{0};          // echoed in the status frame; 0 means these defaults
+  bool trace{false};       // emit a T line every control tick
+
+  // Leaves every field untouched unless the whole frame is valid.
+  bool deSerialize(const uint8_t* data, uint8_t dataLength) {
+    if (dataLength != GAINS_FRAME_LENGTH || data[0] != 'G' || data[1] != ',' || data[5] != ',' ||
+        (data[6] != '0' && data[6] != '1') || data[7] != ',') {
+      return false;
+    }
+
+    uint8_t sum = 0;
+    for (uint8_t index = 0; index < GAINS_FRAME_LENGTH - 2; ++index) {
+      sum += data[index];
+    }
+    uint8_t high = 0;
+    uint8_t low = 0;
+    if (!ParseHexNibble(data[GAINS_FRAME_LENGTH - 2], high) || !ParseHexNibble(data[GAINS_FRAME_LENGTH - 1], low) ||
+        sum != static_cast<uint8_t>((high << 4) | low)) {
+      return false;
+    }
+
+    uint32_t sequence = 0;
+    if (!ParseDigits(data + 2, 3, sequence) || sequence > 255) {
+      return false;
+    }
+
+    float values[GAINS_FIELDS];
+    for (uint8_t field = 0; field < GAINS_FIELDS; ++field) {
+      const uint8_t offset = GAINS_HEADER_LENGTH + field * GAINS_FIELD_LENGTH;
+      int32_t thousandths = 0;
+      if (!ParseSigned(data + offset, 7, thousandths) || data[offset + GAINS_FIELD_LENGTH - 1] != ',') {
+        return false;
+      }
+      values[field] = thousandths / 1000.0f;
+    }
+
+    // Limits are magnitudes, and must keep the pulse inside [1000us, 2000us].
+    if (values[5] < 0.0f || values[6] < 0.0f || values[6] > 500.0f || values[7] < 0.0f || values[7] > 440.0f) {
+      return false;
+    }
+
+    kS = values[0];
+    kV = values[1];
+    kP = values[2];
+    kI = values[3];
+    kD = values[4];
+    iLimit = values[5];
+    outLimit = values[6];
+    brakeLimit = values[7];
+    seq = static_cast<uint8_t>(sequence);
+    trace = data[6] == '1';
+    return true;
+  }
+};
 
 typedef struct {
   bool ESTOP{false};
@@ -380,26 +465,31 @@ typedef struct {
   bool MANUAL_START{false};
   Mode MODE{Mode::ESTOP};
   uint8_t BATTERY_LEVEL{0};
-  uint16_t RPM{0};
+  // Spur RPM signed by the controller's direction estimate: the tach itself
+  // cannot see direction, so this is positive whenever the direction is unknown.
+  int16_t RPM{0};
+  // Signed spur RPM the controller is tracking right now.  Zero while it is
+  // stopping the car ahead of a reversal, so it can differ from the command.
+  int16_t TARGET_RPM{0};
+  uint16_t THROTTLE_US{1500};
+  uint8_t GAINS_SEQ{0};
 
-  bool serialize(uint8_t* buffer, uint8_t bufferSize) {
-    // Need enough space for max size values with comma delimiter and trailing
-    // '\n' and '\0'.  RPM is the only five digit field: "1,1,1,4,255,65535,\n\0"
-    if (bufferSize < 21) {
-      return false;
-    }
-
-    ::serialize(ESTOP, &buffer);
-    ::serialize(AUTO_ARM, &buffer);
-    ::serialize(MANUAL_START, &buffer);
-    ::serialize(MODE, &buffer);
-    ::serialize(BATTERY_LEVEL, &buffer);
-    ::serialize(RPM, &buffer);
-    *buffer = '\n';
-    ++(buffer);
-    *buffer = '\0';
-    ++(buffer);
-    return true;
+  // Returns the frame length including the trailing newline, or 0 if it did
+  // not fit.  Longest is "1,1,1,4,255,-20000,-20000,2000,255,\n", 36 bytes.
+  uint8_t serialize(uint8_t* buffer, uint8_t bufferSize) {
+    const int length = snprintf(reinterpret_cast<char*>(buffer),
+                                bufferSize,
+                                "%u,%u,%u,%u,%u,%d,%d,%u,%u,\n",
+                                ESTOP,
+                                AUTO_ARM,
+                                MANUAL_START,
+                                static_cast<uint8_t>(MODE),
+                                BATTERY_LEVEL,
+                                RPM,
+                                TARGET_RPM,
+                                THROTTLE_US,
+                                GAINS_SEQ);
+    return (length > 0 && length < bufferSize) ? static_cast<uint8_t>(length) : 0;
   }
 
 } ToJetson;
@@ -414,17 +504,6 @@ bool IsTimedOut(unsigned long latestUpdate, unsigned long sampleTime, unsigned l
   return (sampleTime - latestUpdate) >= timeout;
 }
 
-uint8_t GetPacketSize(uint8_t* buffer, uint8_t bufferSize, char endChar = '\n') {
-  uint8_t length = 0;
-  while (length < bufferSize) {
-    if (buffer[length] == endChar) {
-      return length + 1;
-    }
-    ++length;
-  }
-  return length;
-}
-
 bool IsNearlyCenter(uint8_t value, uint8_t centerValue = 127, uint8_t tolerance = 5) {
   if (centerValue < tolerance) {
     return value <= (centerValue + tolerance);
@@ -437,11 +516,12 @@ bool IsNearlyCenter(uint8_t value, uint8_t centerValue = 127, uint8_t tolerance 
 // Sensors
 
 struct Tachometer {
-  uint16_t edgeCount{0};
-  unsigned long firstEdgeUs{0};
-  unsigned long latestEdgeUs{0};
-  unsigned long latestEdgeMs{0};
-  unsigned long windowStartMs{0};
+  unsigned long revolutionUs[TACH_HISTORY]{};
+  uint8_t newest{0};
+  uint8_t revolutions{0};  // timestamps held, saturating at TACH_HISTORY
+  uint8_t level{1};        // pin level after the last edge seen
+  uint16_t mergedPulses{0};
+  uint16_t rejectedEdges{0};
   uint16_t rpm{0};
 
   void begin() {
@@ -452,59 +532,76 @@ struct Tachometer {
     PCMSK0 = _BV(TACH_PCINT_BIT);
     PCICR &= ~_BV(PCIE0);  // flag only.  Deliberately no vector - see above.
     PCIFR = _BV(PCIF0);    // write 1 to clear anything latched during boot
+    level = (PINB & _BV(PINB0)) ? 1 : 0;
   }
 
   // Cheap enough to call every loop iteration, and worth calling again
   // immediately after anything that blocks.
-  void poll(unsigned long nowMs) {
+  void poll() {
     if (!(PCIFR & _BV(PCIF0))) {
       return;
     }
     PCIFR = _BV(PCIF0);
     const unsigned long nowUs = micros();
-    if (edgeCount == 0) {
-      firstEdgeUs = nowUs;
+    const uint8_t pin = (PINB & _BV(PINB0)) ? 1 : 0;
+
+    // The magnet pulls the line low, so each falling edge is one revolution.
+    // An unchanged level means both edges of a pulse fell inside one stall,
+    // which is still exactly one revolution.
+    const bool merged = pin == level;
+    const bool falling = !merged && pin == 0;
+    level = pin;
+    if (!merged && !falling) {
+      return;
     }
-    latestEdgeUs = nowUs;
-    latestEdgeMs = nowMs;
-    ++edgeCount;
+    if (revolutions > 0 && (nowUs - revolutionUs[newest]) < TACH_MIN_PERIOD_US) {
+      ++rejectedEdges;
+      return;
+    }
+    if (merged) {
+      ++mergedPulses;
+    }
+    newest = (newest + 1) & (TACH_HISTORY - 1);
+    revolutionUs[newest] = nowUs;
+    if (revolutions < TACH_HISTORY) {
+      ++revolutions;
+    }
   }
 
-  void update(unsigned long nowMs) {
-    if (IsTimedOut(latestEdgeMs, nowMs, TACH_STALL_MS)) {
+  // Once per control tick.
+  //
+  // Timing whole revolutions, rather than counting edges inside a fixed gate,
+  // is what makes this usable for control: a 200ms gate quantizes to 300 RPM
+  // and lags by 100ms, while a single revolution at 1500 RPM takes 40ms.
+  void update(unsigned long nowUs) {
+    const unsigned long sinceUs = nowUs - revolutionUs[newest];
+    if (revolutions > 0 && sinceUs >= TACH_STALL_US) {
+      // Forget the history too, so the first revolution after a stop is not
+      // timed against one from before it.
+      revolutions = 0;
+    }
+    if (revolutions < 2) {
       rpm = 0;
-      edgeCount = 0;
-      windowStartMs = nowMs;
-      return;
-    }
-    if ((nowMs - windowStartMs) < TACH_WINDOW_MS) {
-      return;
-    }
-    windowStartMs = nowMs;
-    if (edgeCount < 2) {
-      // Not enough edges to bound an interval.  Hold the previous estimate
-      // rather than reporting a spuriously low speed; the stall check above is
-      // what decides the wheels have actually stopped.
       return;
     }
 
-    // Timing the span between the first and last edge of the window, rather
-    // than counting edges inside a fixed gate, keeps resolution usable: a plain
-    // 200ms gate quantizes to 300 RPM per count, while this is limited only by
-    // the poll latency at each end of the span.
-    const unsigned long spanUs = latestEdgeUs - firstEdgeUs;
-    const uint32_t spanMs = (spanUs + 500UL) / 1000UL;
-    if (spanMs > 0) {
-      constexpr uint32_t edgesPerRev = static_cast<uint32_t>(TACH_EDGES_PER_PULSE) * TACH_PULSES_PER_REV;
-      const uint32_t scaled = (static_cast<uint32_t>(edgeCount - 1) * 60000UL) / (spanMs * edgesPerRev);
-      rpm = (scaled > 0xFFFFUL) ? 0xFFFFU : static_cast<uint16_t>(scaled);
+    uint8_t spanned = 1;
+    while (spanned + 1 < revolutions &&
+           (revolutionUs[newest] - revolutionUs[(newest - spanned - 1) & (TACH_HISTORY - 1)]) <= TACH_WINDOW_US) {
+      ++spanned;
+    }
+    unsigned long spanUs = revolutionUs[newest] - revolutionUs[(newest - spanned) & (TACH_HISTORY - 1)];
+
+    // A revolution still in progress that has already outlasted the measured
+    // period bounds the speed from above.  Without this a wheel that stops
+    // abruptly would hold its last speed until TACH_STALL_US.
+    if (sinceUs > spanUs / spanned) {
+      spanUs = sinceUs;
+      spanned = 1;
     }
 
-    // Carry the closing edge forward as the opening edge of the next window so
-    // the measurement stays continuous instead of discarding one interval per
-    // window.
-    edgeCount = 1;
-    firstEdgeUs = latestEdgeUs;
+    const uint32_t estimate = (60000000UL * spanned) / (spanUs * TACH_PULSES_PER_REV);
+    rpm = (estimate > 0xFFFFUL) ? 0xFFFFU : static_cast<uint16_t>(estimate);
   }
 };
 
@@ -719,9 +816,8 @@ int PctToPulseLength(uint8_t throttle, bool deadband = true, uint8_t scaleDiviso
 //
 // The averaged speed is monotonic in duty but NOT linear - the car accelerates
 // on an active frame and coasts against drag on an idle one - and below some
-// duty static friction wins and it does not move at all.  Open loop this is
-// enough to crawl; linearizing it is a job for closing the loop on the
-// tachometer.
+// duty static friction wins and it does not move at all.  SpeedController
+// closes the loop on the tachometer around it, which takes care of both.
 constexpr uint16_t THROTTLE_NEUTRAL_US = 1500;
 // Smallest offset from neutral the ESC actually responds to.  The measured
 // deadband edge is 50us, and a pulse sitting exactly on that edge responds
@@ -742,11 +838,14 @@ constexpr uint16_t THROTTLE_DITHER_SCALE = 256;
 // as lurching, so anything under this floor is dropped to neutral rather than
 // hammering the gear lash for no useful speed.
 constexpr uint16_t THROTTLE_DITHER_MIN_DUTY = 51;  // 20% of scale -> 10Hz
-// Dithering the reverse side would walk the ESC from neutral to reverse-side
+// Dithering the reverse side walks the ESC from neutral to reverse-side
 // throttle tens of times a second, and the VXL-3S arbitrates brake against
-// reverse on exactly that transition.  Sub-minimum reverse requests are held at
-// neutral instead, which is what the ESC already does with them today.
-constexpr bool THROTTLE_DITHER_REVERSE = false;
+// reverse on exactly that transition: after a neutral frame a reverse pulse is
+// reverse drive.  From a standstill that is exactly what slow reverse needs,
+// and on the bench it mirrors forward closely (1470us ~240 and 1460us ~1070
+// spur RPM, against 1530us ~225 and 1540us ~1100).  It is also why
+// SpeedController never brakes through the dithered range.
+constexpr bool THROTTLE_DITHER_REVERSE = true;
 
 // Owns OCR1B outright.  Nothing else may write it: a write from elsewhere in
 // the main loop would land in the same double buffer and silently drop a
@@ -838,13 +937,155 @@ struct ThrottleOutput {
 
 ThrottleOutput throttle;
 
+// Speed control
+//
+// Closes the loop from the Jetson's target spur RPM to the throttle pulse.  The
+// output is a pulse offset in microseconds and goes through ThrottleOutput, so
+// the dithered crawl region is simply the bottom of the actuator's range.
+//
+// Bench characterization, car on blocks, 11.8V pack, 2026-09-12:
+//   * Nothing below ~1528us: that little dither duty cannot break static
+//     friction.
+//   * 1530-1555us, dithered: roughly linear at ~105 spur RPM per us, 225-2800.
+//   * 1555-1585us: flat at ~2900 RPM, the ESC's own minimum steady speed.
+//   * Above 1590us: ~50 RPM per us.
+//   * Steps look like a first order lag with a 450-650ms time constant and
+//     little dead time.  Coasting down at neutral is slower, 700-1000ms.
+// kS and kV are the straight line through the dithered region.  On the ground
+// the lag grows with the car's inertia; see SpeedGains.
+
+// Once per 20ms PWM frame.  Faster would only recompute from the same tach
+// timestamps, and could not change the output before the next frame anyway.
+constexpr unsigned long CONTROL_PERIOD_US = 20000UL;
+// A longer dt is a stalled loop rather than a control period, and would dump a
+// burst into the integrator.
+constexpr float CONTROL_MAX_DT_S = 0.1f;
+// Stopped for this long, on top of the TACH_STALL_US it already took for the
+// speed to read zero, before the direction estimate is released.
+constexpr unsigned long SPEED_SETTLE_MS = 100;
+// The VXL-3S treats a reverse side pulse as brake while moving forward only
+// until it sees neutral; after a neutral frame the same pulse is reverse drive.
+// On the bench a steady 1440us from 2800 RPM braked to a stop and held there,
+// while a dithered 1470us braked and then drove off in reverse.  So braking goes
+// out as a steady pulse starting this far past neutral - clear of the dither
+// range - and never through the dithered path.
+constexpr uint16_t SPEED_BRAKE_THRESHOLD_US = 60;
+// Output below -this starts braking; output back at or above zero ends it.  The
+// gap keeps an output hovering around zero from toggling the brake.
+constexpr float SPEED_BRAKE_ENTER_US = 5.0f;
+// Speed rising this far above the lowest seen since braking began means the ESC
+// is driving in reverse instead of braking.  The tach cannot see direction, so
+// left alone the controller would read that as forward speed and brake -
+// reverse - harder.  Braking is locked out until the wheels settle.
+constexpr uint16_t SPEED_BRAKE_RUNAWAY_RPM = 300;
+
+struct SpeedController {
+  // +1 forward, -1 reverse, 0 unknown.  The tach has no direction, so this is
+  // the direction last driven, and it only changes once the wheels are stopped.
+  int8_t direction{0};
+  float integral{0.0f};
+  uint16_t lastRpm{0};
+  unsigned long lastMovingMs{0};
+  bool braking{false};
+  bool brakeLockout{false};
+  uint16_t brakeLowRpm{0};
+  // From the most recent update, for the status frame and trace.
+  int16_t trackedRpm{0};
+  float feedForward{0.0f};
+  float proportional{0.0f};
+  float derivative{0.0f};
+  float output{0.0f};
+
+  void reset() { *this = SpeedController(); }
+
+  // Returns the throttle pulse in microseconds.
+  uint16_t update(int16_t targetRpm, uint16_t measuredRpm, float dt, unsigned long nowMs, const SpeedGains& gains) {
+    dt = constrain(dt, 0.0f, CONTROL_MAX_DT_S);
+    const bool moving = measuredRpm > 0;
+    if (moving) {
+      lastMovingMs = nowMs;
+    }
+    const bool settled = !moving && (nowMs - lastMovingMs) >= SPEED_SETTLE_MS;
+    const int8_t targetSign = (targetRpm > 0) ? 1 : ((targetRpm < 0) ? -1 : 0);
+
+    // A reversal is tracked as a zero target until the wheels settle, so the
+    // old direction coasts or brakes down before the new one is driven.
+    if (targetSign != direction && (direction == 0 || settled)) {
+      direction = targetSign;
+      integral = 0.0f;
+    }
+    if (settled) {
+      braking = false;
+      brakeLockout = false;
+    }
+
+    const uint16_t magnitude =
+        (targetSign != 0 && targetSign == direction) ? static_cast<uint16_t>(abs(static_cast<int>(targetRpm))) : 0;
+    const float error = static_cast<float>(magnitude) - static_cast<float>(measuredRpm);
+    trackedRpm = direction * static_cast<int16_t>(magnitude);
+
+    feedForward = (magnitude > 0) ? gains.kS + gains.kV * magnitude / 1000.0f : 0.0f;
+    proportional = gains.kP * error / 1000.0f;
+    // On measurement rather than error, so a target step does not kick.
+    derivative = (dt > 0.0f) ? -gains.kD * (static_cast<float>(measuredRpm) - lastRpm) / (dt * 1000.0f) : 0.0f;
+    lastRpm = measuredRpm;
+
+    // Only forward motion brakes.  In reverse the far side of neutral is
+    // forward drive, which the runaway argument above makes just as unsafe, so
+    // reverse only ever coasts down.
+    const bool canBrake = direction > 0 && moving && gains.brakeLimit > 0.0f && !brakeLockout;
+    const float upper = (magnitude > 0) ? gains.outLimit : 0.0f;
+    const float lower = canBrake ? -gains.brakeLimit : 0.0f;
+
+    if (magnitude == 0) {
+      integral = 0.0f;
+    } else {
+      // Conditional integration: hold the integrator while the output is
+      // pinned against the limit the error is pushing it toward.
+      const float candidate = constrain(integral + gains.kI * error * dt / 1000.0f, -gains.iLimit, gains.iLimit);
+      const float unclamped = feedForward + proportional + candidate + derivative;
+      if (!(unclamped > upper && error > 0.0f) && !(unclamped < lower && error < 0.0f)) {
+        integral = candidate;
+      }
+    }
+
+    output = constrain(feedForward + proportional + integral + derivative, lower, upper);
+
+    if (canBrake && (braking || output < -SPEED_BRAKE_ENTER_US)) {
+      if (!braking) {
+        braking = true;
+        brakeLowRpm = measuredRpm;
+      }
+      brakeLowRpm = min(brakeLowRpm, measuredRpm);
+      if (output >= 0.0f) {
+        braking = false;
+      } else if (measuredRpm > brakeLowRpm + SPEED_BRAKE_RUNAWAY_RPM) {
+        braking = false;
+        brakeLockout = true;
+      }
+    } else {
+      braking = false;
+    }
+
+    if (braking) {
+      const float effort = min(-output, gains.brakeLimit);
+      return THROTTLE_NEUTRAL_US - SPEED_BRAKE_THRESHOLD_US - static_cast<uint16_t>(effort + 0.5f);
+    }
+    const uint16_t drive = static_cast<uint16_t>(max(output, 0.0f) + 0.5f);
+    return (direction < 0) ? THROTTLE_NEUTRAL_US - drive : THROTTLE_NEUTRAL_US + drive;
+  }
+};
+
+SpeedGains speedGains;
+SpeedController speedController;
+
 // Main Code
 
 void setup() {
   xbee = XBee();
 
   // Setup USB serial
-  Serial.begin(1000000);
+  Serial.begin(ONBOARD_BAUD);
   while (!Serial) {
     ;  // wait for serial port to connect
   }
@@ -889,14 +1130,13 @@ void loop() {
   static uint16_t xbeeInvalidMessages = 0;
   static uint16_t validJetsonFrames = 0;
   static uint16_t invalidJetsonFrames = 0;
-  static uint8_t lastRejectedJetsonFrame[sizeof(onboardRxPayload)] = {};
+  static uint8_t lastRejectedJetsonFrame[REJECTED_FRAME_CAPTURE] = {};
   static uint8_t lastRejectedJetsonFrameLength = 0;
   bool receivedOffboardMessage = false;
 
   // Sensors.  Both are polled rather than interrupt driven, so they cost a few
   // register reads here and nothing anywhere else.
-  tach.poll(now);
-  tach.update(now);
+  tach.poll();
   battery.poll();
   // Polled here as well as after the command is computed below, so a PWM frame
   // that elapses during the blocking transmits at the end of the previous
@@ -938,6 +1178,10 @@ void loop() {
         if (candidate.deSerialize(onboardRxPayload, onboardRxLength)) {
           jetsonState = candidate;
           latestJetsonUpdate = now;
+          ++validJetsonFrames;
+        } else if (speedGains.deSerialize(onboardRxPayload, onboardRxLength)) {
+          // Deliberately does not feed the watchdog: only a drive command
+          // shows the autonomy stack is alive.
           ++validJetsonFrames;
         } else {
           ++invalidJetsonFrames;
@@ -1008,8 +1252,7 @@ void loop() {
     case Mode::RC_ACTIVE:
       break;
     case Mode::AUTO_ARMED:
-      if (jetsonState.AUTO_READY && IsNearlyCenter(jetsonState.CMD_STEERING) &&
-          IsNearlyCenter(jetsonState.CMD_THROTTLE)) {
+      if (jetsonState.AUTO_READY && IsNearlyCenter(jetsonState.CMD_STEERING) && jetsonState.TARGET_RPM == 0) {
         autoMode = Mode::AUTO_ACTIVE;
       }
       break;
@@ -1023,6 +1266,25 @@ void loop() {
       break;
   }
 
+  // Speed estimate and control, once per PWM frame.  The controller only runs
+  // in AUTO_ACTIVE and starts from a clean state each time it is entered, so
+  // nothing integrated before an E-Stop survives it.
+  static unsigned long lastControlUs = micros();
+  static uint16_t speedPulseUs = THROTTLE_NEUTRAL_US;
+  const unsigned long nowUs = micros();
+  const bool controlTick = (nowUs - lastControlUs) >= CONTROL_PERIOD_US;
+  if (controlTick) {
+    const float dt = (nowUs - lastControlUs) / 1.0e6f;
+    lastControlUs = nowUs;
+    tach.update(nowUs);
+    if (autoMode == Mode::AUTO_ACTIVE) {
+      speedPulseUs = speedController.update(jetsonState.TARGET_RPM, tach.rpm, dt, now, speedGains);
+    } else {
+      speedController.reset();
+      speedPulseUs = THROTTLE_NEUTRAL_US;
+    }
+  }
+
   // Car control
   auto throttleCmd = PctToPulseLength(127);
   auto steeringCmd = PctToPulseLength(127);
@@ -1033,7 +1295,7 @@ void loop() {
       steeringCmd = PctToPulseLength(offboardState.AXIS_RX);
       break;
     case Mode::AUTO_ACTIVE:
-      throttleCmd = PctToPulseLength(jetsonState.CMD_THROTTLE, false, THROTTLE_SCALE_DIVISOR);
+      throttleCmd = speedPulseUs;
       // Convention is positive left for right hand rule
       steeringCmd = PctToPulseLength(255 - jetsonState.CMD_STEERING, false);
       break;
@@ -1046,16 +1308,31 @@ void loop() {
   throttle.poll();
   OCR1A = PulseUsToTicks(steeringCmd);
 
-  const uint8_t batteryLevel = battery.level();
+  if (controlTick && speedGains.trace) {
+    // Tuning trace, one line per control tick: time, tracked and measured RPM,
+    // then feedforward, proportional, integral, derivative and total output in
+    // tenths of a microsecond, the requested pulse, braking, and dither duty.
+    char trace[96];
+    const int traceLength = snprintf(trace,
+                                     sizeof(trace),
+                                     "T,%lu,%d,%u,%d,%d,%d,%d,%d,%u,%u,%u\n",
+                                     now,
+                                     speedController.trackedRpm,
+                                     tach.rpm,
+                                     static_cast<int>(speedController.feedForward * 10.0f),
+                                     static_cast<int>(speedController.proportional * 10.0f),
+                                     static_cast<int>(speedController.integral * 10.0f),
+                                     static_cast<int>(speedController.derivative * 10.0f),
+                                     static_cast<int>(speedController.output * 10.0f),
+                                     throttleCmd,
+                                     speedController.braking,
+                                     throttle.duty);
+    if (traceLength > 0 && traceLength < static_cast<int>(sizeof(trace))) {
+      Serial.write(trace, static_cast<size_t>(traceLength));
+    }
+  }
 
-  ToJetson onboardFeedback;
-  onboardFeedback.ESTOP = offboardState.ESTOP;
-  onboardFeedback.AUTO_ARM = offboardState.AUTO_ARM;
-  onboardFeedback.MANUAL_START = offboardState.MANUAL_START;
-  onboardFeedback.MODE = autoMode;
-  onboardFeedback.BATTERY_LEVEL = batteryLevel;
-  onboardFeedback.RPM = tach.rpm;
-  onboardFeedback.serialize((uint8_t*)onboardTxPayload, sizeof(onboardTxPayload));
+  const uint8_t batteryLevel = battery.level();
 
   ToOffboard offboardFeedback;
   offboardFeedback.MODE = autoMode;
@@ -1084,12 +1361,26 @@ void loop() {
     // edge that arrived during it; collect it now so the timestamp is as close
     // to the edge as this architecture allows.  TOV1 was latched through it the
     // same way, so a PWM frame that elapsed during the send is not lost.
-    tach.poll(millis());
+    tach.poll();
     throttle.poll();
   }
 
   if (now - lastOnboardTx >= 50) {
-    Serial.write(onboardTxPayload, GetPacketSize(onboardTxPayload, sizeof(onboardTxPayload)));
+    const int16_t rpm = static_cast<int16_t>(min(tach.rpm, static_cast<uint16_t>(MAX_TARGET_RPM)));
+    ToJetson onboardFeedback;
+    onboardFeedback.ESTOP = offboardState.ESTOP;
+    onboardFeedback.AUTO_ARM = offboardState.AUTO_ARM;
+    onboardFeedback.MANUAL_START = offboardState.MANUAL_START;
+    onboardFeedback.MODE = autoMode;
+    onboardFeedback.BATTERY_LEVEL = batteryLevel;
+    onboardFeedback.RPM = (speedController.direction < 0) ? -rpm : rpm;
+    onboardFeedback.TARGET_RPM = speedController.trackedRpm;
+    onboardFeedback.THROTTLE_US = throttleCmd;
+    onboardFeedback.GAINS_SEQ = speedGains.seq;
+    const uint8_t feedbackLength = onboardFeedback.serialize(onboardTxPayload, sizeof(onboardTxPayload));
+    if (feedbackLength > 0) {
+      Serial.write(onboardTxPayload, feedbackLength);
+    }
     if (enableOnboardDebug) {
       char rejectedHex[sizeof(lastRejectedJetsonFrame) * 2 + 1] = {};
       EncodeHex(lastRejectedJetsonFrame, lastRejectedJetsonFrameLength, rejectedHex);
@@ -1097,18 +1388,21 @@ void loop() {
       // five-field status frame consumed by the Jetson bridge.
       const int debugLength = snprintf(reinterpret_cast<char*>(onboardDebugPayload),
                                        sizeof(onboardDebugPayload),
-                                       // Dither duty is appended last, out of
-                                       // THROTTLE_DITHER_SCALE, and reads 0
-                                       // whenever the pulse is going out
-                                       // steady.  throttleCmd remains the
-                                       // requested pulse, not the dithered one.
-                                       "D,%lu,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s,%u\n",
+                                       // Dither duty follows the rejected
+                                       // frame, out of THROTTLE_DITHER_SCALE,
+                                       // and reads 0 whenever the pulse is
+                                       // going out steady.  throttleCmd remains
+                                       // the requested pulse, not the dithered
+                                       // one.  Last come the applied gains
+                                       // sequence and the tach's merged pulse
+                                       // and rejected edge counts.
+                                       "D,%lu,%u,%u,%u,%u,%d,%u,%u,%u,%u,%u,%u,%s,%u,%u,%u,%u\n",
                                        now,
                                        validJetsonFrames,
                                        invalidJetsonFrames,
                                        jetsonState.AUTO_READY,
                                        jetsonState.CMD_STEERING,
-                                       jetsonState.CMD_THROTTLE,
+                                       jetsonState.TARGET_RPM,
                                        static_cast<uint8_t>(autoMode),
                                        steeringCmd,
                                        throttleCmd,
@@ -1116,7 +1410,10 @@ void loop() {
                                        battery.milliVolts(),
                                        lastRejectedJetsonFrameLength,
                                        rejectedHex,
-                                       throttle.duty);
+                                       throttle.duty,
+                                       speedGains.seq,
+                                       tach.mergedPulses,
+                                       tach.rejectedEdges);
       if (debugLength > 0 && debugLength < static_cast<int>(sizeof(onboardDebugPayload))) {
         Serial.write(onboardDebugPayload, static_cast<size_t>(debugLength));
       }

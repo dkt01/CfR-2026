@@ -23,14 +23,14 @@ namespace cfr_arduino_bridge {
       max_steering_angle_ = declare_parameter<double>("max_steering_angle", 0.40);
       command_timeout_ = declare_parameter<double>("command_timeout", 0.3);
       publish_rate_hz_ = declare_parameter<double>("publish_rate_hz", 50.0);
-      neutral_throttle_deadband_ = declare_parameter<double>("neutral_throttle_deadband", 0.03);
+      neutral_speed_deadband_ = declare_parameter<double>("neutral_speed_deadband", 0.05);
       neutral_coast_deceleration_ = declare_parameter<double>("neutral_coast_deceleration", 1.0);
       forward_neutral_coast_deceleration_ =
           declare_parameter<double>("forward_neutral_coast_deceleration", neutral_coast_deceleration_);
       reverse_neutral_coast_deceleration_ =
           declare_parameter<double>("reverse_neutral_coast_deceleration", neutral_coast_deceleration_);
 
-      if (wheelbase_ <= 0.0 || max_speed_ <= 0.0 || max_steering_angle_ <= 0.0 || neutral_throttle_deadband_ < 0.0 ||
+      if (wheelbase_ <= 0.0 || max_speed_ <= 0.0 || max_steering_angle_ <= 0.0 || neutral_speed_deadband_ < 0.0 ||
           neutral_coast_deceleration_ < 0.0 || forward_neutral_coast_deceleration_ < 0.0 ||
           reverse_neutral_coast_deceleration_ < 0.0) {
         throw std::invalid_argument("vehicle dimensions and limits must be non-negative, with positive dimensions");
@@ -59,11 +59,14 @@ namespace cfr_arduino_bridge {
 
       geometry_msgs::msg::Twist twist;
       if (active) {
-        const double throttle = std::clamp(static_cast<double>(command_.throttle), -1.0, 1.0);
-        if (std::abs(throttle) <= neutral_throttle_deadband_) {
+        // An ideal speed controller: the simulated car holds the commanded
+        // velocity, and a zero target coasts down the way the Arduino's
+        // controller does with braking disabled.
+        const double velocity = static_cast<double>(command_.velocity);
+        if (!std::isfinite(velocity) || std::abs(velocity) <= neutral_speed_deadband_) {
           CoastToStop(elapsed);
         } else {
-          simulated_speed_ = throttle * max_speed_;
+          simulated_speed_ = std::clamp(velocity, -max_speed_, max_speed_);
         }
         const double steering = std::clamp(static_cast<double>(command_.steering), -1.0, 1.0) * max_steering_angle_;
         twist.linear.x = simulated_speed_;
@@ -85,6 +88,8 @@ namespace cfr_arduino_bridge {
                              cfr_interfaces::msg::ArduinoStatus::MODE_AUTO_ARMED;
       status.battery_level = 255;
       status.rpm = 0;
+      status.throttle_us = 1500;
+      status.gains_applied = true;
       status_publisher_->publish(status);
     }
 
@@ -100,7 +105,7 @@ namespace cfr_arduino_bridge {
     double max_steering_angle_ = 0.40;
     double command_timeout_ = 0.3;
     double publish_rate_hz_ = 50.0;
-    double neutral_throttle_deadband_ = 0.03;
+    double neutral_speed_deadband_ = 0.05;
     double neutral_coast_deceleration_ = 1.0;
     double forward_neutral_coast_deceleration_ = 1.0;
     double reverse_neutral_coast_deceleration_ = 1.0;
