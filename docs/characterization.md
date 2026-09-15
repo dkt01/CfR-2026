@@ -98,9 +98,10 @@ Car race-ready: pack, Jetson, ZED, Arduino, all wiring.
 
 1. Total mass on the scale.
 2. Front axle and rear axle separately, car level, both axles at the same
-   height. `cg_x = wheelbase * (W_rear / W_total)` forward of the rear axle;
-   convert to the vehicle frame (origin midway between axles).
-3. Left and right sides for `cg_y`.
+   height. `W_front + W_rear` must come back to the total — if it doesn't, find
+   out why before going further. In the vehicle frame (origin midway between
+   axles, x forward): `cg_x = wheelbase * (W_front / W_total - 0.5)`.
+3. Left and right sides for `cg_y = track * (W_left / W_total - 0.5)`.
 
 ### A2 — Centre of mass height
 

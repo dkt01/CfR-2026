@@ -27,7 +27,7 @@ meta:
   vehicle: Traxxas Slash 4X4 VXL Ultimate
   configuration: race-ready (3S pack, Jetson Orin Nano, ZED 2i, Arduino Uno + shields)
   surface: asphalt
-  updated: '2026-09-15'
+  updated: '2026-09-14'
   # Vehicle frame, matching the Gazebo model frame: origin at ground level
   # midway between the axles, x forward, y left, z up (REP-103).
   frame: ground-projected wheelbase midpoint, x forward, y left, z up
@@ -36,25 +36,31 @@ geometry:
   wheelbase:
     value: 0.324
     units: m
-    provenance: guess
+    provenance: measured
     experiment: A4
-    note: Traxxas manual figure, never measured on this car.
+    run: 'Session A 2026-09-14'
+    note: Measured on the car; matches the Traxxas manual figure.
   track_front:
     value: 0.290
     units: m
-    provenance: guess
+    provenance: measured
     experiment: A4
-    note: Front and rear track may differ; measure both.
+    run: 'Session A 2026-09-14'
+    note: Measured on the car; matches the Traxxas manual figure.
   track_rear:
     value: 0.290
     units: m
-    provenance: guess
+    provenance: measured
     experiment: A4
+    run: 'Session A 2026-09-14'
+    note: Measured on the car; matches the Traxxas manual figure.
   ride_height:
-    value: 0.030
+    value: 0.050
     units: m
-    provenance: guess
+    provenance: measured
     experiment: A4
+    run: 'Session A 2026-09-14'
+    note: Ground clearance at race weight, shocks free (natural sag).
   chassis_length:
     value: 0.550
     units: m
@@ -73,44 +79,62 @@ geometry:
 
 mass:
   total:
-    value: 4.08
+    value: 3.599
     units: kg
-    provenance: guess
+    provenance: measured
     experiment: A1
-    note: >
-      Sum of the current SDF link masses, which were themselves round numbers.
-      A race-ready Slash 4X4 with a Jetson and a ZED is likely well above this.
+    run: 'Session A 2026-09-14'
+    note: Race-ready, single weighing.  The old 4.08 kg guess was 13% heavy.
   cg_x:
-    value: 0.0
+    value: -0.0118
     units: m
-    provenance: guess
+    provenance: measured
     experiment: A1
-    note: Positive forward of the wheelbase midpoint.
+    run: 'Session A 2026-09-14'
+    note: >
+      Positive forward of the wheelbase midpoint.  Axles weighed level: front
+      1698 g, rear 1966 g.  They sum to 3664 g against a 3599 g total (+1.8%,
+      likely a small height mismatch between scale and block), so the front
+      share is taken as 1698 / 3664 = 46.3%, giving 0.324 * (0.463 - 0.5).
+      Using the total or the rear reading instead moves it -9 to -15 mm.
   cg_y:
     value: 0.0
     units: m
-    provenance: guess
+    provenance: estimated
     experiment: A1
+    note: >
+      Not weighed left/right; the layout is judged evenly balanced side to
+      side.  Weigh left and right to replace this.
   cg_z:
     value: 0.065
     units: m
-    provenance: guess
+    provenance: estimated
     experiment: A2
+    run: 'Session A 2026-09-14'
     note: >
-      The SDF currently has no <inertial><pose>, which puts the centre of mass
-      at GROUND level - not merely low, but unphysical.  Measured by tilt test
-      with the shocks blocked solid.
+      Whole-car CG height above the ground.  Shocks blocked, front axle raised
+      H = 120 mm (tan theta = 0.3987).  Front reading, both properly tared:
+      level 1698 g, tilted 1661 g, so dW = 37 g and
+      0.0566 + 0.037 * 0.324 / (3.599 * 0.3987) = 0.065 m.
+      NOISE-LIMITED: each gram of dW is 0.23 mm of height, and the level axle
+      readings disagree with the total by 65 g, so this is +/-10 mm at best.
+      (Normalising the level front reading to the total instead gives
+      dW = 7 g and 0.058 m.)  Redo level and tilted readings back to back on
+      the same supports, with a larger H, to promote it.
   wheel_mass:
     value: 0.12
     units: kg
     provenance: guess
     experiment: A4
-    note: Per wheel, including hub.
+    note: >
+      Per wheel, including hub.  Accepted as-is for now (2026-09-14); Traxxas
+      publishes no mass for the 6764 assembly, so only weighing one replaces it.
   steering_knuckle_mass:
     value: 0.05
     units: kg
     provenance: guess
     experiment: A4
+    note: Accepted as-is for now (2026-09-14).
 
 # Estimated from a parts-list breakdown (A3), deliberately not measured: a
 # bifilar pendulum was ruled out as too fiddly for the value it adds.  izz is
@@ -139,20 +163,25 @@ tire:
   # spur_to_wheel_ratio only ever appear as a ratio in the code, so A5 pins the
   # pair; the ratio is fixed independently by counting wheel turns per spur turn.
   diameter:
-    value: 0.1143
+    value: 0.1132
     units: m
-    provenance: guess
+    provenance: measured
     experiment: A5
+    run: 'Session A 2026-09-14'
     note: >
-      Nominal 4.5 in outer diameter of the Traxxas 6764 Gravix 2.8 in tire.
-      Foam tires squash under load and grow with speed, so the rolling radius is
-      not the catalog radius.  drivetrain.hpp has said "calibrate against a
-      measured roll-out" since it was written.
+      Roll-out at race weight: ten wheel revolutions = 140 in (3.556 m), so
+      3.556 / (10 pi) = 0.1132 m, 1.0% under the nominal 4.5 in (0.1143 m) of
+      the Traxxas 6764 Gravix 2.8 in tire.  Tape read to the nearest inch, so
+      +/-0.4%.  Shocks free, so the tires carried their normal static load.
+      Static roll-out only; foam tires grow with speed.
   width:
     value: 0.035
     units: m
     provenance: guess
     experiment: A4
+    note: >
+      Accepted as-is for now (2026-09-14); Traxxas publishes no width for the
+      6764 Gravix tire.  Only the simulator's contact cylinder uses it.
   spur_to_wheel_ratio:
     value: 2.85
     units: dimensionless
@@ -160,7 +189,10 @@ tire:
     experiment: A5
     note: >
       Slash 4X4 transmission and differentials, independent of pinion.  From the
-      manual; confirm by rotating the spur 28.5 turns and counting 10 wheel turns.
+      manual, accepted without the hand count for now (2026-09-14); confirm by
+      rotating the spur 28.5 turns and counting 10 wheel turns.  tire.diameter
+      was measured by roll-out, which is independent of this ratio, but the
+      code uses diameter / ratio, so a wrong ratio still skews speed.
 
 steering:
   # The single most consequential unmeasured number in the system: it is the only

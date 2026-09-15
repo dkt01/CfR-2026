@@ -49,10 +49,10 @@ arduino_bridge:
     # directions.  Measured values and their provenance live in vehicle.yaml;
     # these must agree with it.  Runtime-settable, so a calibration sweep does
     # not need a restart.  The Slash 4X4 reduces spur to wheel 2.85:1 whatever pinion is
-    # fitted.  Tire is the Traxxas 6764 Gravix 2.8" at a nominal 4.5" outer
-    # diameter - calibrate with a measured roll-out.
+    # fitted.  Tire is the Traxxas 6764 Gravix 2.8" (nominal 4.5" outer
+    # diameter); the value below is the A5 measured roll-out.
     spur_to_wheel_ratio: 2.85
-    tire_diameter: 0.1143   # metres
+    tire_diameter: 0.1132   # metres
 
     # Arduino speed controller, see "Speed controller tuning" in
     # jetson/README.md.  Output is throttle pulse microseconds (us) from the

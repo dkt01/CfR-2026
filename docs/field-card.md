@@ -80,11 +80,17 @@ ros2 launch cfr_arduino_bridge characterize.launch.py \
 
 ## Session A — Garage, no driving
 
-- [ ] A1 total mass ______ kg, front ______ rear ______, left ______ right ______
-- [ ] A2 CG height — **block the shocks first**. H = ______ m, ΔW front = ______
-- [ ] A4 wheelbase ______ front track ______ rear track ______ ride height ______
-- [ ] A5 ten wheel revolutions = ______ m  → diameter = dist / 31.416
-- [ ] A5 spur 28.5 turns → wheels ______ turns (expect 10)
+Status as of 2026-09-14. Values are in `config/vehicle.yaml`.
+
+- [x] A1 total mass **3.599** kg, front **1.698** rear **1.966**, left ______ right ______
+      — L/R not weighed, assumed even (`cg_y` = 0, estimated). F+R = 3.664, 1.8% over total.
+- [ ] A2 CG height — **block the shocks first**. H = **0.120** m, ΔW front = **37 g** (1698 → 1661)
+      — `cg_z` ≈ 0.065 m, estimated. **Redo**: level and tilted back to back, same supports, bigger H.
+- [ ] A3 inertia parts list — not started
+- [x] A4 wheelbase **0.324** front track **0.290** rear track **0.290** ride height **0.050** (shocks free)
+      — tire width and wheel/knuckle mass left as placeholders; Traxxas publishes neither.
+- [x] A5 ten wheel revolutions = **3.556** m (140 in) → diameter = **0.1132** m
+- [ ] A5 spur 28.5 turns → wheels ______ turns (expect 10) — deferred, 2.85 accepted from manual
 - [ ] A6 overhead steering photos, −1 to +1 by 0.1, **both sweep directions**
 - [ ] A7 lock-to-lock slow-mo: ______ frames at 240 fps
 
