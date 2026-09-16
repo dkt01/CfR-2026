@@ -21,10 +21,19 @@ that comes up before gets the false, which is the difference between "not yet"
 and "no detector running".
 
 `~/state` is the running commentary: what this frame shows, how many pixels of
-each colour, and where.  A driver that has to stop on a red flag mid-run
-watches that rather than `~/go`, because `~/go` deliberately stays up once a
-run has started; a momentarily mis-hued frame must not be able to retract a
-start that has already happened.
+each colour, where, and whether the signal has been found at all.  A driver
+that has to stop on a red flag mid-run watches that rather than `~/go`,
+because `~/go` deliberately stays up once a run has started; a momentarily
+mis-hued frame must not be able to retract a start that has already happened.
+
+`armed` in that message is the field to watch while the car waits at the line.
+The course is outdoors and the light is whatever the day gives, so the
+detector finds the signal first -- a place in the image that holds red long
+enough to be it -- and only then waits for that place to turn green.  Until it
+is armed, no amount of green will start the run, and that is the state worth
+knowing about before the flag drops rather than after.  `start_signal_detector`
+explains what else is in frame outdoors and what stops a red shirt being taken
+for the signal.
 
 The decision itself is in `start_signal_detector.py`, which is free of ROS and
 tested against synthetic frames.  This file is the wiring: parameters, one
@@ -76,12 +85,18 @@ TUNABLE = (
     "red_hue",
     "green_hue",
     "min_saturation",
+    "min_chroma",
     "min_value",
     "min_pixels",
     "cluster_window",
+    "max_spread",
+    "candidates",
+    "focus_relaxation",
     "confirm_frames",
+    "arm_frames",
     "require_red_first",
     "max_transition_distance",
+    "forget_frames",
 )
 
 
@@ -97,12 +112,19 @@ class StartSignalDetector(Node):
         self.declare_parameter("red_hue", [defaults.red.low, defaults.red.high])
         self.declare_parameter("green_hue", [defaults.green.low, defaults.green.high])
         self.declare_parameter("min_saturation", defaults.min_saturation)
+        self.declare_parameter("min_chroma", defaults.min_chroma)
         self.declare_parameter("min_value", defaults.min_value)
         self.declare_parameter("min_pixels", defaults.min_pixels)
         self.declare_parameter("cluster_window", defaults.cluster_window)
-        self.declare_parameter("confirm_frames", 2)
-        self.declare_parameter("require_red_first", True)
-        self.declare_parameter("max_transition_distance", 60.0)
+        self.declare_parameter("max_spread", defaults.max_spread)
+        self.declare_parameter("candidates", defaults.candidates)
+        self.declare_parameter("focus_relaxation", defaults.focus_relaxation)
+        latch = sd.StartLatch()
+        self.declare_parameter("confirm_frames", latch.confirm_frames)
+        self.declare_parameter("arm_frames", latch.arm_frames)
+        self.declare_parameter("require_red_first", latch.require_red_first)
+        self.declare_parameter("max_transition_distance", latch.max_transition_distance)
+        self.declare_parameter("forget_frames", latch.forget_frames)
         # Wall time without a frame before this starts complaining.  Not a
         # failure of the detector, but the thing most likely to be wrong when
         # a run does not start: the camera is not publishing.
@@ -110,12 +132,16 @@ class StartSignalDetector(Node):
         self.declare_parameter("debug_image", False)
         self.declare_parameter("debug_image_period", 0.2)
 
-        self.classifier = self.build_classifier()
-        self.latch = sd.StartLatch(
-            confirm_frames=int(self.get_parameter("confirm_frames").value),
-            require_red_first=bool(self.get_parameter("require_red_first").value),
-            max_transition_distance=float(
-                self.get_parameter("max_transition_distance").value
+        self.detector = sd.Detector(
+            self.build_classifier(),
+            sd.StartLatch(
+                confirm_frames=int(self.get_parameter("confirm_frames").value),
+                arm_frames=int(self.get_parameter("arm_frames").value),
+                require_red_first=bool(self.get_parameter("require_red_first").value),
+                max_transition_distance=float(
+                    self.get_parameter("max_transition_distance").value
+                ),
+                forget_frames=int(self.get_parameter("forget_frames").value),
             ),
         )
         self.add_on_set_parameters_callback(self.on_parameters)
@@ -141,6 +167,8 @@ class StartSignalDetector(Node):
         # latch itself, which is up from the moment it decides; this is what
         # keeps the announcement to once per start.
         self.announced = False
+        # Whether the detector has found the signal, to log the edge.
+        self.was_armed = False
         self.last_image = None
         self.last_debug = 0.0
         self.publish_go(False)
@@ -178,14 +206,31 @@ class StartSignalDetector(Node):
             red=sd.HueBand(*self.numbers("red_hue", 2, pending)),
             green=sd.HueBand(*self.numbers("green_hue", 2, pending)),
             min_saturation=float(self.parameter("min_saturation", pending)),
+            min_chroma=float(self.parameter("min_chroma", pending)),
             min_value=float(self.parameter("min_value", pending)),
             min_pixels=int(self.parameter("min_pixels", pending)),
             cluster_window=int(self.parameter("cluster_window", pending)),
+            max_spread=float(self.parameter("max_spread", pending)),
+            candidates=int(self.parameter("candidates", pending)),
+            focus_relaxation=float(self.parameter("focus_relaxation", pending)),
         )
         if thresholds.min_pixels < 1:
             raise ValueError("min_pixels must be at least 1")
         if thresholds.cluster_window < 1:
             raise ValueError("cluster_window must be at least 1 pixel")
+        if thresholds.max_spread < 1.0:
+            raise ValueError(
+                "max_spread must be at least 1.0, which is an arm that fills "
+                "its window and nothing outside it"
+            )
+        if thresholds.candidates < 1:
+            raise ValueError("candidates must be at least 1")
+        if not 0.0 < thresholds.focus_relaxation <= 1.0:
+            raise ValueError(
+                "focus_relaxation is the fraction of the colour floors that "
+                "applies inside the box around the signal, so it is over 0 "
+                "and at most 1"
+            )
         return sd.Classifier(thresholds, region)
 
     def on_parameters(self, parameters) -> SetParametersResult:
@@ -203,16 +248,15 @@ class StartSignalDetector(Node):
             self.get_logger().warning(f"rejected {', '.join(pending)}: {error}")
             return SetParametersResult(successful=False, reason=str(error))
 
-        self.classifier = classifier
-        self.latch.confirm_frames = max(
-            1, int(self.parameter("confirm_frames", pending))
-        )
-        self.latch.require_red_first = bool(
-            self.parameter("require_red_first", pending)
-        )
-        self.latch.max_transition_distance = float(
+        self.detector.classifier = classifier
+        latch = self.detector.latch
+        latch.confirm_frames = max(1, int(self.parameter("confirm_frames", pending)))
+        latch.arm_frames = max(1, int(self.parameter("arm_frames", pending)))
+        latch.require_red_first = bool(self.parameter("require_red_first", pending))
+        latch.max_transition_distance = float(
             self.parameter("max_transition_distance", pending)
         )
+        latch.forget_frames = max(1, int(self.parameter("forget_frames", pending)))
         self.get_logger().info(f"retuned: {self.describe()}")
         return SetParametersResult(successful=True)
 
@@ -222,12 +266,23 @@ class StartSignalDetector(Node):
         return (
             f"red hue {thresholds.red.low:.0f}..{thresholds.red.high:.0f}, "
             f"green hue {thresholds.green.low:.0f}..{thresholds.green.high:.0f}, "
-            f"saturation over {thresholds.min_saturation:.2f}, "
-            f"{thresholds.min_pixels} px in a {thresholds.cluster_window} px window, "
-            f"{self.latch.confirm_frames} frames to confirm, "
+            f"saturation over {thresholds.min_saturation:.2f} "
+            f"({thresholds.focus_relaxation:.2f} of it once the signal is found), "
+            f"{thresholds.min_pixels} px in a {thresholds.cluster_window} px window "
+            f"spreading no more than {thresholds.max_spread:.1f}x, "
+            f"{self.latch.arm_frames} frames to arm and "
+            f"{self.latch.confirm_frames} to confirm, "
             f"region x {region.x_min:.2f}..{region.x_max:.2f} "
             f"y {region.y_min:.2f}..{region.y_max:.2f}"
         )
+
+    @property
+    def classifier(self) -> sd.Classifier:
+        return self.detector.classifier
+
+    @property
+    def latch(self) -> sd.StartLatch:
+        return self.detector.latch
 
     # ---------------------------------------------------------------- images
 
@@ -248,13 +303,32 @@ class StartSignalDetector(Node):
             return
 
         self.last_image = self.get_clock().now()
-        observation = self.classifier.classify(frame)
-        started = self.latch.update(observation)
+        # The focus the latch hands back steers the next frame's search, so
+        # the box the classifier was given is read before the frame is folded
+        # in and is the one the debug image draws.
+        focus = self.latch.focus()
+        observation = self.detector.process(frame)
+        started = self.latch.go
         self.publish_state(message, observation)
 
         if observation.state != self.state:
             self.state = observation.state
             self.get_logger().info(f"signal reads {observation}")
+        # Arming is the half of this that goes wrong quietly: a detector that
+        # has never found the signal will not start the run whatever the
+        # marshal does with it, and says nothing unless it says this.
+        if self.latch.armed != self.was_armed:
+            self.was_armed = self.latch.armed
+            site = self.latch.signal
+            if self.was_armed and site is not None:
+                self.get_logger().info(
+                    f"signal found at ({site.x:.0f}, {site.y:.0f}) after "
+                    f"{site.red_frames} frames of red; watching there for the turn"
+                )
+            else:
+                self.get_logger().warning(
+                    "lost the signal; searching the whole region again"
+                )
         # Every frame, not only on a change: a detector that has been looking
         # at a green it will not accept -- because nothing showed red first,
         # or because it is green somewhere else in frame -- is the case where
@@ -274,7 +348,7 @@ class StartSignalDetector(Node):
             )
             self.publish_go(True)
 
-        self.publish_debug(message, frame, observation)
+        self.publish_debug(message, frame, observation, focus)
 
     def publish_state(self, image: Image, observation: sd.Observation) -> None:
         message = StartSignal()
@@ -289,9 +363,13 @@ class StartSignalDetector(Node):
         message.green_total = min(observation.green.total, 65535)
         position = observation.position or (-1.0, -1.0)
         message.x, message.y = float(position[0]), float(position[1])
+        message.armed = self.latch.armed
+        site = self.latch.signal
+        lock = site.position if site is not None else (-1.0, -1.0)
+        message.lock_x, message.lock_y = float(lock[0]), float(lock[1])
         self.state_publisher.publish(message)
 
-    def publish_debug(self, image: Image, frame, observation) -> None:
+    def publish_debug(self, image: Image, frame, observation, focus) -> None:
         """The frame with the region and the cluster drawn on, for tuning."""
         if not self.get_parameter("debug_image").value:
             return
@@ -301,7 +379,7 @@ class StartSignalDetector(Node):
             return
         self.last_debug = now
 
-        marked = sd.annotate(frame, observation, self.classifier.region)
+        marked = sd.annotate(frame, observation, self.classifier.region, focus)
         message = Image()
         message.header = image.header
         message.height, message.width = marked.shape[:2]
@@ -319,9 +397,10 @@ class StartSignalDetector(Node):
         self.go_publisher.publish(message)
 
     def on_reset(self, _request, response):
-        self.latch.reset()
+        self.detector.reset()
         self.state = sd.UNKNOWN
         self.announced = False
+        self.was_armed = False
         self.publish_go(False)
         response.success = True
         response.message = "waiting for red, then green"

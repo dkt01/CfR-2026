@@ -24,14 +24,17 @@ uint8 state
 bool go
 
 # Pixels of signal colour in the densest cluster_window-sized window of the
-# region of interest, which is what the min_pixels threshold is applied to.
-# Both are zero on an UNKNOWN frame.
+# searched area, which is what the min_pixels threshold is applied to.  Both
+# are reported whatever the state, including on an UNKNOWN frame: "8 px
+# against a threshold of 12" is what tuning this at the course needs.
 uint16 red_pixels
 uint16 green_pixels
 
-# Everything matching in the whole region of interest, cluster or not.  Much
-# larger than the counts above means something else in frame shares the
-# signal's colour; narrow the region of interest.
+# Everything matching in the searched area, cluster or not -- the region of
+# interest, or the box around the signal once it has been found.  Much larger
+# than the counts above means something else in frame shares the signal's
+# colour, which is expected outdoors and is why a candidate has to be
+# arm-sized and in the right place rather than merely the right hue.
 uint16 red_total
 uint16 green_total
 
@@ -40,3 +43,17 @@ uint16 green_total
 # are -1 when the state is UNKNOWN.
 float32 x
 float32 y
+
+# True once somewhere in frame has held red long enough to be the signal --
+# the detector knows where it is and is waiting for it to turn.  A run that
+# has not armed will not start, so this is the field to look at when the car
+# is sitting at the line: false here means the signal has not been found, not
+# that it has not turned yet.
+bool armed
+
+# Where the detector believes the signal is, in full-frame pixels: the place
+# it is watching for the transition, which it reads on relaxed colour
+# thresholds because the position is already known.  Both are -1 until the
+# signal has been found.
+float32 lock_x
+float32 lock_y

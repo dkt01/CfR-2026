@@ -165,7 +165,11 @@ hoops -- so a layout can be re-drawn and a start signalled without a restart.
 `start_signal_detector_node` watches the camera for that turn and latches it
 on `/start_signal_detector/go`, which is what an autonomous run waits on in
 place of the Arduino's Manual Start bit. It runs against the simulated camera
-with `sensors:=true` and against the ZED on the car.
+with `sensors:=true` and against the ZED on the car. The course is outdoors
+and there will be people about in every colour, so it finds the signal first
+-- a place in the image that holds red long enough to be it, of about the size
+an arm is -- and only then waits for that place to turn green; `armed` on
+`/start_signal_detector/state` says whether it has.
 
 See [jetson/README.md](jetson/README.md#gazebo-simulation) for the launch
 arguments, the randomiser's services, and how to regenerate the worlds and

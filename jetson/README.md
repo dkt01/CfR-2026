@@ -124,16 +124,18 @@ test that does not want to wait.
 Through the camera, one sweep looks like this -- the counts
 `start_signal_detector_node` reports, from
 [`scripts/check_start_signal.py`](scripts/check_start_signal.py) against the
-speed course:
+obstacle course -- the speed course reads the same, since both stand the
+signal 8 ft down a 32 in lane and its range differs by a centimetre:
 
 ```
    t(s)   red px   green px   reads
-   0.00     246         0     red
-   0.46     234       119     red
-   0.59     211       179     red
-   0.66     188       205     green
-   0.79     121       233     green   <- ~/go latches here
-   0.99      24       246     green
+   0.00     249         0     red
+   0.33     243        25     red
+   0.59     226       155     red
+   0.66     208       185     red
+   0.73     182       208     green   <- the arms cross over
+   0.79     137       230     green   <- ~/go latches here
+   1.06       5       246     green
 ```
 
 The two arms are 90 degrees apart on one pivot, so through the turn they
@@ -476,33 +478,71 @@ red flag mid-run watches that rather than `~/go`, because `~/go` deliberately
 stays up once a run has started: a single mis-hued frame must not be able to
 retract a start that has already happened.
 
-A start is a red arm that *becomes* green, not merely green in frame. Four
-things stand between "something coloured" and releasing the car, because at
-the 8 ft both courses stand the signal at the arm is only about 21 x 16 px of
-a 640 x 360 frame:
+`armed` in that message is the field to watch while the car sits at the line.
+The detector finds the signal *first* -- a place in the image that holds red
+long enough to be it -- and only then waits for that place to turn green.
+Until it is armed no amount of green will start the run, so `armed` false at
+the line is the thing to notice before the flag drops rather than after.
+
+#### Outdoors
+
+The course is outside, the run may be at any hour, and there will be people
+about in shirts of every colour. A start is a red arm that *becomes* green
+**in one place**, and at the 8 ft both courses stand the signal at that arm is
+only about 21 x 16 px of a 640 x 360 frame, so none of the following is
+optional:
 
 * **Above the horizon only.** The arm is 32 in up and the camera 8 in up, so
   the arm is above the camera's horizon from anywhere on the course -- and for
   a level camera that horizon is the middle row of the image. `region`
-  searches the top half, which is also all of the dark green ground plane
-  excluded.
-* **Hue bands, not channel comparisons.** The bands stop short of every other
-  saturated hue either course puts in frame: the straw bales at 36 degrees,
-  the ground at 105, the signal's own sky blue board at 197, the car wash's
-  blue ribbons at 212. The arms themselves render at 1.5 and 130.
-* **A cluster, not a count.** The threshold applies to the densest
-  `cluster_window` box, so scattered matches across the region never add up to
-  an arm the way a raw pixel count would.
-* **Green where red was.** Both arms turn about one pivot, so the transition
-  happens in one place, within `max_transition_distance`. This is what stops
-  the car wash's twenty red ribbons -- the same red as the arms -- from
-  pairing with a green somewhere else in frame.
+  searches the top half, which is also all the ground excluded. Narrowing it
+  around where the signal actually lands is the cheapest way to make a busy
+  course easier.
+* **Chroma, not brightness.** Exposure scales all three channels, so it leaves
+  hue and saturation alone and takes chroma; glare behind the signal and
+  clipping in the sun *add* to all three, so they leave hue and chroma alone
+  and take saturation. So `min_chroma` -- how far from grey a pixel is -- is
+  the floor that does the work, and `min_saturation` is only there to reject
+  grey. Measured, the arm is still read at a fifth of the chroma it renders
+  with and at a fifth of its saturation; see the lighting check below.
+* **Hue bands drawn for a field, not a renderer.** Red stops at 12 degrees,
+  short of skin at 20 to 35, straw and dry grass at 30 to 50, and the orange
+  of cones and barrels; it reaches back to 338 instead, because open shade is
+  lit blue and takes red towards magenta. Green starts at 115, above turf and
+  foliage at 80 to 110, and stops short of the board's sky blue at 197 and the
+  car wash's blue ribbons at 212. The arms render at 1.5 and 130.
+* **Arm-sized, not merely the right colour.** The count applies to the densest
+  `cluster_window` box, and a candidate whose colour keeps going outside that
+  box is thrown out on its size: `max_spread`. A shirt on somebody 5 m away
+  scores 3.8 against an arm's 1.0, so hue cannot save it -- which is what
+  keeps a red shirt, a tent, a hedge or a hillside out.
+* **Several candidates, so nothing can hide the signal.** A red shirt is
+  bigger than the arm, so reporting only the densest cluster would report the
+  person and never see the signal behind them. The best few places of each
+  colour are searched, and a blob too big to be an arm is skipped without
+  using one of the slots.
+* **Places, not colours.** The latch keeps a site for each place where
+  arm-sized signal colour keeps turning up and counts red and green frames
+  per site, so a start is one site going from red to green within
+  `max_transition_distance` -- both arms turn about one pivot, so a real
+  transition happens in one place. A marshal in a red shirt has their own
+  site and can do nothing from it but stand there; the car wash's twenty red
+  ribbons likewise. A site nothing has been seen at for `forget_frames` is
+  dropped, which is also what stops a red object removed from a spot pairing
+  with a green one put there later.
+* **Weaker evidence once it is found.** The best site is fed back as a box to
+  look harder inside, where the colour floors relax by `focus_relaxation`.
+  That is what reads a backlit arm after the sun has come round behind it
+  mid-wait. The whole region is still searched at full strength as well, so
+  the prior can only add candidates, never hide them.
 
-Then `confirm_frames` frames of it, which at the camera's 15 Hz costs 133 ms.
-Measured against both courses, `~/go` latches 0.79 s into the 1 s sweep on
-230 px of green -- later only when the software renderer drops frames, which
-is what puts 0.99 s at the far end of the range measured. See the sweep table
-above.
+Then `arm_frames` frames of red to find it and `confirm_frames` of green to
+call it. The asymmetry is deliberate: the car stands at the line for as long
+as it takes, so 5 frames of red costs nothing, while the green has to be
+caught inside the second the arm takes to turn. Measured against both
+courses, `~/go` latches one frame after the arms cross over: 0.79 s into the
+1 s sweep on 228 px of green, or 0.86 s when the software renderer drops a
+frame.
 
 Tuning is live: `ros2 param set` on any threshold rebuilds the classifier
 without disturbing the latch, and a value that does not make sense is refused
@@ -510,12 +550,14 @@ with a reason rather than quietly clamped.
 
 ```bash
 ros2 launch cfr_arduino_bridge start_signal.launch.py debug:=true
-ros2 param set /start_signal_detector min_saturation 0.35
+ros2 param set /start_signal_detector min_saturation 0.25
 ros2 run rqt_image_view rqt_image_view /start_signal_detector/debug_image
 ```
 
-`debug:=true` publishes each frame with the region and the winning cluster
-drawn on it, which is how the bands get moved to fit the real signal. The
+`debug:=true` publishes each frame with the region, the winning cluster and
+the box the detector is watching drawn on it, which is how the bands get moved
+to fit the real signal: if that white box is not on the signal, nothing else
+in the frame matters. The
 defaults live in
 [`config/arduino_bridge.yaml`](cfr_arduino_bridge/config/arduino_bridge.yaml)
 with a note on each.
@@ -534,6 +576,48 @@ the frames it took:
 LIBGL_ALWAYS_SOFTWARE=1 ros2 launch cfr_arduino_bridge speed_course.launch.py sensors:=true
 ./scripts/check_start_signal.py            # exits non-zero if a start is missed
 ```
+
+Nor can either of those show what the light will do to it, so
+[`scripts/check_signal_lighting.py`](scripts/check_signal_lighting.py) takes
+one real frame with the signal red and one with it green and replays them
+through the decision under light they were not taken in. The cases are
+derived from the arm's own measured colour rather than picked -- exposure
+solved for the chroma it would leave, glare solved for the saturation it would
+leave -- so they mean the same thing against a dim rendering as against a
+signal in daylight. Then it puts people in frame and checks both that they do
+not stop a start and that they cannot cause one:
+
+```bash
+./scripts/check_signal_lighting.py                  # against a running sim
+./scripts/check_signal_lighting.py --spin-by-hand   # on the car, at the course
+```
+
+Against the obstacle course, where the arm renders at a chroma of 0.27 and a
+value of 0.36:
+
+```
+   case                          expect  result
+   chroma 0.40 (as rendered)      start   start
+   chroma 0.20                    start   start
+   chroma 0.10                    start   start
+   chroma 0.05                    start   start     <- a fifth of the light
+   chroma 0.02                       --      no
+   glare to saturation 0.50       start   start
+   glare to saturation 0.30       start   start
+   glare to saturation 0.20       start   start
+   glare to saturation 0.15          --   start     <- all but greyed out
+   glare to saturation 0.10          --      no
+   people in frame                start   start
+   a shirt changing colour           no      no
+   green from the start              no      no
+   the signal never turning          no      no
+```
+
+The rows with no expectation are past what the detector claims and are
+measured for the record: knowing the cliff is at a chroma of 0.02 and a
+saturation of 0.10 is what says how much room a threshold has before it
+matters. Past that the frame no longer holds the answer, and the fix is a
+lens hood or an exposure setting rather than a band.
 
 Both course launches start the detector themselves with `sensors:=true`; on
 the car it comes up with `start_signal.launch.py` alongside the ZED. It needs

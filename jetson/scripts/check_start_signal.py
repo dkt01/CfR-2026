@@ -113,15 +113,30 @@ class Checker(Node):
             return False
         return all(message.state == state for message in self.states[-frames:])
 
+    def watching(self) -> bool:
+        """Whether the detector has found the signal and is reading it as red.
+
+        Not merely "a frame read red": the detector holds out for a place in
+        the image that has been red for arm_frames before it will take it for
+        the signal, and only then can a green start the run.  Turning the
+        signal before that is a test of nothing, so this is what the check
+        waits on.
+        """
+        latest = self.latest()
+        return latest is not None and latest.armed and self.settled(StartSignal.RED)
+
 
 def report(states: list[StartSignal], since: float) -> None:
     """The frame-by-frame table, in the shape the README quotes it in."""
-    print(f"    {'t(s)':>8} {'state':>8} {'red px':>8} {'green px':>9}  go")
+    print(
+        f"    {'t(s)':>8} {'state':>8} {'red px':>8} {'green px':>9} {'armed':>6}  go"
+    )
     for message in states:
         elapsed = stamp_seconds(message.header) - since
         print(
             f"    {elapsed:8.2f} {STATE_NAMES[message.state]:>8} "
-            f"{message.red_pixels:8d} {message.green_pixels:9d}"
+            f"{message.red_pixels:8d} {message.green_pixels:9d} "
+            f"{'yes' if message.armed else 'no':>6}"
             f"  {'GO' if message.go else ''}"
         )
 
@@ -135,7 +150,7 @@ def round_trip(checker: Checker, timeout: float) -> bool:
 
     checker.states.clear()
     if not checker.wait(
-        lambda: checker.settled(StartSignal.RED), timeout, "the signal to read red"
+        checker.watching, timeout, "the detector to find the signal reading red"
     ):
         if not checker.images:
             print("    no camera frames at all -- is sensors:=true?")
@@ -150,7 +165,11 @@ def round_trip(checker: Checker, timeout: float) -> bool:
         return False
 
     began = stamp_seconds(checker.states[-1].header)
-    print(f"    red confirmed after {red_frames} frames; turning the signal green")
+    latest = checker.latest()
+    print(
+        f"    signal found at ({latest.lock_x:.0f}, {latest.lock_y:.0f}) and read "
+        f"red after {red_frames} frames; turning it green"
+    )
     future = checker.signal.call_async(SetBool.Request(data=True))
     started = checker.wait(lambda: checker.go, timeout, "~/go")
     checker.wait(future.done, timeout, "the randomiser to finish the sweep")
