@@ -7,33 +7,249 @@ Traxxas Slash 4X4 through the Arduino over the USB serial link described in the
 | Package | Contents |
 | ------- | -------- |
 | [`cfr_interfaces`](cfr_interfaces/) | `DriveCommand`, `ArduinoStatus`, `PathSegment` messages; `DrivePath` action |
-| [`cfr_arduino_bridge`](cfr_arduino_bridge/) | `arduino_bridge_node`, `cmd_vel_to_drive_node`, `path_follower_node` |
+| [`cfr_arduino_bridge`](cfr_arduino_bridge/) | `arduino_bridge_node`, `cmd_vel_to_drive_node`, `path_follower_node`, `obstacle_randomizer_node` |
 
 ## Gazebo Simulation
 
-Simulation can be run in a container using the [unfrobotics/docker-ros2-jazzy-gz-rviz2:latest](https://github.com/UNF-Robotics/docker-ros2-jazzy-gz-rviz2) image.
+Two courses are simulated, each with its own launch file. Both run in a
+container built from the
+[unfrobotics/docker-ros2-jazzy-gz-rviz2:latest](https://github.com/UNF-Robotics/docker-ros2-jazzy-gz-rviz2)
+image.
 
-`simulation.launch.py` mounts an RGB-D camera pair at the front of the simulated
-Slash. It provides ZED-compatible ROS interfaces while the simulator is running:
+```bash
+ros2 launch cfr_arduino_bridge speed_course.launch.py      # 135 ft x 47 ft oval
+ros2 launch cfr_arduino_bridge obstacle_course.launch.py   # 65 ft x 48 ft, 11 sections
+```
+
+Both accept `gui:=true` (needs an authorized host display),
+`websocket:=true` (see [the browser viewer](../web/gzweb-viewer/README.md),
+which takes `?course=obstacle` to match)
+and `sensors:=true` (below). Both are thin wrappers over
+`simulation.launch.py`, which still works directly with `world:=<path>` if
+you want a world neither names.
+
+In both worlds the car starts on the start/finish line at the origin, facing
+`+x` the way it drives away from the line, so `path_follower_node` goals read
+the same as they would on the real course.
+
+### The obstacle course
+
+The course is generated from the same site-layout DXF as the speed course, by
+[`scripts/generate_obstacle_course.py`](scripts/generate_obstacle_course.py).
+Its eleven sections run start lane, ramp up, flat bridge, helical ramp down,
+tunnel, narrow path, gravel box, potholes, buckets, hoops, car wash, and a
+banked turn, walled throughout with the 121 straw bales the drawing places.
+
+Obstacle *shapes* come from the team's CAD, tessellated into the STL visuals
+in [`cfr_arduino_bridge/meshes/`](cfr_arduino_bridge/meshes/). Collision is
+primitives, sized from the DXF: the meshes are decimated hard enough that
+driving on them would catch a wheel on a triangle edge. Two consequences
+worth knowing:
+
+* The whole ramp/bridge/helix structure is primitives for both, because the
+  car drives on it and because the CAD and DXF disagree by about 5% on the
+  helix radius. The DXF wins there -- the bale walls around it were drawn to
+  the DXF -- and it reproduces the drawing's annotated 4 ft centreline
+  radius, 41.5 in width and 11% grade.
+* The car wash's hanging ribbons are drawn but have no collision. They are
+  streamer weight and could not deflect the car, so simulating forty contacts
+  against them would cost time and change nothing.
+
+The gravel box is a friction feature rather than a geometric one. Gazebo has
+no granular physics, so the box gets a low-friction lid -- `mu` 0.35 against
+the course floor's 50 -- and a scatter of 90 pebbles for the suspension to
+find. Both wheel slip and an uneven surface, which is what the section tests.
+
+### Variable elements
+
+Three things change between runs on the real course, and
+`obstacle_randomizer_node` moves all three in a running simulation, so a
+layout can be re-drawn without restarting Gazebo.
+
+The node runs on **both** courses, because both start the same way: on the
+visual signal. The speed course has no buckets or hoops, so there its layout
+carries only the signal block and `randomize` and `reset` say as much rather
+than pretending to shuffle something.
+
+| Service | Type | Effect |
+| ------- | ---- | ------ |
+| `/obstacle_randomizer/randomize` | `std_srvs/Trigger` | draw a new bucket and hoop layout |
+| `/obstacle_randomizer/reset` | `std_srvs/Trigger` | restore the layout the drawing shows, and red |
+| `/obstacle_randomizer/start_signal` | `std_srvs/SetBool` | `true` shows green, `false` red |
+
+```bash
+ros2 service call /obstacle_randomizer/randomize std_srvs/srv/Trigger
+ros2 service call /obstacle_randomizer/start_signal std_srvs/srv/SetBool "{data: true}"
+```
+
+`/obstacle_randomizer/start_signal_green` (`std_msgs/Bool`, transient local)
+carries the signal state, so a detector can be scored against what the signal
+is actually showing.
+
+**Buckets.** Two to nine, at least 3 ft between centres and 2.5 ft off the
+bale walls, both measured off the drawing. Those two numbers are also why the
+drawing's "placed so a path exists around and between buckets" needs no
+reachability check: 3 ft between centres leaves a 0.62 m gap between two
+0.29 m buckets, and the same off the walls, and the car is 0.30 m wide.
+Keeping the spacing is keeping the path. Nine models exist from the start --
+Gazebo will not spawn a static model on demand -- and a draw stands the ones
+it does not use off the course, south of the bale walls.
+
+Set `bucket_count` to pin the count, or `seed` to repeat a draw:
+
+```bash
+ros2 param set /obstacle_randomizer bucket_count 9
+ros2 param set /obstacle_randomizer seed 12345
+```
+
+**Hoops.** Three, each sliding laterally along the dashed line the drawing
+puts it on, clamped by half a base length so a hoop cannot end up half
+outside the bales.
+
+**Start signal, on both courses.** Red and green arms 90 degrees apart on a
+common pivot 32 in up; whichever is horizontal stands out past the sky blue
+board and is the one the car sees. The arms ride a revolute joint whose limits
+are those two positions, and it rests at the red one, so **a freshly loaded
+world always shows red** without anything having to command it.
+
+The service **turns** the arm rather than snapping it: 90 degrees in one
+second, matching the signal on the course and giving a detector the part-way
+arm it will have to cope with. The randomiser ramps the joint setpoint at
+25 Hz over `/start_signal/arm`, which `simulation.launch.py` bridges to
+Gazebo's joint-position controller; the controller follows the ramp, so the
+rate is what the node says it is. `signal_sweep_rate` (degrees per second,
+default 90) changes it, and 0 commands the far end directly for a scripted
+test that does not want to wait.
+
+Through a camera, one sweep looks like this -- the arm region goes red, to
+nothing at all as both arms pass edge-on at 45 degrees, to green:
+
+```
+   t(s)   red px   green px
+   0.77     132         0
+   1.03      35         0
+   1.25       0         0     <- 45 degrees, neither arm facing the camera
+   1.48       0        34
+   1.81       0       131
+```
+
+Stepping the model's pose would have kept one mechanism for everything and
+was tried first. It does not work: each `set_pose` is a `gz service`
+subprocess costing about 340 ms, so a one-second sweep fits three poses and
+arrives as a stutter. Publishing a setpoint costs nothing.
+[`scripts/start_signal.py`](scripts/start_signal.py) builds the models, and
+both course generators call it, so the two courses cannot drift apart.
+
+The signal is not in the DXF -- only the CAD has one -- so each course picks
+its own spot, a single `SIGNAL_POSITION` constant in its generator. Both sit
+about 4 m ahead of the car at a bearing of 20 degrees, near enough to read and
+far enough off to the side to be outside the lane, with the sight line from
+the 8 in camera clearing the 14 in bale wall between the two:
+
+| Course | Position | Bearing | Range | Clears the wall by |
+| ------ | -------- | ------- | ----- | ------------------ |
+| Obstacle | (3.40, 1.40) | 20.3 deg | 4.04 m | 24 mm |
+| Speed | (16.00, 3.40) | 19.6 deg | 4.07 m | 54 mm |
+
+At that range the arm is about 15 x 12 px of saturated red or green in a
+640 x 360 frame. [`scripts/check_signal_sightline.py`](scripts/check_signal_sightline.py)
+re-derives all of it from the generated worlds and fails if a nudged constant
+puts the signal behind a bale or outside the camera's field:
+
+```bash
+./scripts/check_signal_sightline.py
+```
+
+Bounds for everything the randomiser moves come from the layout file beside
+each world --
+[`obstacle_course_layout.yaml`](cfr_arduino_bridge/config/obstacle_course_layout.yaml)
+and
+[`speed_course_layout.yaml`](cfr_arduino_bridge/config/speed_course_layout.yaml)
+-- which the generators write, so the randomiser and the world cannot drift
+apart.
+
+Two things the drawing calls variable are **not** randomised: the pothole
+bumps, which are placed as drawn because their matching holes are cut into
+the board mesh and cannot move with them, and the bucket section's entrance,
+which would mean moving bale walls.
+
+### Cameras
+
+`simulation.launch.py` mounts an RGB-D camera at the front of the simulated
+Slash and publishes it under ZED-compatible names:
 
 | Topic | Type | Source |
 | ----- | ---- | ------ |
 | `/zed/zed_node/odom` | `nav_msgs/Odometry` | Gazebo vehicle odometry |
 | `/zed/zed_node/left/image_rect_color` | `sensor_msgs/Image` | simulated left color camera |
-| `/zed/zed_node/left/image_rect_color/camera_info` | `sensor_msgs/CameraInfo` | simulated left camera calibration |
+| `/zed/zed_node/left/image_rect_color/camera_info` | `sensor_msgs/CameraInfo` | simulated camera calibration |
 | `/zed/zed_node/depth/depth_registered` | `sensor_msgs/Image` | simulated depth camera |
-| `/zed/zed_node/depth/depth_registered/camera_info` | `sensor_msgs/CameraInfo` | simulated depth camera calibration |
 | `/zed/zed_node/point_cloud/cloud_registered` | `sensor_msgs/PointCloud2` | simulated registered depth point cloud |
 
-The camera sensors use a $110^\circ$ horizontal field of view, $640 \times 360$
-resolution, 15 Hz update rate, and a 0.2 m to 20 m depth range.
+$110^\circ$ horizontal field of view, $640 \times 360$, 15 Hz, 0.2 m to 20 m.
+Colour and depth come from one `rgbd_camera` sensor, so they share one
+calibration and there is one `camera_info` rather than two.
 
-The default headless world leaves Gazebo's rendered sensor system disabled so it
-can run on systems without an EGL/OpenGL context; `/zed/zed_node/odom` remains
-available for autonomy and the visual ZED 2i mount remains on the vehicle. The
-image, depth, and point-cloud bridges require a GPU-capable container with the
-NVIDIA OpenGL/EGL libraries exposed before enabling `gz-sim-sensors-system` in
-the world.
+Rendered sensors need a render context, so they live in a second world file
+and are off by default:
+
+```bash
+ros2 launch cfr_arduino_bridge obstacle_course.launch.py sensors:=true
+```
+
+Gazebo ignores its own default server config once a world declares plugins,
+so the sensors system has to be written into the world file -- there is no
+launch argument for it. Rather than keep a second copy of each world, both
+worlds carry two `<!-- cfr:sensors-... -->` markers and `simulation.launch.py`
+fills them in, writing the result to `/tmp/cfr_sim/`. Without `sensors:=true`
+the world is used exactly as committed, comments and all.
+
+A second copy would have been the simpler mechanism, but the speed course's
+world is maintained by hand, and a derived copy of a hand-maintained file goes
+stale the first time somebody edits one and not the other.
+`/zed/zed_node/odom` is published either way; without `sensors:=true` only the
+images are missing.
+
+A GPU is not required. `LIBGL_ALWAYS_SOFTWARE=1` renders the sensors world on
+llvmpipe at roughly 5 Hz against the 15 Hz the sensor asks for, which is
+enough to check that the car sees the start signal turn green:
+
+```bash
+LIBGL_ALWAYS_SOFTWARE=1 ros2 launch cfr_arduino_bridge obstacle_course.launch.py sensors:=true
+LIBGL_ALWAYS_SOFTWARE=1 ros2 launch cfr_arduino_bridge speed_course.launch.py sensors:=true
+```
+
+### Regenerating the course
+
+Neither step is needed to run the simulation -- the worlds and meshes are
+committed. Both are needed when the drawing or the CAD changes.
+
+```bash
+# Obstacle course world and the randomiser's bounds, from the site-layout DXF.
+./scripts/generate_obstacle_course.py "2026 course designs v08 ... site layout 2.dxf"
+
+# Speed course start signal and its layout file.  The DXF argument is optional
+# and only the straw-bale block needs it -- see the note below.
+./scripts/generate_speed_course.py
+
+# STL visuals, from the assembled obstacle CAD.  Needs Docker; builds its own
+# image, because the OpenCASCADE bindings want a Python neither host has.
+./scripts/convert_obstacle_meshes.sh "~/Downloads/All Obstacles.step"
+```
+
+**The speed course's bales do not currently regenerate.**
+`generate_speed_course.py` picks the Speed Course out of the drawing by an x
+range, and in "site layout 2" the two courses are separated by y instead, so
+it finds 82 bales there rather than 202. Selecting by y does find 202 -- but a
+different 202, up to 39 m away and rotated a quarter turn from the ones
+committed in the world, so the committed Speed Course came from a revision
+again different from either. Until that is reconciled the DXF argument is
+optional and the bale block is only rewritten when one is passed, so
+regenerating the start signal cannot silently replace the course.
+
+`convert_obstacle_meshes.sh` wants the *assembled* STEP export, not the
+per-part directory: the individual files carry no assembly relationships, so
+a car wash or a start signal cannot be put back together from them.
 
 ## Nodes
 

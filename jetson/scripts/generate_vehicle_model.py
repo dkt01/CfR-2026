@@ -184,8 +184,10 @@ def build_model(vehicle):
         "<geometry><cylinder><radius>0.015</radius><length>0.006</length></cylinder></geometry>"
         "<material><diffuse>0.08 0.55 0.85 1</diffuse><emissive>0.02 0.16 0.28 1</emissive>"
         "<specular>0.7 0.7 0.7 1</specular></material></visual>",
-        "        <!-- Rendered RGB-D sensors stay disabled until the container exposes a",
-        "             working GPU-backed EGL/OpenGL context. -->",
+        # simulation.launch.py swaps this marker for the rendered ZED under
+        # `sensors:=true`, and raises if it is missing -- so the generated
+        # block has to carry it, not just the hand written part of the world.
+        "          <!-- cfr:sensors-camera -->",
         "      </link>",
         knuckle("front_left", axle, half_front),
         knuckle("front_right", axle, -half_front),

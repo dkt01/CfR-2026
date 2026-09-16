@@ -251,6 +251,26 @@ Conversions are started and collected by polling, so the ADC never blocks and ne
 
 `BATTERY_LEVEL` maps 10.0 V to `0` and 12.6 V to `255` (a 3S lithium polymer pack, 4.2 V per cell charged and a 3.33 V per cell floor), which works out to 10.2 mV per code.
 
+## Simulation
+
+Both competition courses are simulated in Gazebo Harmonic, one launch file
+each:
+
+```bash
+ros2 launch cfr_arduino_bridge speed_course.launch.py      # 135 ft x 47 ft oval
+ros2 launch cfr_arduino_bridge obstacle_course.launch.py   # 65 ft x 48 ft, 11 sections
+```
+
+Both are built from the site-layout DXF, and the obstacle course's obstacles
+from the team's CAD. Both start on the same visual signal: it loads showing
+red, and `obstacle_randomizer_node` turns it to green at 90 degrees a second
+while the simulation runs -- along with the obstacle course's buckets and
+hoops -- so a layout can be re-drawn and a start signalled without a restart.
+
+See [jetson/README.md](jetson/README.md#gazebo-simulation) for the launch
+arguments, the randomiser's services, and how to regenerate the worlds and
+meshes when the drawing or the CAD changes.
+
 ## Documentation
 
 * [Characterization procedure](docs/characterization.md) and its [printable field card](docs/field-card.md)

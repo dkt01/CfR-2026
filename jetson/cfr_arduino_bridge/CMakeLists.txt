@@ -74,7 +74,7 @@ install(TARGETS arduino_bridge_node cmd_vel_to_drive_node sim_vehicle_node path_
   RUNTIME DESTINATION bin
 )
 
-install(PROGRAMS src/teleport_api.py src/maneuver_runner_node.py
+install(PROGRAMS src/teleport_api.py src/maneuver_runner_node.py src/obstacle_randomizer_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -82,7 +82,10 @@ install(DIRECTORY include/
   DESTINATION include
 )
 
-install(DIRECTORY config launch worlds
+# meshes/ is referenced from the worlds as model://cfr_arduino_bridge/meshes,
+# which Gazebo resolves against GZ_SIM_RESOURCE_PATH -- simulation.launch.py
+# points that at the share root.
+install(DIRECTORY config launch meshes worlds
   DESTINATION share/${PROJECT_NAME}
 )
 
