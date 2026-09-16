@@ -3,10 +3,13 @@
 
 import json
 import math
+import os
 import subprocess
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-WORLD = "cfr_speed_course"
+# Which world to teleport in.  simulation.launch.py sets this from the course
+# being launched; the default is the one this started life serving.
+WORLD = os.environ.get("CFR_SIM_WORLD", "cfr_speed_course")
 MODEL = "slash"
 PORT = 9003
 MAX_ABS_X = 30.0
