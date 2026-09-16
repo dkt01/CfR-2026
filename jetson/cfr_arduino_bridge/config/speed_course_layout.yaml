@@ -8,7 +8,7 @@ obstacle_randomizer:
     world: cfr_speed_course
     start_signal:
       # Joint setpoint topic, bridged from Gazebo by
-      # simulation.launch.py.  The randomiser ramps the setpoint
+      # simulation.launch.py.  The randomizer ramps the setpoint
       # across it rather than commanding the far end, so the arm
       # turns at a stated rate instead of as fast as it can.
       topic: /start_signal/arm

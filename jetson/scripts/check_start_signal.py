@@ -8,7 +8,7 @@ that the detector latches inside the second the arm takes to turn.  So this
 drives a running simulation -- red, turn it green, wait for the trigger -- and
 prints the frames it took to get there.
 
-Needs a course up with the camera rendered and the randomiser running, which
+Needs a course up with the camera rendered and the randomizer running, which
 is what either course launch file gives:
 
     LIBGL_ALWAYS_SOFTWARE=1 ros2 launch cfr_arduino_bridge speed_course.launch.py \\
@@ -172,7 +172,7 @@ def round_trip(checker: Checker, timeout: float) -> bool:
     )
     future = checker.signal.call_async(SetBool.Request(data=True))
     started = checker.wait(lambda: checker.go, timeout, "~/go")
-    checker.wait(future.done, timeout, "the randomiser to finish the sweep")
+    checker.wait(future.done, timeout, "the randomizer to finish the sweep")
 
     report(checker.states[max(0, red_frames - 2) :], began)
     if not started:

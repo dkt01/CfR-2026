@@ -49,7 +49,7 @@ LAYOUT_FILE = PACKAGE / "config/speed_course_layout.yaml"
 VEHICLE_START = (20.15, 4.76)
 HEADING = math.pi
 
-# The start/finish line, on the lane centreline.  Nothing in this world marks
+# The start/finish line, on the lane centerline.  Nothing in this world marks
 # it: the bales and the car are all there is, and the drawing only says the car
 # starts behind the line.  So it is taken to sit the same 0.70 m ahead of the
 # waiting car as the obstacle course's line does, which keeps the two start
@@ -60,14 +60,14 @@ START_LINE = (
     VEHICLE_START[1] + LINE_AHEAD_OF_CAR * math.sin(HEADING),
 )
 
-# Distance from the lane centreline to the inner edge of the bale border on the
+# Distance from the lane centerline to the inner edge of the bale border on the
 # car's left, which is the side the drawing stands the signal on.  Measured off
 # the committed wall: its bales sit at y = 4.0673 and are 18 in deep, so their
 # inner faces stand at 4.2959, which is 0.464 m from the car's line.
 # check_signal_sightline.py re-measures it against the bales in the world.
 LANE_EDGE = 0.464
 
-# Where the start signal stands, in world metres: three bales down the wall
+# Where the start signal stands, in world meters: three bales down the wall
 # from the start line and in line with the border's inner edge, the same as on
 # the obstacle course.  See scripts/start_signal.py.
 SIGNAL_POSITION = start_signal.position(START_LINE, HEADING, LANE_EDGE)
@@ -158,7 +158,7 @@ def dxf_speed_bales(dxf_file: Path) -> list[tuple[float, float, float]]:
 
 
 def world_bales(contents: str) -> list[tuple[float, float, float]]:
-    """The bale poses already written into the world, in world metres.
+    """The bale poses already written into the world, in world meters.
 
     The bale block is only re-derived from the drawing when a DXF is passed --
     see the module docstring -- but the bales the start signal displaces move

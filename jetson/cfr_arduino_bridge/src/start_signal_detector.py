@@ -23,7 +23,7 @@ Both arms are in frame together for two thirds of the turn -- they trade
 projected area and the total stays near 250 px -- so the verdict at a place is
 whichever of the two is ahead there, and the start is confirmed 0.13 s after
 they cross rather than when the red arm finally goes edge-on.  Under a tighter
-colour floor the crossover becomes a hole instead: both arms wash out around
+color floor the crossover becomes a hole instead: both arms wash out around
 45 degrees and a frame or two reads as neither.  Both shapes have to work, and
 a frame that reads as neither must not be read as "no longer red".
 
@@ -34,26 +34,26 @@ The course is outside, the run may be at any hour, and the sun may be behind
 the signal.  Nothing here trusts absolute brightness, and nothing trusts that
 the signal is the only red or green thing in frame, because neither holds:
 
-* **Colour, not brightness.**  Pixels are judged on hue and on chroma -- how
-  far from grey they are -- because those are what weather leaves alone.
+* **Color, not brightness.**  Pixels are judged on hue and on chroma -- how
+  far from gray they are -- because those are what weather leaves alone.
   Exposure scales all three channels, which leaves hue and saturation
   untouched; glare behind the signal and clipping in the sun add to all three,
   which leaves hue and *chroma* untouched.  So the floors are chroma first and
-  saturation only to reject grey, and the bands are drawn to clear skin,
+  saturation only to reject gray, and the bands are drawn to clear skin,
   straw, turf and foliage rather than only the simulator's palette.  See
   `Thresholds`.
 * **Arm-sized clusters, not pixel counts.**  The threshold is applied to the
   densest `cluster_window` window, and a candidate is thrown out if the same
-  colour keeps going well outside that window -- see `Cluster.spread`.  At the
+  color keeps going well outside that window -- see `Cluster.spread`.  At the
   3 m both courses stand the signal at the arm is about 21 x 16 px of a
   640 x 360 frame; a shirt, a tent or a hedge is many times that, and fails on
   its own size however perfect its hue.
 * **Several candidates per frame, not just the densest.**  A red shirt is
   bigger than the arm, so taking the single densest cluster would report the
-  shirt and hide the signal.  `clusters` returns the best few of each colour
+  shirt and hide the signal.  `clusters` returns the best few of each color
   and every arm-sized one of them is tracked.
-* **Places, not colours.**  `StartLatch` keeps a `Site` for each spot in the
-  image where arm-sized signal colour keeps turning up, and counts red and
+* **Places, not colors.**  `StartLatch` keeps a `Site` for each spot in the
+  image where arm-sized signal color keeps turning up, and counts red and
   green frames per site.  A start is one site going from confirmed red to
   confirmed green: both arms turn about one pivot, so a real transition
   happens in one place.  Somebody in a red shirt standing near the course has
@@ -61,7 +61,7 @@ the signal is the only red or green thing in frame, because neither holds:
   course's car wash, which hangs twenty ribbons of much the same red as the
   signal, likewise.
 * **A prior once the signal is found.**  The best site is fed back as a
-  `Focus`, and inside that box the colour floors relax by
+  `Focus`, and inside that box the color floors relax by
   `focus_relaxation` -- a known signal is read on weaker evidence than an
   unknown blob has to produce, which is what gets a backlit arm read after the
   sun has come round behind it.  The whole region is still searched at full
@@ -113,7 +113,7 @@ def decode(encoding: str, width: int, height: int, step: int, data) -> np.ndarra
     """A `height` x `width` x 3 uint8 view of one ROS image, in RGB order.
 
     A view, not a copy, wherever the layout allows one, so this costs nothing
-    at 15 Hz; treat the result as read only.  `step` is honoured rather than
+    at 15 Hz; treat the result as read only.  `step` is honored rather than
     assumed, because a row is allowed to carry padding past the last pixel.
     """
     try:
@@ -148,7 +148,7 @@ def hsv(rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     1.5 and its green at 130, and lighting -- Gazebo's or the sun's -- moves
     value about far more than it moves either of those.  Saturation is chroma
     over value, so it too is unchanged by a scene that is simply darker; what
-    does cost saturation is light *added* to the arm's own colour, which is
+    does cost saturation is light *added* to the arm's own color, which is
     exactly what sky glare on a backlit signal and clipping in direct sun both
     do.  The absolute chroma of a pixel, for the noise floor, is the product
     of the two returned here.
@@ -160,7 +160,7 @@ def hsv(rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     red, green, blue = scaled[..., 0], scaled[..., 1], scaled[..., 2]
     value = scaled.max(axis=-1)
     chroma = value - scaled.min(axis=-1)
-    # Grey pixels have no hue and would divide by zero; they are excluded by
+    # Gray pixels have no hue and would divide by zero; they are excluded by
     # the saturation threshold anyway, so any finite hue will do for them.
     divisor = np.where(chroma > 0, chroma, 1.0)
     hue = np.select(
@@ -247,7 +247,7 @@ DEFAULT_REGION = Region(0.0, 0.0, 1.0, 0.5)
 
 @dataclass(frozen=True)
 class Thresholds:
-    """What counts as signal colour, and what counts as an arm.
+    """What counts as signal color, and what counts as an arm.
 
     The hue bands are drawn to clear what an outdoor course puts in frame, not
     merely what the simulator does:
@@ -262,7 +262,7 @@ class Thresholds:
       wash's blue ribbons at 212.  The arms themselves render at 1.5 and 130.
 
     `min_chroma` is the floor that does the work, and it is in absolute terms
-    -- how far from grey the pixel is, in 0..1 -- because that is the quantity
+    -- how far from gray the pixel is, in 0..1 -- because that is the quantity
     weather leaves alone.  Sky glare behind the signal and a sensor clipping
     in the sun both *add* light to every channel, which moves a pixel towards
     white without changing how far apart its channels are, so it costs
@@ -272,12 +272,12 @@ class Thresholds:
     the arm renders at in the simulator and still several times the noise in
     a daylight frame.
 
-    `min_saturation` is then only there to reject grey, which is what a low
+    `min_saturation` is then only there to reject gray, which is what a low
     chroma over a bright value is: warm-lit concrete, a pinkish cloud, a
     hazed-over sky.  It is 0.15, low enough for an arm that has lost five
     sixths of its purity to glare, because the evidence that a candidate is
-    the signal is its size and its place, not the purity of its colour.
-    `min_value` only drops what is black enough to have no colour at all.
+    the signal is its size and its place, not the purity of its color.
+    `min_value` only drops what is black enough to have no color at all.
 
     `min_pixels` is set against the 21 x 16 px the arm subtends at 3 m, with
     room to spare for an arm part way round and for a signal further off.
@@ -298,7 +298,7 @@ class Thresholds:
     focus_relaxation: float = 0.6
 
     def mask(self, band: HueBand, planes) -> np.ndarray:
-        """Pixels of `band`'s colour that are lit and coloured enough to count."""
+        """Pixels of `band`'s color that are lit and colored enough to count."""
         hue, saturation, value = planes
         return (
             band.mask(hue)
@@ -308,10 +308,10 @@ class Thresholds:
         )
 
     def relaxed(self) -> Thresholds:
-        """The same thresholds, with the colour floors lowered by the prior.
+        """The same thresholds, with the color floors lowered by the prior.
 
         Used inside a `Focus`, where the signal has already been found: the
-        place is known, so weaker colour is enough, and the size gates that do
+        place is known, so weaker color is enough, and the size gates that do
         the real work against shirts and hedges are untouched.
         """
         return replace(
@@ -346,7 +346,7 @@ class Focus:
 
 @dataclass(frozen=True)
 class Cluster:
-    """The densest window of one colour, and how much of it surrounds it."""
+    """The densest window of one color, and how much of it surrounds it."""
 
     pixels: int = 0
     total: int = 0
@@ -363,12 +363,12 @@ class Cluster:
         """Matching pixels in three windows' width, over those in one.
 
         An arm that fits inside its window scores 1.0, however bright the day
-        is.  Anything whose colour keeps going outside the window scores
+        is.  Anything whose color keeps going outside the window scores
         more, and a candidate over `Thresholds.max_spread` is thrown out on
         its size alone: a shirt on somebody 5 m away scores 3.8, and a hedge
         or a hillside 4.0 -- the window lands on a corner of a big blob, not
         in the middle of it, so 4.0 rather than the 9.0 the box holds is what
-        filling the whole neighbourhood looks like.
+        filling the whole neighborhood looks like.
 
         `cluster_window` therefore has to be at least the size of the arm in
         frame, because an arm that overfills its window scores its own area
@@ -379,7 +379,7 @@ class Cluster:
 
         This is the one test that does not care about hue at all, which is
         why it is what holds up against something that really is the same
-        colour as the signal.
+        color as the signal.
         """
         return self.surround / self.pixels if self.pixels else 0.0
 
@@ -419,7 +419,7 @@ def clusters(
     fills a box, however many of them there are.  Done with a summed-area
     table, so neither the window size nor the surround costs anything, and
     each position reported is the centroid of the matches inside its box
-    rather than the box centre.
+    rather than the box center.
 
     More than one box, because the biggest patch of red in frame need not be
     the signal -- somebody in a red shirt is larger than the arm and nearer
@@ -431,7 +431,7 @@ def clusters(
     over one is not returned *and* does not count against `limit`, and the
     whole surrounding box is blanked out so that the search steps past the
     blob instead of walking across it a window at a time.  That can blank out
-    an arm within a window or so of something bigger in the same colour --
+    an arm within a window or so of something bigger in the same color --
     but an arm that close to it has the thing in its own surround and would
     be thrown out for spread anyway, so nothing is lost that would have been
     believed.
@@ -463,7 +463,7 @@ def clusters(
     found: list[Cluster] = []
     blocked: Cluster | None = None
     # Bounded rather than while-true: every pass blanks out at least one
-    # window, so this terminates on its own, but a frame full of colour
+    # window, so this terminates on its own, but a frame full of color
     # should not be able to spend a hundred passes proving it.
     for _ in range(max(1, limit) + 64):
         if len(found) >= max(1, limit):
@@ -517,7 +517,7 @@ class Observation:
 
     `red` and `green` are the headline clusters -- what the frame is reported
     as showing -- while `reds` and `greens` are every arm-sized candidate of
-    each colour, which is what the latch tracks.  The headline is reported
+    each color, which is what the latch tracks.  The headline is reported
     even when it was thrown out, with `red_reject`/`green_reject` saying why:
     "8 px against a threshold of 12" is the number somebody tuning this at the
     course needs to see.
@@ -533,7 +533,7 @@ class Observation:
 
     @property
     def position(self) -> tuple[float, float] | None:
-        """Centre of the arm this frame found, or None if it found neither."""
+        """Center of the arm this frame found, or None if it found neither."""
         if self.state == RED:
             return self.red.position
         if self.state == GREEN:
@@ -611,7 +611,7 @@ class Classifier:
         green_accepted, green, green_reject = self.accept(greens, blocked[GREEN], focus)
 
         # Both arms are on one pivot 90 degrees apart, so only one can face
-        # the camera.  If both colours have an arm-sized candidate, the one in
+        # the camera.  If both colors have an arm-sized candidate, the one in
         # the focus box wins, and failing that the fuller one; the other is
         # something else in frame.
         if not red_accepted and not green_accepted:
@@ -665,7 +665,7 @@ class Classifier:
             )
         if cluster.spread > limits.max_spread:
             return (
-                f"the colour spreads {cluster.spread:.1f}x past the window, "
+                f"the color spreads {cluster.spread:.1f}x past the window, "
                 f"over the {limits.max_spread:.1f}x an arm does, so this is "
                 "part of something much larger"
             )
@@ -700,7 +700,7 @@ def add(found: list[Cluster], more: list[Cluster], window: int) -> None:
 
 @dataclass(eq=False)
 class Site:
-    """A place in the image where arm-sized signal colour keeps appearing.
+    """A place in the image where arm-sized signal color keeps appearing.
 
     One of these is the signal; the others are whatever else on the course
     happens to be red or green and about the size of an arm at 3 m.  Counting
@@ -820,7 +820,7 @@ class StartLatch:
         how far the green arm may be from the red one and how far apart two
         places have to be to be different things.  Zero switches the whole
         idea off -- every cluster is then the same place -- which is what a
-        bench test with one coloured card in front of the camera wants.
+        bench test with one colored card in front of the camera wants.
         """
         if self.max_transition_distance <= 0:
             return self.sites[0] if self.sites else None
@@ -866,7 +866,7 @@ class StartLatch:
     def assign(self, observation: Observation) -> list[tuple[Site, Cluster, int]]:
         """This frame's candidates as one verdict for each place in frame.
 
-        One place shows one colour at a time, and the fuller candidate there
+        One place shows one color at a time, and the fuller candidate there
         is the arm facing the car: the two arms are 90 degrees apart on one
         pivot, so for most of the turn both are in frame at once and both are
         arm-sized -- the sweep the module docstring quotes has 185 px of green
@@ -983,7 +983,7 @@ def annotate(
     height, width = marked.shape[:2]
     outline(marked, region.pixels(width, height), (128, 128, 128))
     if focus is not None:
-        # White, so the box the detector is favouring is the one that stands
+        # White, so the box the detector is favoring is the one that stands
         # out: if it is not on the signal, nothing else in the frame matters.
         outline(marked, focus.box(width, height), (255, 255, 255))
 

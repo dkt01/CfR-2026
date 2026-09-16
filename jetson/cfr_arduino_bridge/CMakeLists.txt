@@ -114,7 +114,7 @@ if(BUILD_TESTING)
   ament_add_gtest(test_drivetrain test/test_drivetrain.cpp)
   target_link_libraries(test_drivetrain cfr_arduino_protocol)
 
-  # start_signal_detector_node's colour decision, which the test imports
+  # start_signal_detector_node's color decision, which the test imports
   # straight out of src/ -- it is free of ROS, so it needs no workspace.
   ament_add_pytest_test(test_start_signal_detector test/test_start_signal_detector.py)
 endif()

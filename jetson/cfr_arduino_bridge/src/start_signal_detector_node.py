@@ -2,13 +2,13 @@
 """Watch the camera for the course's start signal and say when to go.
 
 A run starts on a visual signal: a red arm turns to a green one, 90 degrees
-apart on a common pivot, in about a second.  This node watches the left colour
+apart on a common pivot, in about a second.  This node watches the left color
 image for that transition and latches it, so the driver has one thing to wait
 on and no camera code of its own.
 
 | Interface | Type | Direction |
 | --------- | ---- | --------- |
-| `image` | `sensor_msgs/Image` | subscribed (remapped to the ZED's left colour topic) |
+| `image` | `sensor_msgs/Image` | subscribed (remapped to the ZED's left color topic) |
 | `~/go` | `std_msgs/Bool` | published, transient local, latched |
 | `~/state` | `cfr_interfaces/StartSignal` | published once per frame |
 | `~/reset` | `std_srvs/Trigger` | wait for another start |
@@ -21,7 +21,7 @@ that comes up before gets the false, which is the difference between "not yet"
 and "no detector running".
 
 `~/state` is the running commentary: what this frame shows, how many pixels of
-each colour, where, and whether the signal has been found at all.  A driver
+each color, where, and whether the signal has been found at all.  A driver
 that has to stop on a red flag mid-run watches that rather than `~/go`,
 because `~/go` deliberately stays up once a run has started; a momentarily
 mis-hued frame must not be able to retract a start that has already happened.
@@ -60,7 +60,7 @@ from std_srvs.srv import Trigger
 
 from cfr_interfaces.msg import StartSignal
 
-# Installed alongside this file, and also its neighbour in the source tree, so
+# Installed alongside this file, and also its neighbor in the source tree, so
 # an interpreter started on either finds it on sys.path already.  Added
 # explicitly regardless, because a launch file that runs this through a
 # wrapper need not leave it there.
@@ -227,7 +227,7 @@ class StartSignalDetector(Node):
             raise ValueError("candidates must be at least 1")
         if not 0.0 < thresholds.focus_relaxation <= 1.0:
             raise ValueError(
-                "focus_relaxation is the fraction of the colour floors that "
+                "focus_relaxation is the fraction of the color floors that "
                 "applies inside the box around the signal, so it is over 0 "
                 "and at most 1"
             )

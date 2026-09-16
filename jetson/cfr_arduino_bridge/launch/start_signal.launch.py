@@ -13,7 +13,7 @@ topic or a bag:
     ros2 launch cfr_arduino_bridge start_signal.launch.py image_topic:=/other
 
 `debug:=true` publishes an annotated copy of each frame on
-`/start_signal_detector/debug_image`, which is how the colour thresholds get
+`/start_signal_detector/debug_image`, which is how the color thresholds get
 tuned against the real signal.
 """
 
@@ -33,7 +33,7 @@ def generate_launch_description():
     image_arg = DeclareLaunchArgument(
         "image_topic",
         default_value="/zed/zed_node/left/image_rect_color",
-        description="Colour image to look for the signal in",
+        description="Color image to look for the signal in",
     )
     params_arg = DeclareLaunchArgument(
         "params_file", default_value=params_file, description="Parameter file"

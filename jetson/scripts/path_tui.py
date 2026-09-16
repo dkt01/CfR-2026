@@ -53,7 +53,7 @@ class Segment:
 
     def __init__(self, kind, si_value, label):
         self.kind = kind  # "STRAIGHT" or "TURN"
-        self.si_value = si_value  # metres or radians
+        self.si_value = si_value  # meters or radians
         self.label = label  # human-readable, for display
 
 

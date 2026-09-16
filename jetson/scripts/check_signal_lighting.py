@@ -8,12 +8,12 @@ what is in frame that could start the run without the signal".
 
 It takes two real frames from the camera, one with the signal red and one with
 it green, and replays them through the decision offline under light they were
-not taken in.  The cases are derived from the arm's own measured colour rather
+not taken in.  The cases are derived from the arm's own measured color rather
 than picked: exposure is solved for the chroma it would leave in the arm, and
 glare for the saturation it would leave, so the same cases mean the same thing
 against a dim rendering and against a signal in daylight.  Then it puts people
 in frame -- patches of the signal's own red and green, sized as somebody a few
-metres away -- and checks both that they do not stop a start and that they
+meters away -- and checks both that they do not stop a start and that they
 cannot cause one.
 
 Run it against a simulation, where it measures the detector against a rendered
@@ -136,7 +136,7 @@ def arm_colour(frame: np.ndarray, observation, limits) -> tuple[float, float]:
 # renders at a chroma of about 0.2 in the simulator and a bright signal in
 # daylight is better than that, so a tenth of its chroma is a dark frame
 # indeed -- and a fifth of its saturation is a signal being read through
-# glare that has all but greyed it out.  Below these the check goes on
+# glare that has all but grayed it out.  Below these the check goes on
 # measuring but stops requiring, because at some point the frame no longer
 # holds the answer and the fix is a lens hood, not a threshold.
 REQUIRED_CHROMA = 0.05
@@ -154,7 +154,7 @@ WASH = [0.50, 0.30, 0.20, 0.15, 0.10, 0.05]
 
 # The mid-tone a camera's exposure lands the arm on in those cases.  Bright
 # enough to be the frame a camera would actually deliver, and low enough that
-# the glare needed to grey the arm out does not clip it.
+# the glare needed to gray the arm out does not clip it.
 EXPOSED_VALUE = 0.6
 
 
@@ -197,7 +197,7 @@ def lights(chroma: float, value: float) -> list[tuple[str, float, float, float, 
     return cases
 
 
-# A person a few metres away, in a shirt each of the signal's colours.  Both
+# A person a few meters away, in a shirt each of the signal's colors.  Both
 # are further from the camera than the arm and still several times its size,
 # which is what the detector throws them out on.
 SHIRT_RED = (180, 30, 40)
@@ -218,7 +218,7 @@ def paste(frame: np.ndarray, colour, centre, size=SHIRT_SIZE) -> np.ndarray:
 
 
 class Camera(Node):
-    """One camera subscription and the randomiser's signal service."""
+    """One camera subscription and the randomizer's signal service."""
 
     def __init__(self, image_topic: str) -> None:
         super().__init__("check_signal_lighting")
@@ -283,7 +283,7 @@ def waiting_then_turning(red: np.ndarray, green: np.ndarray) -> list[np.ndarray]
     """The frames of a start: the wait at the line, then the arm turned.
 
     Long enough to arm the detector several times over, so a case that fails
-    has failed on the colour and not on the count.
+    has failed on the color and not on the count.
     """
     return [red] * 10 + [green] * 4
 
@@ -320,7 +320,7 @@ def measure(red: np.ndarray, green: np.ndarray, position, chroma, value) -> list
     went, observations = start(
         [paste(red, SHIRT_RED, beside)] * 10 + [paste(red, SHIRT_GREEN, beside)] * 10
     )
-    cases.append(("a shirt changing colour", False, went, observations))
+    cases.append(("a shirt changing color", False, went, observations))
 
     # Green with no red before it is not a transition, whoever is in frame.
     went, observations = start([crowded(green)] * 20)
@@ -372,7 +372,7 @@ def main() -> int:
         "--spin-by-hand",
         action="store_true",
         help="on the car: prompt for the signal to be turned, rather than "
-        "asking the randomiser to turn it",
+        "asking the randomizer to turn it",
     )
     parser.add_argument(
         "--timeout",
@@ -414,7 +414,7 @@ def main() -> int:
             f"frames"
         )
         print(
-            f"    the arm's own colour there: chroma {chroma:.3f}, value "
+            f"    the arm's own color there: chroma {chroma:.3f}, value "
             f"{value:.2f}, saturation {chroma / value:.2f} -- every case below "
             f"is derived from those\n"
         )

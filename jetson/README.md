@@ -49,7 +49,7 @@ worth knowing:
 * The whole ramp/bridge/helix structure is primitives for both, because the
   car drives on it and because the CAD and DXF disagree by about 5% on the
   helix radius. The DXF wins there -- the bale walls around it were drawn to
-  the DXF -- and it reproduces the drawing's annotated 4 ft centreline
+  the DXF -- and it reproduces the drawing's annotated 4 ft centerline
   radius, 41.5 in width and 11% grade.
 * The car wash's hanging ribbons are drawn but have no collision. They are
   streamer weight and could not deflect the car, so simulating forty contacts
@@ -86,10 +86,10 @@ ros2 service call /obstacle_randomizer/start_signal std_srvs/srv/SetBool "{data:
 carries the signal state, so a detector can be scored against what the signal
 is actually showing.
 
-**Buckets.** Two to nine, at least 3 ft between centres and 2.5 ft off the
+**Buckets.** Two to nine, at least 3 ft between centers and 2.5 ft off the
 bale walls, both measured off the drawing. Those two numbers are also why the
 drawing's "placed so a path exists around and between buckets" needs no
-reachability check: 3 ft between centres leaves a 0.62 m gap between two
+reachability check: 3 ft between centers leaves a 0.62 m gap between two
 0.29 m buckets, and the same off the walls, and the car is 0.30 m wide.
 Keeping the spacing is keeping the path. Nine models exist from the start --
 Gazebo will not spawn a static model on demand -- and a draw stands the ones
@@ -114,7 +114,7 @@ world always shows red** without anything having to command it.
 
 The service **turns** the arm rather than snapping it: 90 degrees in one
 second, matching the signal on the course and giving a detector the part-way
-arm it will have to cope with. The randomiser ramps the joint setpoint at
+arm it will have to cope with. The randomizer ramps the joint setpoint at
 25 Hz over `/start_signal/arm`, which `simulation.launch.py` bridges to
 Gazebo's joint-position controller; the controller follows the ramp, so the
 rate is what the node says it is. `signal_sweep_rate` (degrees per second,
@@ -125,7 +125,7 @@ Through the camera, one sweep looks like this -- the counts
 `start_signal_detector_node` reports, from
 [`scripts/check_start_signal.py`](scripts/check_start_signal.py) against the
 obstacle course -- the speed course reads the same, since both stand the
-signal 8 ft down a 32 in lane and its range differs by a centimetre:
+signal 8 ft down a 32 in lane and its range differs by a centimeter:
 
 ```
    t(s)   red px   green px   reads
@@ -158,7 +158,7 @@ The drawing places the signal, and places it the same way on both courses:
 8 ft" -- **with the bales moved so it stands in line with the inner edge of the
 bale border**. So neither generator chooses a spot any more;
 `start_signal.position()` derives one from each course's start line, heading
-and lane edge, and the two come out within a centimetre of each other from the
+and lane edge, and the two come out within a centimeter of each other from the
 driver's seat:
 
 | Course | Position | Yaw | Down the lane | Bearing | Range | Clears the wall by |
@@ -169,12 +169,12 @@ driver's seat:
 The board is 32 in wide and its arms sweep in its plane, so it stands **square
 across the lane**, facing back up it: width across the lane, 4 in of depth
 along it. Square, and not aimed at the point the car waits at -- the board
-sits off to the side of a 32 in lane, so a car on the centreline is a good
+sits off to the side of a 32 in lane, so a car on the centerline is a good
 16 degrees off the perpendicular, and aiming at it would cant the board, its
 arms and its footprint by that much. The sign on the course stands square to
 the path, and an 8 ft signal reads the same either way.
 
-Centred on the lane edge, half the board would be in the path, so it stands
+Centered on the lane edge, half the board would be in the path, so it stands
 half a width outboard: inner end flush with the edge -- to within 2 mm, all of
 it the wall's own placement -- and body where the wall was. That is what "the
 bales moved" means, and `start_signal.clear_bales()` does it, sliding the one
@@ -204,15 +204,15 @@ obstacle_course.sdf      ok    8.0 ft down the lane, board -2 mm off the border'
 speed_course.sdf         ok    8.0 ft down the lane, board +2 mm off the border's edge, +0.1 deg off square, bearing +17.2 deg, range 2.95 m, clears bales by 172 mm
 ```
 
-Bounds for everything the randomiser moves come from the layout file beside
+Bounds for everything the randomizer moves come from the layout file beside
 each world --
 [`obstacle_course_layout.yaml`](cfr_arduino_bridge/config/obstacle_course_layout.yaml)
 and
 [`speed_course_layout.yaml`](cfr_arduino_bridge/config/speed_course_layout.yaml)
--- which the generators write, so the randomiser and the world cannot drift
+-- which the generators write, so the randomizer and the world cannot drift
 apart.
 
-Two things the drawing calls variable are **not** randomised: the pothole
+Two things the drawing calls variable are **not** randomized: the pothole
 bumps, which are placed as drawn because their matching holes are cut into
 the board mesh and cannot move with them, and the bucket section's entrance,
 which would mean moving bale walls.
@@ -231,7 +231,7 @@ Slash and publishes it under ZED-compatible names:
 | `/zed/zed_node/point_cloud/cloud_registered` | `sensor_msgs/PointCloud2` | simulated registered depth point cloud |
 
 $110^\circ$ horizontal field of view, $640 \times 360$, 15 Hz, 0.2 m to 20 m.
-Colour and depth come from one `rgbd_camera` sensor, so they share one
+Color and depth come from one `rgbd_camera` sensor, so they share one
 calibration and there is one `camera_info` rather than two.
 
 Rendered sensors need a render context, so they live in a second world file
@@ -269,7 +269,7 @@ Neither step is needed to run the simulation -- the worlds and meshes are
 committed. Both are needed when the drawing or the CAD changes.
 
 ```bash
-# Obstacle course world and the randomiser's bounds, from the site-layout DXF.
+# Obstacle course world and the randomizer's bounds, from the site-layout DXF.
 ./scripts/generate_obstacle_course.py "2026 course designs v08 ... site layout 2.dxf"
 
 # Speed course start signal and its layout file.  The DXF argument is optional
@@ -306,7 +306,7 @@ Owns `/dev/ttyACM0` and is the only thing allowed to write to the Arduino.
 | `~/drive_cmd` | `cfr_interfaces/DriveCommand` | subscribed |
 | `~/status` | `cfr_interfaces/ArduinoStatus` | published |
 
-Behaviour:
+Behavior:
 
 * Transmits a frame every cycle at `tx_rate_hz` (50 Hz default). The Arduino
   reverts to neutral after `200 ms` without a valid frame, so the transmit timer
@@ -353,7 +353,7 @@ about the vehicle's wheelbase or the wire protocol.
 The vehicle is Ackermann and cannot rotate in place, so a `PathSegment` is one
 of two kinds, and a turn is physically driven as an arc rather than a spin:
 
-* `STRAIGHT` -- drive `distance` metres, holding the heading measured at the
+* `STRAIGHT` -- drive `distance` meters, holding the heading measured at the
   start of the segment with a P controller.
 * `TURN` -- drive at `turn_speed` while yawing at `turn_rate` until heading has
   rotated by `turn_angle` radians (positive is left, REP-103). Segments must
@@ -370,7 +370,7 @@ ros2 launch cfr_arduino_bridge path_follower.launch.py
 ```
 
 Drive the L-shape from the top of this file (5 ft straight, 90 deg right, 2 ft
-straight; feet converted to metres):
+straight; feet converted to meters):
 
 ```bash
 ros2 action send_goal /path_follower/drive_path cfr_interfaces/action/DrivePath \
@@ -409,7 +409,7 @@ source ~/ros2_ws/install/setup.bash
 | `q` | quit (cancels first if a goal is executing) |
 
 Distance and angle are entered in feet/degrees for readability and converted
-to the action's metres/radians internally. Segments are kept after a run
+to the action's meters/radians internally. Segments are kept after a run
 completes so a failed or canceled path can be resent as-is. Ctrl-C at any
 point cancels an in-flight goal before exiting, the same as `q` -- closing the
 TUI should stop the car, not abandon it mid-path.
@@ -473,7 +473,7 @@ ros2 service call /start_signal_detector/reset std_srvs/srv/Trigger   # next run
 ```
 
 `/start_signal_detector/state` is the running commentary -- what this frame
-shows, how many pixels of each colour, and where. A driver that must stop on a
+shows, how many pixels of each color, and where. A driver that must stop on a
 red flag mid-run watches that rather than `~/go`, because `~/go` deliberately
 stays up once a run has started: a single mis-hued frame must not be able to
 retract a start that has already happened.
@@ -487,7 +487,7 @@ the line is the thing to notice before the flag drops rather than after.
 #### Outdoors
 
 The course is outside, the run may be at any hour, and there will be people
-about in shirts of every colour. A start is a red arm that *becomes* green
+about in shirts of every color. A start is a red arm that *becomes* green
 **in one place**, and at the 8 ft both courses stand the signal at that arm is
 only about 21 x 16 px of a 640 x 360 frame, so none of the following is
 optional:
@@ -501,9 +501,9 @@ optional:
 * **Chroma, not brightness.** Exposure scales all three channels, so it leaves
   hue and saturation alone and takes chroma; glare behind the signal and
   clipping in the sun *add* to all three, so they leave hue and chroma alone
-  and take saturation. So `min_chroma` -- how far from grey a pixel is -- is
+  and take saturation. So `min_chroma` -- how far from gray a pixel is -- is
   the floor that does the work, and `min_saturation` is only there to reject
-  grey. Measured, the arm is still read at a fifth of the chroma it renders
+  gray. Measured, the arm is still read at a fifth of the chroma it renders
   with and at a fifth of its saturation; see the lighting check below.
 * **Hue bands drawn for a field, not a renderer.** Red stops at 12 degrees,
   short of skin at 20 to 35, straw and dry grass at 30 to 50, and the orange
@@ -511,18 +511,18 @@ optional:
   lit blue and takes red towards magenta. Green starts at 115, above turf and
   foliage at 80 to 110, and stops short of the board's sky blue at 197 and the
   car wash's blue ribbons at 212. The arms render at 1.5 and 130.
-* **Arm-sized, not merely the right colour.** The count applies to the densest
-  `cluster_window` box, and a candidate whose colour keeps going outside that
+* **Arm-sized, not merely the right color.** The count applies to the densest
+  `cluster_window` box, and a candidate whose color keeps going outside that
   box is thrown out on its size: `max_spread`. A shirt on somebody 5 m away
   scores 3.8 against an arm's 1.0, so hue cannot save it -- which is what
   keeps a red shirt, a tent, a hedge or a hillside out.
 * **Several candidates, so nothing can hide the signal.** A red shirt is
   bigger than the arm, so reporting only the densest cluster would report the
   person and never see the signal behind them. The best few places of each
-  colour are searched, and a blob too big to be an arm is skipped without
+  color are searched, and a blob too big to be an arm is skipped without
   using one of the slots.
-* **Places, not colours.** The latch keeps a site for each place where
-  arm-sized signal colour keeps turning up and counts red and green frames
+* **Places, not colors.** The latch keeps a site for each place where
+  arm-sized signal color keeps turning up and counts red and green frames
   per site, so a start is one site going from red to green within
   `max_transition_distance` -- both arms turn about one pivot, so a real
   transition happens in one place. A marshal in a red shirt has their own
@@ -531,7 +531,7 @@ optional:
   dropped, which is also what stops a red object removed from a spot pairing
   with a green one put there later.
 * **Weaker evidence once it is found.** The best site is fed back as a box to
-  look harder inside, where the colour floors relax by `focus_relaxation`.
+  look harder inside, where the color floors relax by `focus_relaxation`.
   That is what reads a backlit arm after the sun has come round behind it
   mid-wait. The whole region is still searched at full strength as well, so
   the prior can only add candidates, never hide them.
@@ -566,8 +566,8 @@ The decision itself is in
 [`start_signal_detector.py`](cfr_arduino_bridge/src/start_signal_detector.py),
 free of ROS like `path_geometry` on the C++ side, and covered by
 `test_start_signal_detector` against synthetic frames built from the worlds'
-own colours. Nothing in a synthetic frame can show that Gazebo renders those
-colours where the geometry says it will, so
+own colors. Nothing in a synthetic frame can show that Gazebo renders those
+colors where the geometry says it will, so
 [`scripts/check_start_signal.py`](scripts/check_start_signal.py) drives a
 running simulation -- red, turn it green, wait for the trigger -- and prints
 the frames it took:
@@ -581,7 +581,7 @@ Nor can either of those show what the light will do to it, so
 [`scripts/check_signal_lighting.py`](scripts/check_signal_lighting.py) takes
 one real frame with the signal red and one with it green and replays them
 through the decision under light they were not taken in. The cases are
-derived from the arm's own measured colour rather than picked -- exposure
+derived from the arm's own measured color rather than picked -- exposure
 solved for the chroma it would leave, glare solved for the saturation it would
 leave -- so they mean the same thing against a dim rendering as against a
 signal in daylight. Then it puts people in frame and checks both that they do
@@ -605,10 +605,10 @@ value of 0.36:
    glare to saturation 0.50       start   start
    glare to saturation 0.30       start   start
    glare to saturation 0.20       start   start
-   glare to saturation 0.15          --   start     <- all but greyed out
+   glare to saturation 0.15          --   start     <- all but grayed out
    glare to saturation 0.10          --      no
    people in frame                start   start
-   a shirt changing colour           no      no
+   a shirt changing color            no      no
    green from the start              no      no
    the signal never turning          no      no
 ```
@@ -724,7 +724,7 @@ file and config without rebuilding.
 `test_protocol` covers the wire format, `test_serial_port` runs the port
 against a pseudo terminal, `test_path_geometry` covers `path_follower_node`'s
 control law, and `test_start_signal_detector` covers
-`start_signal_detector_node`'s colour decision against synthetic frames -- all
+`start_signal_detector_node`'s color decision against synthetic frames -- all
 of them pass with no Arduino, camera, or car attached.
 
 Built executables land in `build/cfr_arduino_bridge/bin/` and are installed to

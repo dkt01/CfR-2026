@@ -47,7 +47,7 @@ CAMERA_HALF_FOV = math.radians(55.0)
 CAMERA_RANGE = 20.0
 
 # The arms turn about a pivot 0.813 m up; the plate is 0.21 m tall, so its
-# centre is the height to aim the sight line at.
+# center is the height to aim the sight line at.
 ARM_HEIGHT = 0.813
 
 # How far ahead of the waiting car the start/finish line is.  The obstacle
@@ -58,7 +58,7 @@ LINE_AHEAD_OF_CAR = 0.70
 
 # How far the board's inner end may sit from the border's inner edge before
 # "in line with" stops being true.  A square board lands on it to within the
-# 0.1 mm the SDF rounds poses to, so the millimetres this allows are for the
+# 0.1 mm the SDF rounds poses to, so the millimeters this allows are for the
 # wall itself: the obstacle course's bales come from the DXF and sit about
 # 2 mm wider than the drawing's nominal 32 in lane.
 FLUSH_TOLERANCE = 0.01
@@ -95,10 +95,10 @@ def footprint(pose, half_length, half_width):
 
 
 def border_edge(bales, local, along: float, side: float) -> float | None:
-    """How far off the lane centreline the bale border's inner edge is.
+    """How far off the lane centerline the bale border's inner edge is.
 
-    Measured beside the signal -- bales within a metre of its position along
-    the lane -- and on the signal's side of the centreline, so a course whose
+    Measured beside the signal -- bales within a meter of its position along
+    the lane -- and on the signal's side of the centerline, so a course whose
     two walls sit at different widths is measured against the right one.
     """
     edges = []
@@ -144,7 +144,7 @@ def check(world: Path) -> bool:
     )
 
     def local(point):
-        """A point as (down the lane from the line, left of its centreline)."""
+        """A point as (down the lane from the line, left of its centerline)."""
         offset = (point[0] - line[0], point[1] - line[1])
         return (
             offset[0] * forward[0] + offset[1] * forward[1],
@@ -191,7 +191,7 @@ def check(world: Path) -> bool:
         )
         for sign in (1, -1)
     ]
-    # The end nearer the centreline is the one that has to line up with the
+    # The end nearer the centerline is the one that has to line up with the
     # border; the other is out past the back of the wall.
     inner = min(abs(end[1]) for end in ends)
     edge = border_edge(bales, local, along, across)

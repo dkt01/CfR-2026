@@ -1,7 +1,7 @@
 """Shared Gazebo Harmonic bringup behind the two per-course launch files.
 
 Prefer `speed_course.launch.py` or `obstacle_course.launch.py`, which name a
-world and its randomiser layout.  This file is what they both include, and is
+world and its randomizer layout.  This file is what they both include, and is
 still usable directly with `world:=`.
 """
 
@@ -41,7 +41,7 @@ SENSORS_SYSTEM = """<plugin filename="gz-sim-sensors-system" name="gz::sim::syst
       <render_engine>ogre2</render_engine>
     </plugin>"""
 
-# One rgbd_camera rather than a colour and a depth sensor: they would share a
+# One rgbd_camera rather than a color and a depth sensor: they would share a
 # calibration anyway, and Gazebo publishes image, depth_image, points and
 # camera_info off this one.  simulation.launch.py's bridge renames them to the
 # ZED's topics below.
@@ -121,7 +121,7 @@ def generate_launch_description():
         "world_name",
         default_value="cfr_speed_course",
         # The <world name> inside the SDF, which is not derivable from its
-        # path.  teleport_api and the randomiser both address Gazebo services
+        # path.  teleport_api and the randomizer both address Gazebo services
         # under it.
         description="Name of the world inside the SDF",
     )
@@ -226,7 +226,7 @@ def generate_launch_description():
 
     # The camera topics are bridged under the names Gazebo's rgbd_camera
     # sensor actually publishes and renamed to the ZED's on the ROS side.
-    # Colour and depth come from one sensor, so they share a calibration and
+    # Color and depth come from one sensor, so they share a calibration and
     # there is only one camera_info to bridge.
     gazebo_bridge = Node(
         package="ros_gz_bridge",
@@ -240,7 +240,7 @@ def generate_launch_description():
             "/zed/gz/rgbd/depth_image@sensor_msgs/msg/Image[gz.msgs.Image",
             "/zed/gz/rgbd/points@sensor_msgs/msg/PointCloud2[gz.msgs.PointCloudPacked",
             "/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock",
-            # Setpoint for the start signal's arm joint.  The randomiser ramps
+            # Setpoint for the start signal's arm joint.  The randomizer ramps
             # this to turn the arm at a stated rate; going through the bridge
             # rather than the gz CLI is what makes a smooth sweep affordable.
             "/start_signal/arm@std_msgs/msg/Float64]gz.msgs.Double",

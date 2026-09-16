@@ -40,11 +40,11 @@ arduino_bridge:
     # whatever pinion is fitted.  Tire is the Traxxas 6764 Gravix 2.8" at a
     # nominal 4.5" outer diameter - calibrate with a measured roll-out.
     spur_to_wheel_ratio: 2.85
-    tire_diameter: 0.1143   # metres
+    tire_diameter: 0.1143   # meters
 
 cmd_vel_to_drive:
   ros__parameters:
-    wheelbase: 0.324               # Traxxas Slash 4X4, metres
+    wheelbase: 0.324               # Traxxas Slash 4X4, meters
     max_speed: 8.0                 # m/s that maps to full throttle
     max_steering_angle: 0.40       # rad at full lock
     min_speed_for_steering: 0.3    # floor speed for the bicycle model
@@ -101,12 +101,12 @@ start_signal_detector:
     # and 130.
     red_hue: [338.0, 12.0]
     green_hue: [115.0, 175.0]
-    # Colour floors.  Chroma -- how far from grey a pixel is -- is the one
+    # Color floors.  Chroma -- how far from gray a pixel is -- is the one
     # that does the work, because glare behind the signal and clipping in the
     # sun both add light to every channel, which costs saturation and leaves
     # chroma alone; exposure scales every channel, which costs chroma and
     # leaves saturation alone.  0.04 is about ten levels of an 8-bit channel.
-    # Saturation is then only there to reject grey, so it is low: the
+    # Saturation is then only there to reject gray, so it is low: the
     # evidence that a candidate is the signal is its size and its place.
     min_saturation: 0.15
     min_chroma: 0.04
@@ -116,15 +116,15 @@ start_signal_detector:
     # cluster_window box, so scattered matches do not add up to an arm.
     min_pixels: 12
     cluster_window: 24          # px
-    # How far the same colour may spread past that window before the
+    # How far the same color may spread past that window before the
     # candidate is thrown out as part of something much larger than an arm.
     # An arm inside its window scores 1.0, one that overfills it scores its
     # own area over the window's -- 2.3 for the 42 x 32 px the arm subtends
     # on the ZED's 1280 x 720 -- and a shirt or a hedge scores 3.8 or more.
     # So cluster_window above has to be about the arm's size in frame.
     max_spread: 3.0
-    candidates: 6               # places of each colour tracked per frame
-    # The fraction of the colour floors that applies inside the box around a
+    candidates: 6               # places of each color tracked per frame
+    # The fraction of the color floors that applies inside the box around a
     # signal already found.  A known place is read on weaker evidence, which
     # is what gets a backlit arm read; the size gates do not relax.
     focus_relaxation: 0.6

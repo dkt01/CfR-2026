@@ -114,7 +114,7 @@ class ObstacleRandomizer(Node):
         )
 
         # A run starts on red: the arm joint rests at its lower limit, which is
-        # the angle the red arm is modelled at, so the red arm is already the
+        # the angle the red arm is modeled at, so the red arm is already the
         # one lying across the board when Gazebo finishes loading.  Commanding
         # it anyway costs nothing and means the joint is held there rather than
         # merely left there; the state topic tells a detector that subscribes
@@ -188,7 +188,7 @@ class ObstacleRandomizer(Node):
         # Retried, because this times out now and then and it is worth nothing
         # when it does.  Most of a `gz service` call is the CLI discovering the
         # service afresh, and under load that occasionally overruns -- about
-        # one call in thirty, measured, which is one randomise in three across
+        # one call in thirty, measured, which is one randomize in three across
         # the dozen models a draw moves.  A second attempt has always found it.
         for attempt in range(SET_POSE_ATTEMPTS):
             try:
@@ -218,11 +218,11 @@ class ObstacleRandomizer(Node):
     # ----------------------------------------------------------------- layout
 
     def draw_buckets(self) -> list[tuple[float, float]]:
-        """Bucket positions honouring the drawing's spacing and clearance.
+        """Bucket positions honoring the drawing's spacing and clearance.
 
         The drawing asks for buckets "placed so a path exists around and
         between buckets".  That does not need a separate reachability check:
-        3 ft between centres leaves a 0.62 m gap between two 0.29 m buckets,
+        3 ft between centers leaves a 0.62 m gap between two 0.29 m buckets,
         and the same clearance off the walls, both of which a 0.30 m car fits
         through.  Keeping the spacing is keeping the path.
         """
@@ -316,7 +316,7 @@ class ObstacleRandomizer(Node):
         """A position for each hoop along the line the drawing puts it on.
 
         The line spans the full width of the corridor, so the ends are clamped
-        by half the hoop's base -- a hoop centred on the very end would stand
+        by half the hoop's base -- a hoop centered on the very end would stand
         half outside the bales.
         """
         positions = {}

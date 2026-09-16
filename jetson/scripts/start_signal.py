@@ -2,13 +2,13 @@
 
 Both courses start the same way: the car waits behind the line and begins
 driving when the signal turns from red to green.  So both worlds carry the
-same two models and the same randomiser block, and they live here rather than
+same two models and the same randomizer block, and they live here rather than
 in one generator with a copy in the other.
 
 The signal is a fixed frame and an arm pair on a revolute joint.  The two arms
 are 90 degrees apart about that joint, so whichever lies horizontal stands out
 past the sky blue board and is the one the car sees; a quarter turn swaps
-them.  It starts at 0, which is the angle the red arm is modelled at, so a
+them.  It starts at 0, which is the angle the red arm is modeled at, so a
 freshly loaded world always shows red.
 
 The joint is what makes the turn a turn.  The arm sweeps at 90 degrees a
@@ -32,7 +32,7 @@ Standing it at the lane edge is what makes the rest of this simple.  The board
 is 32 in wide and its arms sweep in its plane, so it stands square across the
 lane and faces back up it -- see ``yaw_across``, which is derived from the
 path's heading and not from where the car happens to wait.  That puts the
-board's width across the lane and its 4 in of depth along it.  Centred on the
+board's width across the lane and its 4 in of depth along it.  Centered on the
 lane edge, half the board would be in the path, so it sits half a width
 outboard: inner end flush with the edge, body where the wall was -- hence the
 bales moving.  ``clear_bales`` slides the one bale it displaces along the wall
@@ -45,7 +45,7 @@ Two constraints are left, and both are slack now:
 * The sight line from the camera, only 8 in off the ground, has to clear the
   14 in bale wall it grazes on the way.  It used to pass 24 mm over the bales,
   because the signal was out beyond the wall and the ray had to climb the
-  whole way; from inside the lane it clears them by a third of a metre.
+  whole way; from inside the lane it clears them by a third of a meter.
 
 ``scripts/check_signal_sightline.py`` re-checks both against the generated
 worlds, along with the placement itself.
@@ -90,7 +90,7 @@ RED_ANGLE = 0.0
 GREEN_ANGLE = math.pi / 2
 
 # Gazebo topic the joint setpoint arrives on.  simulation.launch.py bridges it
-# to std_msgs/Float64 under the same name, so the randomiser can publish to it
+# to std_msgs/Float64 under the same name, so the randomizer can publish to it
 # as an ordinary ROS topic.
 COMMAND_TOPIC = "/start_signal/arm"
 
@@ -110,7 +110,7 @@ def yaw_across(heading: float) -> float:
 
     Square across the path, and deliberately not aimed at the point the car
     waits at.  The two are not the same thing: the board stands off to the
-    side of a 32 in lane, so a car on the centreline is a good 16 degrees off
+    side of a 32 in lane, so a car on the centerline is a good 16 degrees off
     the perpendicular, and aiming at it would cant the board, its arms and its
     footprint by that much.  The sign on the course stands square to the path,
     and a signal 8 ft away is read the same either way.
@@ -124,11 +124,11 @@ def position(
     """Where the signal stands, from the start line and the lane's inner edge.
 
     `line` is a point on the start/finish line, `heading` the direction the car
-    drives away from it, and `lane_edge` the distance from the lane centreline
+    drives away from it, and `lane_edge` the distance from the lane centerline
     to the inner edge of the bale border on the car's left -- which is the side
     the drawing puts the signal on, on both courses.
 
-    The board is centred half a width outboard of that edge, so its inner end
+    The board is centered half a width outboard of that edge, so its inner end
     finishes flush with the edge and none of it reaches into the path.
     """
     forward = (math.cos(heading), math.sin(heading))
@@ -160,10 +160,10 @@ def slide_clear(
 ) -> float:
     """How far to slide `bale` along its own length to get it out of `frame`.
 
-    Signed, in metres, and zero when the two are already apart.  Both boxes are
+    Signed, in meters, and zero when the two are already apart.  Both boxes are
     (x, y, yaw) with (length, width): a bale can only move along the wall it is
     part of, so this is the separating-axis overlap divided by how much of that
-    axis the slide direction covers, minimised over the four axes.
+    axis the slide direction covers, minimized over the four axes.
     """
     slide = box_axes(bale[2])[0]
     best = None
@@ -207,7 +207,7 @@ def clear_bales(
     direction its wall runs -- by the least that gets it clear, which leaves
     the wall continuous and the board's 4 in of depth standing in the gap.
 
-    Sliding a bale into its neighbour is not checked for: the walls are laid
+    Sliding a bale into its neighbor is not checked for: the walls are laid
     with the bales already overlapping by an inch or two, and
     check_signal_sightline.py is what confirms the result clears the signal.
     """
@@ -315,7 +315,7 @@ def layout_block(
     return (
         f"{indent}start_signal:\n"
         f"{indent}  # Joint setpoint topic, bridged from Gazebo by\n"
-        f"{indent}  # simulation.launch.py.  The randomiser ramps the setpoint\n"
+        f"{indent}  # simulation.launch.py.  The randomizer ramps the setpoint\n"
         f"{indent}  # across it rather than commanding the far end, so the arm\n"
         f"{indent}  # turns at a stated rate instead of as fast as it can.\n"
         f"{indent}  topic: {COMMAND_TOPIC}\n"

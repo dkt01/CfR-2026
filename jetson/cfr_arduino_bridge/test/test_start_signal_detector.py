@@ -1,8 +1,8 @@
-"""Tests for the start signal detector's colour decision and its latch.
+"""Tests for the start signal detector's color decision and its latch.
 
-The frames here are synthetic, built from the diffuse colours the two worlds
+The frames here are synthetic, built from the diffuse colors the two worlds
 actually use, so they run with no camera, no simulator and no ROS.  What they
-cannot check is that Gazebo renders those colours where this expects them;
+cannot check is that Gazebo renders those colors where this expects them;
 `scripts/check_start_signal.py` does that against a running simulation.
 
 The course is outdoors, so a synthetic frame in the simulator's flat lighting
@@ -30,10 +30,10 @@ _spec.loader.exec_module(detector)
 
 WIDTH, HEIGHT = 640, 360
 
-# The worlds' diffuse colours, in 8-bit.  Every one of these lands in frame
+# The worlds' diffuse colors, in 8-bit.  Every one of these lands in frame
 # from the start line, so the detector has to pick the arms out from among
 # them rather than merely off a black background.
-SKY = (128, 128, 128)  # no sky model; the background renders flat grey
+SKY = (128, 128, 128)  # no sky model; the background renders flat gray
 GROUND = (41, 64, 33)  # 0.16 0.25 0.13, the ground plane
 BALE = (184, 122, 31)  # 0.72 0.48 0.12, 202 of them on the speed course
 BOARD = (135, 206, 235)  # 0.53 0.81 0.92, the signal's own board
@@ -50,7 +50,7 @@ FOLIAGE = (70, 110, 60)
 
 # Where the arm lands from the start line.  Both courses stand the signal 8 ft
 # down a 32 in lane, which puts the arm about 11 degrees off the lane axis and
-# 10 degrees up, 2.9 m away: 42 px left of centre for a camera with a
+# 10 degrees up, 2.9 m away: 42 px left of center for a camera with a
 # 110 degree field -- left, because a positive bearing is to port (REP-103)
 # and image x grows to starboard -- and 41 px above it.  Measured through the
 # simulated camera the red arm lands at (278, 139) on the obstacle course and
@@ -87,7 +87,7 @@ def arm(colour, centre=(ARM_X, ARM_Y), size=ARM_SIZE) -> np.ndarray:
 
 
 def shirt(frame, colour=SHIRT_RED) -> np.ndarray:
-    """Somebody standing beside the course in a shirt the signal's colour."""
+    """Somebody standing beside the course in a shirt the signal's color."""
     return patch(frame, colour, SHIRT_AT, SHIRT_SIZE)
 
 
@@ -135,15 +135,15 @@ def states(observations):
     return [observation.state for observation in observations]
 
 
-# --------------------------------------------------------------------- colour
+# --------------------------------------------------------------------- color
 
 
 def test_world_colours_are_where_the_bands_say_they_are():
-    """The hue the bands are drawn around, for each colour in the worlds."""
+    """The hue the bands are drawn around, for each color in the worlds."""
     colours = np.array([[SKY, GROUND, BALE, BOARD, ARM_RED, ARM_GREEN]], dtype=np.uint8)
     hue, saturation, _value = detector.hsv(colours)
     assert hue[0].tolist() == pytest.approx([0, 105, 36, 197, 1.5, 130], abs=1.0)
-    # Grey has no hue at all, which is why saturation and not hue is what
+    # Gray has no hue at all, which is why saturation and not hue is what
     # excludes it.
     assert saturation[0].tolist() == pytest.approx(
         [0.0, 0.48, 0.83, 0.43, 0.92, 0.85], abs=0.02
@@ -179,7 +179,7 @@ def test_red_arm_reads_red_where_it_stands():
     assert observation.red.pixels == ARM_SIZE[0] * ARM_SIZE[1]
     assert observation.position == pytest.approx((ARM_X, ARM_Y), abs=1.0)
     assert observation.green.pixels == 0
-    # It fits inside one window and there is nothing else of its colour
+    # It fits inside one window and there is nothing else of its color
     # around it, which is what says it is an arm and not part of something.
     assert observation.red.spread == pytest.approx(1.0)
 
@@ -270,7 +270,7 @@ def test_thresholds_can_be_loosened_or_tightened():
 def test_a_backlit_arm_is_still_read():
     """The sun behind the signal: the arm's face is in shade, under glare.
 
-    This is the case the colour floors exist for.  Saturation is what glare
+    This is the case the color floors exist for.  Saturation is what glare
     costs, so the bar for it is set low and an absolute chroma floor keeps
     the noise out instead -- the arm here has lost four fifths of its light
     and over half its saturation, and still reads red.
@@ -357,7 +357,7 @@ def test_a_hedge_is_not_a_green_arm():
 
 
 def test_a_shirt_does_not_hide_the_arm_behind_it():
-    """The signal has to be found in spite of a bigger patch of its own colour.
+    """The signal has to be found in spite of a bigger patch of its own color.
 
     Taking the densest cluster in frame and stopping there would report the
     shirt: it is 576 px against the arm's 336.  Several candidates are
@@ -436,7 +436,7 @@ def test_the_sun_coming_round_behind_the_signal_does_not_lose_it():
 
 
 def test_the_relaxed_floors_do_not_let_the_box_read_anything_at_all():
-    """Relaxing the colour floors inside the box does not relax the rest.
+    """Relaxing the color floors inside the box does not relax the rest.
 
     Straw is the thing nearest the red band with something to spare, and the
     bales are right under the signal: 20 rows of them cross the box the
@@ -722,7 +722,7 @@ def test_the_focus_follows_the_signal_and_is_dropped_when_it_goes():
 
 # One sweep through the simulated camera at 15 Hz, from
 # scripts/check_start_signal.py: seconds after the sweep was commanded, and
-# the pixels of each colour in the densest window.  Both arms are in frame
+# the pixels of each color in the densest window.  Both arms are in frame
 # for most of it, which is the shape the latch has to read: they are 90
 # degrees apart on one pivot, so they trade projected area and the total
 # stays near 250 px.
@@ -916,7 +916,7 @@ def test_a_blob_uses_up_no_candidates_and_is_reported_on_its_own():
 
 
 def test_a_clusters_spread_measures_what_surrounds_it():
-    """An arm inside its window spreads by 1; a hillside of colour by 4.
+    """An arm inside its window spreads by 1; a hillside of color by 4.
 
     Four and not the nine the surrounding box holds, because the densest
     window lands on a corner of a big blob rather than in the middle of it --
@@ -943,7 +943,7 @@ def test_observations_describe_themselves_for_a_log_line():
     assert f"red at ({ARM_X}, {ARM_Y}), red 180/180 px" in str(observed(detector.RED))
     assert str(observed(detector.UNKNOWN)).startswith("unknown, red 0/0 px")
     ignored = classify(shirt(scene()))
-    assert "red ignored (the colour spreads" in str(ignored)
+    assert "red ignored (the color spreads" in str(ignored)
 
 
 def test_the_transition_distance_is_measured_in_pixels():

@@ -23,7 +23,7 @@ uint8 state
 # up late still receives it because ~/go is transient local.
 bool go
 
-# Pixels of signal colour in the densest cluster_window-sized window of the
+# Pixels of signal color in the densest cluster_window-sized window of the
 # searched area, which is what the min_pixels threshold is applied to.  Both
 # are reported whatever the state, including on an UNKNOWN frame: "8 px
 # against a threshold of 12" is what tuning this at the course needs.
@@ -33,12 +33,12 @@ uint16 green_pixels
 # Everything matching in the searched area, cluster or not -- the region of
 # interest, or the box around the signal once it has been found.  Much larger
 # than the counts above means something else in frame shares the signal's
-# colour, which is expected outdoors and is why a candidate has to be
+# color, which is expected outdoors and is why a candidate has to be
 # arm-sized and in the right place rather than merely the right hue.
 uint16 red_total
 uint16 green_total
 
-# Centre of the winning cluster, in full-frame pixels whatever the region of
+# Center of the winning cluster, in full-frame pixels whatever the region of
 # interest was, so it can be compared against a camera_info projection.  Both
 # are -1 when the state is UNKNOWN.
 float32 x
@@ -52,7 +52,7 @@ float32 y
 bool armed
 
 # Where the detector believes the signal is, in full-frame pixels: the place
-# it is watching for the transition, which it reads on relaxed colour
+# it is watching for the transition, which it reads on relaxed color
 # thresholds because the position is already known.  Both are -1 until the
 # signal has been found.
 float32 lock_x
