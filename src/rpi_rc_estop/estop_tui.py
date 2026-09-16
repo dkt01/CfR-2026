@@ -122,7 +122,7 @@ def render_status(robotState: RobotState, controllerState: ControllerState) -> T
     table.add_row("TX DATA", robotState.tx_message.hex(" "))
     table.add_row("STEERING OUT", f"{robotState.steering_output_us} us")
     table.add_row("THROTTLE OUT", f"{robotState.throttle_output_us} us")
-    # Colour tracks cell voltage on a 3S pack, not the scaled level, so the
+    # Color tracks cell voltage on a 3S pack, not the scaled level, so the
     # thresholds stay meaningful if the reported endpoints are ever retuned.
     if robotState.battery_mv == 0:
         batteryText = "[grey58]--[/grey58]"

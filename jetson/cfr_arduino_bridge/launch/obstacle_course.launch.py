@@ -2,7 +2,7 @@
 
     ros2 launch cfr_arduino_bridge obstacle_course.launch.py
 
-Adds the randomiser and its layout to the shared simulation bringup.  See
+Adds the randomizer and its layout to the shared simulation bringup.  See
 speed_course.launch.py for the other course.
 """
 

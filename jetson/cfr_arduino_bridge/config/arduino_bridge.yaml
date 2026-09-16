@@ -40,11 +40,11 @@ arduino_bridge:
     # whatever pinion is fitted.  Tire is the Traxxas 6764 Gravix 2.8" at a
     # nominal 4.5" outer diameter - calibrate with a measured roll-out.
     spur_to_wheel_ratio: 2.85
-    tire_diameter: 0.1143   # metres
+    tire_diameter: 0.1143   # meters
 
 cmd_vel_to_drive:
   ros__parameters:
-    wheelbase: 0.324               # Traxxas Slash 4X4, metres
+    wheelbase: 0.324               # Traxxas Slash 4X4, meters
     max_speed: 8.0                 # m/s that maps to full throttle
     max_steering_angle: 0.40       # rad at full lock
     min_speed_for_steering: 0.3    # floor speed for the bicycle model
@@ -83,3 +83,58 @@ path_follower:
     odom_timeout: 0.5          # s, abort the path if odometry goes stale
     max_segment_duration: 20.0 # s, abort a segment that hasn't completed (wheel slip, stuck odometry)
     keep_auto_active_when_idle: true
+
+start_signal_detector:
+  ros__parameters:
+    # Where in the frame to look, as fractions [x_min, y_min, x_max, y_max].
+    # The arm stands above the camera's horizon, which for a level camera is
+    # the middle row, and below that is ground -- turf and dirt, close enough
+    # to the green band to be worth not looking at.  Narrowing this around
+    # where the signal actually lands is the cheapest way to make a busy
+    # course easier.
+    region: [0.0, 0.0, 1.0, 0.5]
+    # Hue in degrees, [low, high]; red wraps through 0.  Drawn to clear what
+    # an outdoor course puts in frame: skin at 20..35, straw and dry grass at
+    # 30..50, turf and foliage at 80..110, the signal's own sky blue board at
+    # 197.  Red reaches back to 338 rather than forward, because open shade
+    # is lit blue and takes red towards magenta.  The arms render at 1.5
+    # and 130.
+    red_hue: [338.0, 12.0]
+    green_hue: [115.0, 175.0]
+    # Color floors.  Chroma -- how far from gray a pixel is -- is the one
+    # that does the work, because glare behind the signal and clipping in the
+    # sun both add light to every channel, which costs saturation and leaves
+    # chroma alone; exposure scales every channel, which costs chroma and
+    # leaves saturation alone.  0.04 is about ten levels of an 8-bit channel.
+    # Saturation is then only there to reject gray, so it is low: the
+    # evidence that a candidate is the signal is its size and its place.
+    min_saturation: 0.15
+    min_chroma: 0.04
+    min_value: 0.05             # only drops what is too black to have a hue
+    # The arm is about 21 x 16 px at the 3 m both courses stand the signal
+    # at, and a good deal less part way round.  Counted within one
+    # cluster_window box, so scattered matches do not add up to an arm.
+    min_pixels: 12
+    cluster_window: 24          # px
+    # How far the same color may spread past that window before the
+    # candidate is thrown out as part of something much larger than an arm.
+    # An arm inside its window scores 1.0, one that overfills it scores its
+    # own area over the window's -- 2.3 for the 42 x 32 px the arm subtends
+    # on the ZED's 1280 x 720 -- and a shirt or a hedge scores 3.8 or more.
+    # So cluster_window above has to be about the arm's size in frame.
+    max_spread: 3.0
+    candidates: 6               # places of each color tracked per frame
+    # The fraction of the color floors that applies inside the box around a
+    # signal already found.  A known place is read on weaker evidence, which
+    # is what gets a backlit arm read; the size gates do not relax.
+    focus_relaxation: 0.6
+    confirm_frames: 2           # 133 ms at the camera's 15 Hz
+    # Frames of red in one place before it is taken for the signal.  The car
+    # stands at the line for as long as it takes, so this is free.
+    arm_frames: 5
+    require_red_first: true     # a start is a transition, not just green
+    max_transition_distance: 60.0  # px between the red arm and the green one
+    forget_frames: 30           # frames before a place that has gone is dropped
+    image_timeout: 3.0          # s without a frame before saying so
+    debug_image: false          # annotated frames on ~/debug_image, for tuning
+    debug_image_period: 0.2     # s

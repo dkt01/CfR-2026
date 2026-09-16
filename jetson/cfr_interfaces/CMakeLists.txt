@@ -10,6 +10,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/DriveCommand.msg"
   "msg/ArduinoStatus.msg"
   "msg/PathSegment.msg"
+  "msg/StartSignal.msg"
   "action/DrivePath.action"
   DEPENDENCIES std_msgs action_msgs
 )

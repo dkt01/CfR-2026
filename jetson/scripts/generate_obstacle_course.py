@@ -50,7 +50,7 @@ BALE_LENGTH = 36 * INCH
 BALE_WIDTH = 18 * INCH
 BALE_HEIGHT = 14 * INCH
 
-# The start/finish line, and the centreline of the 32 in wide start lane, in
+# The start/finish line, and the centerline of the 32 in wide start lane, in
 # DXF feet.  The world origin sits here with +x pointing the way the car
 # drives away from the line, so a path goal reads the same as it would on the
 # real course.
@@ -72,8 +72,8 @@ RAMP_UP = (75.557, 107.770, 86.432, 110.436)
 BRIDGE_DECK = (70.286, 107.770, 75.557, 110.436)
 
 # The helical ramp down.  The DXF draws it as a 270 degree bulged polyline;
-# these are the centre and the two radii that polyline resolves to, and the
-# deck height it descends from.  4 ft centreline radius and 41.5 in width in
+# these are the center and the two radii that polyline resolves to, and the
+# deck height it descends from.  4 ft centerline radius and 41.5 in width in
 # the drawing's own annotation, 11% grade, all three of which this reproduces.
 HELIX_CENTRE = (70.287, 105.153)
 HELIX_INNER_R = 2.214
@@ -87,9 +87,9 @@ DECK_THICKNESS = 0.013
 LANE_WIDTH = 32 * INCH
 RAIL_HEIGHT = 6 * INCH
 
-# Car wash arch row: the first arch sits this far from the base plate's centre
+# Car wash arch row: the first arch sits this far from the base plate's center
 # and they repeat at this pitch, both measured off the CAD assembly.  The row
-# is not centred on the plate, so the offset cannot be derived from the pitch.
+# is not centered on the plate, so the offset cannot be derived from the pitch.
 CAR_WASH_FIRST_ARCH = -0.9495
 CAR_WASH_ARCH_PITCH = 0.4572
 
@@ -127,21 +127,21 @@ HOOPS = [
 ]
 HOOP_BASE_LENGTH = 0.709
 
-# Where the start signal stands, in world metres.  The drawing does not place
-# it -- only the CAD has one -- so this is a choice, and the constraints are:
-# outside the bale walls, because both sides of the start lane are solid bale;
-# far enough down the lane to sit inside the camera's 110 degree field rather
-# than off the edge of it; and placed so the sight line from the camera, which
-# is only 8 in off the ground, clears the 14 in bale wall running between the
-# two.  That last one is the binding constraint and it wants the signal *down*
-# the lane rather than out to the side: moving it sideways buys field of view
-# but costs height at the wall, because the ray has to have finished climbing
-# by the time it gets there.  Here the ray passes 24 mm over the bales at a
-# bearing of 20 degrees and a range of 4.0 m.  Its yaw is derived so that it
-# faces the car.  See scripts/start_signal.py, which builds the models.
-SIGNAL_POSITION = (3.40, 1.40)
+# The direction the car drives away from the start line.  to_world() turns
+# the drawing so that this is +x, which is what makes a path goal read the
+# same here as it does on the real course.
+LANE_HEADING = 0.0
 
-# Pea gravel: a surface the tyres slip on, plus something for them to climb
+# Where the start signal stands, in world meters.  The drawing places it the
+# same way on both courses -- three bales down the wall from the start line,
+# in line with the inner edge of the bale border -- so this comes out of
+# start_signal.position() rather than being chosen here.  The world origin is
+# the start line, so the line is (0, 0) with LANE_HEADING, and the border's
+# inner edge is half the 32 in lane to the left.  It stands square across the
+# lane rather than aimed at the waiting car -- see start_signal.yaw_across.
+SIGNAL_POSITION = start_signal.position((0.0, 0.0), LANE_HEADING, LANE_WIDTH / 2)
+
+# Pea gravel: a surface the tires slip on, plus something for them to climb
 # over.  Gazebo has no granular physics, so the box gets a low friction lid
 # and a scatter of pebbles rather than a bed of stones.
 # Pothole board and bumps, from the CAD: 1.5 in of plywood with 0.75 in
@@ -190,7 +190,7 @@ def dxf_entities(dxf_file: Path):
 
 
 def dxf_obstacle_bales(dxf_file: Path) -> list[tuple[float, float, float]]:
-    """Straw bale centres and headings, in DXF feet and radians.
+    """Straw bale centers and headings, in DXF feet and radians.
 
     The two courses share one drawing.  The Obstacle Course is the half above
     y = 100 ft; below that is the Speed Course, which
@@ -238,7 +238,7 @@ def dxf_obstacle_bales(dxf_file: Path) -> list[tuple[float, float, float]]:
 
 
 def to_world(x_ft: float, y_ft: float) -> tuple[float, float]:
-    """DXF feet to world metres.
+    """DXF feet to world meters.
 
     A half turn about the start line, so that the direction the car leaves the
     line -- which is -x in the drawing -- becomes +x in the world.  A mirror
@@ -353,12 +353,23 @@ FOIL = "0.74 0.76 0.78 1"
 
 
 def build_bales(bales) -> str:
+    # Placed in world meters before anything is written out, because the one
+    # or two bales the start signal's board stands in have to move along the
+    # wall to clear it, and that is a world-space measurement against the
+    # board's footprint.  See start_signal.clear_bales.
+    placed = [(*to_world(x_ft, y_ft), yaw + math.pi) for x_ft, y_ft, yaw in bales]
+    cleared = start_signal.clear_bales(
+        placed, SIGNAL_POSITION, LANE_HEADING, (BALE_LENGTH, BALE_WIDTH)
+    )
+    shifted = sum(1 for before, after in zip(placed, cleared) if before != after)
+    if shifted:
+        print(f"moved {shifted} bale(s) along the wall to clear the start signal")
+
     body = ""
-    for index, (x_ft, y_ft, yaw) in enumerate(bales):
-        x, y = to_world(x_ft, y_ft)
+    for index, (x, y, yaw) in enumerate(cleared):
         body += box(
             f"bale_{index}",
-            (x, y, BALE_HEIGHT / 2, 0, 0, yaw + math.pi),
+            (x, y, BALE_HEIGHT / 2, 0, 0, yaw),
             (BALE_LENGTH, BALE_WIDTH, BALE_HEIGHT),
             STRAW,
         )
@@ -643,16 +654,16 @@ def build_helix() -> str:
     """The 270 degree ramp down, as tilted box segments.
 
     The DXF draws this as a polyline with a 270 degree bulge; resolving the
-    bulge gives the centre and the two radii above.  Segmenting it is what
+    bulge gives the center and the two radii above.  Segmenting it is what
     makes it drivable -- a decimated mesh of the CAD helix would catch the
     wheels on every triangle edge, and a single box cannot be a spiral.
 
     It is one link in a continuous path: the bridge deck feeds the top of the
     ramp, and the bottom of the ramp feeds the tunnel that runs under the
     bridge.  Both joins fall out of the drawing's own geometry -- the helix
-    centre sits one mean radius from the end of the deck, on the lane
-    centreline, and a quarter turn short of a full circle from there is the
-    tunnel's centreline -- but only if the turn runs counter-clockwise.
+    center sits one mean radius from the end of the deck, on the lane
+    centerline, and a quarter turn short of a full circle from there is the
+    tunnel's centerline -- but only if the turn runs counter-clockwise.
     """
     centre_x, centre_y = to_world(*HELIX_CENTRE)
     inner = HELIX_INNER_R * FOOT
@@ -661,7 +672,7 @@ def build_helix() -> str:
     width = outer - inner
     sweep = math.radians(HELIX_SWEEP_DEG)
     # The drawing's 90 degrees, turned by the half turn the world takes about
-    # the start line.  That lands the top of the ramp on the lane centreline
+    # the start line.  That lands the top of the ramp on the lane centerline
     # at the end of the bridge deck, which is what it has to join.
     start = math.radians(HELIX_START_DEG) + math.pi
     grade = DECK_HEIGHT / (mean_r * sweep)
@@ -673,7 +684,7 @@ def build_helix() -> str:
         # Counter-clockwise, seen from above.  That is the direction that
         # makes the ramp a path: it leaves the bridge deck heading the way the
         # car was already going, and 270 degrees later it comes out on the
-        # tunnel's centreline pointing into the mouth.  Clockwise puts the
+        # tunnel's centerline pointing into the mouth.  Clockwise puts the
         # entry backwards and the exit 8 ft the wrong side of the tunnel.
         angle = start + sweep * fraction
         height = DECK_HEIGHT * (1.0 - fraction)
@@ -707,7 +718,7 @@ def build_helix() -> str:
                 PLYWOOD,
             )
     return (
-        "    <!-- Helical ramp down: 4 ft centreline radius, 41.5 in wide, 11% grade. -->\n"
+        "    <!-- Helical ramp down: 4 ft centerline radius, 41.5 in wide, 11% grade. -->\n"
         + static_model("helix", body)
     )
 
@@ -739,7 +750,7 @@ def parking_spot(index: int) -> tuple[float, float]:
 
 
 def build_buckets() -> str:
-    """One model per bucket so the randomiser can move them independently."""
+    """One model per bucket so the randomizer can move them independently."""
     out = "    <!-- Buckets: moved at runtime by obstacle_randomizer_node. -->\n"
     for index in range(BUCKET_MAX):
         if index < len(BUCKET_NOMINAL):
@@ -792,7 +803,7 @@ def build_hoops() -> str:
 
 
 def build_start_signal() -> str:
-    return start_signal.models(SIGNAL_POSITION, VEHICLE_START[:2])
+    return start_signal.models(SIGNAL_POSITION, LANE_HEADING)
 
 
 def build_vehicle() -> str:
@@ -852,7 +863,7 @@ def build_vehicle() -> str:
 
 def build_world(dxf_file: Path) -> str:
     # Fixed seed: the pebble scatter is part of the world, not something the
-    # randomiser re-rolls, so it has to come out the same on every generate.
+    # randomizer re-rolls, so it has to come out the same on every generate.
     pebbles = random.Random(GRAVEL_SEED)
     bales = dxf_obstacle_bales(dxf_file)
     pothole_bumps = dxf_pothole_bumps(dxf_file)
@@ -925,7 +936,7 @@ def build_world(dxf_file: Path) -> str:
 
 
 def dxf_pothole_bumps(dxf_file: Path) -> list[tuple[float, float]]:
-    """Bump centres on the OBJECTS layer, in DXF feet.
+    """Bump centers on the OBJECTS layer, in DXF feet.
 
     Bumps and holes are both drawn as a pair of concentric circles inside the
     pothole board, and both are the 6 in feature the drawing annotates.  What
@@ -957,7 +968,7 @@ def dxf_pothole_bumps(dxf_file: Path) -> list[tuple[float, float]]:
 
 
 def build_layout_yaml() -> str:
-    """Randomisation bounds, in world metres, for obstacle_randomizer_node.
+    """Randomization bounds, in world meters, for obstacle_randomizer_node.
 
     Shaped as a ROS 2 parameter file, which means nested maps of scalars and
     arrays only.  A list of hoops would not load, so the hoops are named in
@@ -972,7 +983,7 @@ def build_layout_yaml() -> str:
         world_x, world_y = to_world(*bucket)
         nominal += f"          bucket_{index}: [{world_x:.4f}, {world_y:.4f}]" + "\n"
 
-    signal = start_signal.layout_block(SIGNAL_POSITION, VEHICLE_START[:2])
+    signal = start_signal.layout_block(SIGNAL_POSITION, LANE_HEADING)
     names = ", ".join(f"hoop_{index}" for index in range(len(HOOPS)))
     hoops = ""
     for index, (fixed, travel_from, travel_to, axis, nominal_at) in enumerate(HOOPS):
@@ -1000,8 +1011,8 @@ def build_layout_yaml() -> str:
 
     return f"""# Generated by generate_obstacle_course.py -- do not edit by hand.
 #
-# Bounds for the elements the course varies between runs, in world metres.
-# The randomiser reads them from here so that it and the world cannot drift
+# Bounds for the elements the course varies between runs, in world meters.
+# The randomizer reads them from here so that it and the world cannot drift
 # apart when the DXF changes.
 obstacle_randomizer:
   ros__parameters:
