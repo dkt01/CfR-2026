@@ -6,8 +6,8 @@ Traxxas Slash 4X4 through the Arduino over the USB serial link described in the
 
 | Package | Contents |
 | ------- | -------- |
-| [`cfr_interfaces`](cfr_interfaces/) | `DriveCommand`, `ArduinoStatus`, `PathSegment` messages; `DrivePath` action |
-| [`cfr_arduino_bridge`](cfr_arduino_bridge/) | `arduino_bridge_node`, `cmd_vel_to_drive_node`, `path_follower_node`, `obstacle_randomizer_node` |
+| [`cfr_interfaces`](cfr_interfaces/) | `DriveCommand`, `ArduinoStatus`, `PathSegment`, `StartSignal` messages; `DrivePath` action |
+| [`cfr_arduino_bridge`](cfr_arduino_bridge/) | `arduino_bridge_node`, `cmd_vel_to_drive_node`, `path_follower_node`, `start_signal_detector_node`, `obstacle_randomizer_node` |
 
 ## Gazebo Simulation
 
@@ -121,17 +121,29 @@ rate is what the node says it is. `signal_sweep_rate` (degrees per second,
 default 90) changes it, and 0 commands the far end directly for a scripted
 test that does not want to wait.
 
-Through a camera, one sweep looks like this -- the arm region goes red, to
-nothing at all as both arms pass edge-on at 45 degrees, to green:
+Through the camera, one sweep looks like this -- the counts
+`start_signal_detector_node` reports, from
+[`scripts/check_start_signal.py`](scripts/check_start_signal.py) against the
+speed course:
 
 ```
-   t(s)   red px   green px
-   0.77     132         0
-   1.03      35         0
-   1.25       0         0     <- 45 degrees, neither arm facing the camera
-   1.48       0        34
-   1.81       0       131
+   t(s)   red px   green px   reads
+   0.00     133         0     red
+   0.33     132        10     red
+   0.46     131        42     red
+   0.53     123        61     red
+   0.66      84        94     green
+   0.73      58       113     green   <- ~/go latches here
+   0.99       0       133     green
 ```
+
+The two arms are 90 degrees apart on one pivot, so through the turn they
+trade projected area rather than both disappearing: the total stays near 133
+px and the verdict is whichever count is ahead. With a tighter saturation
+floor than the detector's the crossover becomes a hole instead -- both arms
+wash out around 45 degrees and a frame or two reads as neither -- so the
+detector has to cope with both shapes, and does: an unconfirmed frame holds
+its counters rather than resetting them.
 
 Stepping the model's pose would have kept one mechanism for everything and
 was tried first. It does not work: each `set_pose` is a `gz service`
@@ -403,6 +415,99 @@ a path goal is accepted.
 The follower's odometry initialization and reset messages are in
 `/tmp/cfr_path_following/path_follower.log` during a TUI session.
 
+### `start_signal_detector_node`
+
+Watches the camera for the start signal -- a red arm that turns to a green one
+on a common pivot, in about a second -- and latches it, so the driver has one
+thing to wait on and no camera code of its own.
+
+| Interface | Type | Direction |
+| --------- | ---- | --------- |
+| `image` | `sensor_msgs/Image` | subscribed (remapped to `/zed/zed_node/left/image_rect_color`) |
+| `~/go` | `std_msgs/Bool` | published, transient local, latched |
+| `~/state` | `cfr_interfaces/StartSignal` | published once per frame |
+| `~/reset` | `std_srvs/Trigger` | wait for another start |
+| `~/debug_image` | `sensor_msgs/Image` | published while `debug_image` is true |
+
+`/start_signal_detector/go` is **the trigger**. It is published false once at
+startup and true once the start is confirmed, on a transient local publisher,
+so a driver launched after the signal turned still receives it -- and one
+launched before gets the false, which is the difference between "not yet" and
+"no detector running". Waiting on it is one subscription:
+
+```bash
+ros2 topic echo /start_signal_detector/go
+ros2 service call /start_signal_detector/reset std_srvs/srv/Trigger   # next run
+```
+
+`/start_signal_detector/state` is the running commentary -- what this frame
+shows, how many pixels of each colour, and where. A driver that must stop on a
+red flag mid-run watches that rather than `~/go`, because `~/go` deliberately
+stays up once a run has started: a single mis-hued frame must not be able to
+retract a start that has already happened.
+
+A start is a red arm that *becomes* green, not merely green in frame. Four
+things stand between "something coloured" and releasing the car, because at
+the 4 m both courses stand the signal at the arm is only about 15 x 12 px of a
+640 x 360 frame:
+
+* **Above the horizon only.** The arm is 32 in up and the camera 8 in up, so
+  the arm is above the camera's horizon from anywhere on the course -- and for
+  a level camera that horizon is the middle row of the image. `region`
+  searches the top half, which is also all of the dark green ground plane
+  excluded.
+* **Hue bands, not channel comparisons.** The bands stop short of every other
+  saturated hue either course puts in frame: the straw bales at 36 degrees,
+  the ground at 105, the signal's own sky blue board at 197, the car wash's
+  blue ribbons at 212. The arms themselves render at 1.5 and 130.
+* **A cluster, not a count.** The threshold applies to the densest
+  `cluster_window` box, so scattered matches across the region never add up to
+  an arm the way a raw pixel count would.
+* **Green where red was.** Both arms turn about one pivot, so the transition
+  happens in one place, within `max_transition_distance`. This is what stops
+  the car wash's twenty red ribbons -- the same red as the arms -- from
+  pairing with a green somewhere else in frame.
+
+Then `confirm_frames` frames of it, which at the camera's 15 Hz costs 133 ms.
+Measured against both courses, `~/go` latches about 0.7 s into the 1 s sweep,
+on 90 to 120 px of green; see the sweep table above.
+
+Tuning is live: `ros2 param set` on any threshold rebuilds the classifier
+without disturbing the latch, and a value that does not make sense is refused
+with a reason rather than quietly clamped.
+
+```bash
+ros2 launch cfr_arduino_bridge start_signal.launch.py debug:=true
+ros2 param set /start_signal_detector min_saturation 0.35
+ros2 run rqt_image_view rqt_image_view /start_signal_detector/debug_image
+```
+
+`debug:=true` publishes each frame with the region and the winning cluster
+drawn on it, which is how the bands get moved to fit the real signal. The
+defaults live in
+[`config/arduino_bridge.yaml`](cfr_arduino_bridge/config/arduino_bridge.yaml)
+with a note on each.
+
+The decision itself is in
+[`start_signal_detector.py`](cfr_arduino_bridge/src/start_signal_detector.py),
+free of ROS like `path_geometry` on the C++ side, and covered by
+`test_start_signal_detector` against synthetic frames built from the worlds'
+own colours. Nothing in a synthetic frame can show that Gazebo renders those
+colours where the geometry says it will, so
+[`scripts/check_start_signal.py`](scripts/check_start_signal.py) drives a
+running simulation -- red, turn it green, wait for the trigger -- and prints
+the frames it took:
+
+```bash
+LIBGL_ALWAYS_SOFTWARE=1 ros2 launch cfr_arduino_bridge speed_course.launch.py sensors:=true
+./scripts/check_start_signal.py            # exits non-zero if a start is missed
+```
+
+Both course launches start the detector themselves with `sensors:=true`; on
+the car it comes up with `start_signal.launch.py` alongside the ZED. It needs
+no GPU: llvmpipe renders the camera at about 5 Hz, which still puts three or
+four frames inside the turn.
+
 ## Wire format
 
 Both directions are ASCII, comma separated, newline terminated at 115200 baud.
@@ -501,8 +606,10 @@ clone rather than a sync, add `--symlink-install` to pick up edits to the launch
 file and config without rebuilding.
 
 `test_protocol` covers the wire format, `test_serial_port` runs the port
-against a pseudo terminal, and `test_path_geometry` covers `path_follower_node`'s
-control law -- all three pass with no Arduino, camera, or car attached.
+against a pseudo terminal, `test_path_geometry` covers `path_follower_node`'s
+control law, and `test_start_signal_detector` covers
+`start_signal_detector_node`'s colour decision against synthetic frames -- all
+of them pass with no Arduino, camera, or car attached.
 
 Built executables land in `build/cfr_arduino_bridge/bin/` and are installed to
 both `install/cfr_arduino_bridge/bin/` and `install/cfr_arduino_bridge/lib/cfr_arduino_bridge/`.

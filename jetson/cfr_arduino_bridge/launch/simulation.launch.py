@@ -257,6 +257,19 @@ def generate_launch_description():
         ],
     )
 
+    # Only with the camera rendered, since it has nothing to read otherwise.
+    # The arm turns over about a second and the detector wants a couple of
+    # frames of it, so llvmpipe's ~5 Hz is enough; see the README.
+    start_signal_detector = Node(
+        package="cfr_arduino_bridge",
+        executable="start_signal_detector_node.py",
+        name="start_signal_detector",
+        output="screen",
+        parameters=[LaunchConfiguration("params_file"), {"use_sim_time": True}],
+        remappings=[("image", "/zed/zed_node/left/image_rect_color")],
+        condition=IfCondition(LaunchConfiguration("sensors")),
+    )
+
     cmd_vel_to_drive = Node(
         package="cfr_arduino_bridge",
         executable="cmd_vel_to_drive_node",
@@ -292,6 +305,7 @@ def generate_launch_description():
             randomizer,
             command_bridge,
             gazebo_bridge,
+            start_signal_detector,
             cmd_vel_to_drive,
             path_follower,
         ]

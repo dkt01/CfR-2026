@@ -83,3 +83,28 @@ path_follower:
     odom_timeout: 0.5          # s, abort the path if odometry goes stale
     max_segment_duration: 20.0 # s, abort a segment that hasn't completed (wheel slip, stuck odometry)
     keep_auto_active_when_idle: true
+
+start_signal_detector:
+  ros__parameters:
+    # Where in the frame to look, as fractions [x_min, y_min, x_max, y_max].
+    # The arm stands above the camera's horizon, which for a level camera is
+    # the middle row, and below that is ground -- dark green in the simulator.
+    region: [0.0, 0.0, 1.0, 0.5]
+    # Hue in degrees, [low, high]; red wraps through 0.  The bands stop short
+    # of the straw bales at 36, the ground plane at 105 and the signal's own
+    # sky blue board at 197.  The arms render at 1.5 and 130.
+    red_hue: [345.0, 15.0]
+    green_hue: [110.0, 170.0]
+    min_saturation: 0.45        # excludes the bales' washed-out lit faces
+    min_value: 0.15             # excludes shadow, which keeps its hue
+    # The arm is about 15 x 12 px at the 4 m both courses stand the signal at,
+    # and about 35 px part way round.  Counted within one cluster_window box,
+    # so scattered matches do not add up to an arm.
+    min_pixels: 12
+    cluster_window: 24          # px
+    confirm_frames: 2           # 133 ms at the camera's 15 Hz
+    require_red_first: true     # a start is a transition, not just green
+    max_transition_distance: 60.0  # px between the red arm and the green one
+    image_timeout: 3.0          # s without a frame before saying so
+    debug_image: false          # annotated frames on ~/debug_image, for tuning
+    debug_image_period: 0.2     # s

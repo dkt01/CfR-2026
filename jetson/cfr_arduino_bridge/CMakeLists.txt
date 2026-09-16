@@ -74,6 +74,14 @@ install(TARGETS arduino_bridge_node cmd_vel_to_drive_node sim_vehicle_node path_
 )
 
 install(PROGRAMS src/teleport_api.py src/obstacle_randomizer_node.py
+  src/start_signal_detector_node.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+# start_signal_detector_node.py imports this from beside itself, so it is
+# installed into the same directory -- but as a module rather than a program,
+# since it has no shebang and is not meant to be run.
+install(FILES src/start_signal_detector.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -90,6 +98,7 @@ install(DIRECTORY config launch meshes worlds
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
+  find_package(ament_cmake_pytest REQUIRED)
 
   ament_add_gtest(test_protocol test/test_protocol.cpp)
   target_link_libraries(test_protocol cfr_arduino_protocol)
@@ -104,6 +113,10 @@ if(BUILD_TESTING)
   # Header only; linking the protocol library just brings its include path.
   ament_add_gtest(test_drivetrain test/test_drivetrain.cpp)
   target_link_libraries(test_drivetrain cfr_arduino_protocol)
+
+  # start_signal_detector_node's colour decision, which the test imports
+  # straight out of src/ -- it is free of ROS, so it needs no workspace.
+  ament_add_pytest_test(test_start_signal_detector test/test_start_signal_detector.py)
 endif()
 
 ament_export_include_directories(include)

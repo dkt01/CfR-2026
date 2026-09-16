@@ -162,6 +162,11 @@ red, and `obstacle_randomizer_node` turns it to green at 90 degrees a second
 while the simulation runs -- along with the obstacle course's buckets and
 hoops -- so a layout can be re-drawn and a start signalled without a restart.
 
+`start_signal_detector_node` watches the camera for that turn and latches it
+on `/start_signal_detector/go`, which is what an autonomous run waits on in
+place of the Arduino's Manual Start bit. It runs against the simulated camera
+with `sensors:=true` and against the ZED on the car.
+
 See [jetson/README.md](jetson/README.md#gazebo-simulation) for the launch
 arguments, the randomiser's services, and how to regenerate the worlds and
 meshes when the drawing or the CAD changes.
