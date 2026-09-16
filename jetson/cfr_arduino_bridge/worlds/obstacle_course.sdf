@@ -167,8 +167,8 @@
       <visual name="bale_69_visual"><pose>0.3550 0.6369 0.1778 0.0000 0.0000 6.2832</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
       <collision name="bale_70_collision"><pose>1.2250 0.6369 0.1778 0.0000 0.0000 6.2832</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry></collision>
       <visual name="bale_70_visual"><pose>1.2250 0.6369 0.1778 0.0000 0.0000 6.2832</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
-      <collision name="bale_71_collision"><pose>2.0949 0.6369 0.1778 0.0000 0.0000 6.2832</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry></collision>
-      <visual name="bale_71_visual"><pose>2.0949 0.6369 0.1778 0.0000 0.0000 6.2832</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
+      <collision name="bale_71_collision"><pose>1.9262 0.6369 0.1778 0.0000 0.0000 6.2832</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry></collision>
+      <visual name="bale_71_visual"><pose>1.9262 0.6369 0.1778 0.0000 0.0000 6.2832</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
       <collision name="bale_72_collision"><pose>2.9649 0.6369 0.1778 0.0000 0.0000 6.2832</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry></collision>
       <visual name="bale_72_visual"><pose>2.9649 0.6369 0.1778 0.0000 0.0000 6.2832</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
       <collision name="bale_73_collision"><pose>3.8348 0.6369 0.1778 0.0000 0.0000 6.2832</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry></collision>
@@ -826,14 +826,14 @@
     </model>
     <!-- Start signal.  The arms turn on a revolute joint, commanded
          over /start_signal/arm; see scripts/start_signal.py. -->
-    <model name="start_signal_frame"><static>true</static><pose>3.4000 1.4000 0 0 0 -1.24175</pose>
+    <model name="start_signal_frame"><static>true</static><pose>2.4384 0.8129 0 0 0 -1.57080</pose>
       <link name="link">
         <visual name="frame_visual"><pose>0.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/start_signal_frame.stl</uri></mesh></geometry><material><diffuse>0.53 0.81 0.92 1</diffuse></material></visual>
         <collision name="post_collision"><pose>0 0 0.61 0 0 0</pose><geometry><box><size>0.813 0.10 1.219</size></box></geometry></collision>
       </link>
     </model>
     <model name="start_signal_arms">
-      <pose>3.4000 1.4000 0.8130 0 0 -1.24175</pose>
+      <pose>2.4384 0.8129 0.8130 0 0 -1.57080</pose>
       <link name="pivot">
         <inertial><mass>0.1</mass><inertia><ixx>0.001</ixx><iyy>0.001</iyy><izz>0.001</izz></inertia></inertial>
       </link>

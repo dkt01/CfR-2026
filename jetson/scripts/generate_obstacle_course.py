@@ -127,19 +127,19 @@ HOOPS = [
 ]
 HOOP_BASE_LENGTH = 0.709
 
-# Where the start signal stands, in world metres.  The drawing does not place
-# it -- only the CAD has one -- so this is a choice, and the constraints are:
-# outside the bale walls, because both sides of the start lane are solid bale;
-# far enough down the lane to sit inside the camera's 110 degree field rather
-# than off the edge of it; and placed so the sight line from the camera, which
-# is only 8 in off the ground, clears the 14 in bale wall running between the
-# two.  That last one is the binding constraint and it wants the signal *down*
-# the lane rather than out to the side: moving it sideways buys field of view
-# but costs height at the wall, because the ray has to have finished climbing
-# by the time it gets there.  Here the ray passes 24 mm over the bales at a
-# bearing of 20 degrees and a range of 4.0 m.  Its yaw is derived so that it
-# faces the car.  See scripts/start_signal.py, which builds the models.
-SIGNAL_POSITION = (3.40, 1.40)
+# The direction the car drives away from the start line.  to_world() turns
+# the drawing so that this is +x, which is what makes a path goal read the
+# same here as it does on the real course.
+LANE_HEADING = 0.0
+
+# Where the start signal stands, in world metres.  The drawing places it the
+# same way on both courses -- three bales down the wall from the start line,
+# in line with the inner edge of the bale border -- so this comes out of
+# start_signal.position() rather than being chosen here.  The world origin is
+# the start line, so the line is (0, 0) with LANE_HEADING, and the border's
+# inner edge is half the 32 in lane to the left.  It stands square across the
+# lane rather than aimed at the waiting car -- see start_signal.yaw_across.
+SIGNAL_POSITION = start_signal.position((0.0, 0.0), LANE_HEADING, LANE_WIDTH / 2)
 
 # Pea gravel: a surface the tyres slip on, plus something for them to climb
 # over.  Gazebo has no granular physics, so the box gets a low friction lid
@@ -353,12 +353,23 @@ FOIL = "0.74 0.76 0.78 1"
 
 
 def build_bales(bales) -> str:
+    # Placed in world metres before anything is written out, because the one
+    # or two bales the start signal's board stands in have to move along the
+    # wall to clear it, and that is a world-space measurement against the
+    # board's footprint.  See start_signal.clear_bales.
+    placed = [(*to_world(x_ft, y_ft), yaw + math.pi) for x_ft, y_ft, yaw in bales]
+    cleared = start_signal.clear_bales(
+        placed, SIGNAL_POSITION, LANE_HEADING, (BALE_LENGTH, BALE_WIDTH)
+    )
+    shifted = sum(1 for before, after in zip(placed, cleared) if before != after)
+    if shifted:
+        print(f"moved {shifted} bale(s) along the wall to clear the start signal")
+
     body = ""
-    for index, (x_ft, y_ft, yaw) in enumerate(bales):
-        x, y = to_world(x_ft, y_ft)
+    for index, (x, y, yaw) in enumerate(cleared):
         body += box(
             f"bale_{index}",
-            (x, y, BALE_HEIGHT / 2, 0, 0, yaw + math.pi),
+            (x, y, BALE_HEIGHT / 2, 0, 0, yaw),
             (BALE_LENGTH, BALE_WIDTH, BALE_HEIGHT),
             STRAW,
         )
@@ -792,7 +803,7 @@ def build_hoops() -> str:
 
 
 def build_start_signal() -> str:
-    return start_signal.models(SIGNAL_POSITION, VEHICLE_START[:2])
+    return start_signal.models(SIGNAL_POSITION, LANE_HEADING)
 
 
 def build_vehicle() -> str:
@@ -972,7 +983,7 @@ def build_layout_yaml() -> str:
         world_x, world_y = to_world(*bucket)
         nominal += f"          bucket_{index}: [{world_x:.4f}, {world_y:.4f}]" + "\n"
 
-    signal = start_signal.layout_block(SIGNAL_POSITION, VEHICLE_START[:2])
+    signal = start_signal.layout_block(SIGNAL_POSITION, LANE_HEADING)
     names = ", ".join(f"hoop_{index}" for index in range(len(HOOPS)))
     hoops = ""
     for index, (fixed, travel_from, travel_to, axis, nominal_at) in enumerate(HOOPS):

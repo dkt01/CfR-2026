@@ -97,9 +97,9 @@ start_signal_detector:
     green_hue: [110.0, 170.0]
     min_saturation: 0.45        # excludes the bales' washed-out lit faces
     min_value: 0.15             # excludes shadow, which keeps its hue
-    # The arm is about 15 x 12 px at the 4 m both courses stand the signal at,
-    # and about 35 px part way round.  Counted within one cluster_window box,
-    # so scattered matches do not add up to an arm.
+    # The arm is about 21 x 16 px at the 3 m both courses stand the signal
+    # at, and a good deal less part way round.  Counted within one
+    # cluster_window box, so scattered matches do not add up to an arm.
     min_pixels: 12
     cluster_window: 24          # px
     confirm_frames: 2           # 133 ms at the camera's 15 Hz

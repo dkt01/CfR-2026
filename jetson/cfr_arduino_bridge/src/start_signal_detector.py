@@ -11,19 +11,23 @@ edge-on halfway through the turn.  Through the simulated camera one sweep looks
 like this, which is the sequence the latch has to read correctly:
 
        t(s)   red px   green px
-       0.77     132         0
-       1.03      35         0
-       1.25       0         0     <- 45 degrees, neither arm facing the camera
-       1.48       0        34
-       1.81       0       131
+       0.00     246         0
+       0.46     234       119
+       0.59     211       179
+       0.66     188       205     <- the counts cross over: this frame is green
+       0.99      24       246
 
-So the hole in the middle is normal and an UNKNOWN frame must not be read as
-"no longer red": the counters hold through it rather than resetting, and only a
-frame of the *other* colour clears them.
+The two arms are 90 degrees apart on one pivot, so through the turn they trade
+projected area and the total stays near 250 px: the verdict is whichever count
+is ahead.  Under a tighter saturation floor the crossover becomes a hole
+instead -- both arms wash out around 45 degrees and a frame or two reads as
+neither -- so the latch has to cope with both, and an UNKNOWN frame must not be
+read as "no longer red".  Its counters hold through one; only a frame of the
+*other* colour clears them.
 
 Four things guard against something else in frame being taken for the signal,
-because at 4 m the arm is only about 15 x 12 px of a 640 x 360 frame and a
-false start is expensive:
+because at the 3 m both courses stand the signal at the arm is only about
+21 x 16 px of a 640 x 360 frame and a false start is expensive:
 
 * A region of interest that starts at the top half of the frame, because the
   arm stands above the camera's horizon from anywhere on the course and the
@@ -211,9 +215,9 @@ class Thresholds:
     signal's own sky blue board at 197, and the car wash's blue ribbons at
     212.  The arms themselves render at 1.5 and 130.
 
-    `min_pixels` is set against the 15 x 12 px the arm subtends at the 4 m
-    both courses stand the signal at, leaving room for it to be part way
-    round -- the sweep passes through about 35 px of arm on the way.
+    `min_pixels` is set against the 21 x 16 px the arm subtends at the 3 m
+    both courses stand the signal at, with room to spare for an arm part way
+    round and for the further 4 m the signal used to stand at.
     """
 
     red: HueBand = field(default_factory=lambda: HueBand(345.0, 15.0))

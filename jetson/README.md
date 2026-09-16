@@ -128,17 +128,16 @@ speed course:
 
 ```
    t(s)   red px   green px   reads
-   0.00     133         0     red
-   0.33     132        10     red
-   0.46     131        42     red
-   0.53     123        61     red
-   0.66      84        94     green
-   0.73      58       113     green   <- ~/go latches here
-   0.99       0       133     green
+   0.00     246         0     red
+   0.46     234       119     red
+   0.59     211       179     red
+   0.66     188       205     green
+   0.79     121       233     green   <- ~/go latches here
+   0.99      24       246     green
 ```
 
 The two arms are 90 degrees apart on one pivot, so through the turn they
-trade projected area rather than both disappearing: the total stays near 133
+trade projected area rather than both disappearing: the total stays near 250
 px and the verdict is whichever count is ahead. With a tighter saturation
 floor than the detector's the crossover becomes a hole instead -- both arms
 wash out around 45 degrees and a frame or two reads as neither -- so the
@@ -152,24 +151,55 @@ arrives as a stutter. Publishing a setpoint costs nothing.
 [`scripts/start_signal.py`](scripts/start_signal.py) builds the models, and
 both course generators call it, so the two courses cannot drift apart.
 
-The signal is not in the DXF -- only the CAD has one -- so each course picks
-its own spot, a single `SIGNAL_POSITION` constant in its generator. Both sit
-about 4 m ahead of the car at a bearing of 20 degrees, near enough to read and
-far enough off to the side to be outside the lane, with the sight line from
-the 8 in camera clearing the 14 in bale wall between the two:
+The drawing places the signal, and places it the same way on both courses:
+**three bales down the wall from the start line** -- annotated "approximately
+8 ft" -- **with the bales moved so it stands in line with the inner edge of the
+bale border**. So neither generator chooses a spot any more;
+`start_signal.position()` derives one from each course's start line, heading
+and lane edge, and the two come out within a centimetre of each other from the
+driver's seat:
 
-| Course | Position | Bearing | Range | Clears the wall by |
-| ------ | -------- | ------- | ----- | ------------------ |
-| Obstacle | (3.40, 1.40) | 20.3 deg | 4.04 m | 24 mm |
-| Speed | (16.00, 3.40) | 19.6 deg | 4.07 m | 54 mm |
+| Course | Position | Yaw | Down the lane | Bearing | Range | Clears the wall by |
+| ------ | -------- | --- | ------------- | ------- | ----- | ------------------ |
+| Obstacle | (2.44, 0.81) | -90 deg | 8.0 ft | 16.1 deg | 2.94 m | 152 mm |
+| Speed | (17.01, 3.89) | +90 deg | 8.0 ft | 17.2 deg | 2.95 m | 172 mm |
 
-At that range the arm is about 15 x 12 px of saturated red or green in a
-640 x 360 frame. [`scripts/check_signal_sightline.py`](scripts/check_signal_sightline.py)
-re-derives all of it from the generated worlds and fails if a nudged constant
-puts the signal behind a bale or outside the camera's field:
+The board is 32 in wide and its arms sweep in its plane, so it stands **square
+across the lane**, facing back up it: width across the lane, 4 in of depth
+along it. Square, and not aimed at the point the car waits at -- the board
+sits off to the side of a 32 in lane, so a car on the centreline is a good
+16 degrees off the perpendicular, and aiming at it would cant the board, its
+arms and its footprint by that much. The sign on the course stands square to
+the path, and an 8 ft signal reads the same either way.
+
+Centred on the lane edge, half the board would be in the path, so it stands
+half a width outboard: inner end flush with the edge -- to within 2 mm, all of
+it the wall's own placement -- and body where the wall was. That is what "the
+bales moved" means, and `start_signal.clear_bales()` does it, sliding the one
+bale the board displaces along its own wall until it clears (0.17 m on the
+obstacle course, 0.25 m on the speed course) and leaving the board's 4 in of
+depth standing in the gap.
+
+Bearing and range are to the middle of the board; the arm itself hangs nearer
+the lane, about 11 degrees off the axis, where it is about 21 x 16 px of
+saturated red or green in a 640 x 360 frame. Moving in from the old 4 m spot
+outside the wall also bought a much better sight line: the ray from the 8 in
+camera used to pass 24 mm over the 14 in bale wall, and now clears it by
+150 mm and more.
+
+[`scripts/check_signal_sightline.py`](scripts/check_signal_sightline.py)
+re-derives all of it from the generated worlds -- the distance down the lane,
+the board's alignment with the border, that it stands square to the path, that
+no bale is left inside the board, the camera's field of view and the sight
+line -- and fails if a nudged constant breaks one:
 
 ```bash
 ./scripts/check_signal_sightline.py
+```
+
+```
+obstacle_course.sdf      ok    8.0 ft down the lane, board -2 mm off the border's edge, -0.0 deg off square, bearing +16.1 deg, range 2.94 m, clears bales by 152 mm
+speed_course.sdf         ok    8.0 ft down the lane, board +2 mm off the border's edge, +0.1 deg off square, bearing +17.2 deg, range 2.95 m, clears bales by 172 mm
 ```
 
 Bounds for everything the randomiser moves come from the layout file beside
@@ -448,8 +478,8 @@ retract a start that has already happened.
 
 A start is a red arm that *becomes* green, not merely green in frame. Four
 things stand between "something coloured" and releasing the car, because at
-the 4 m both courses stand the signal at the arm is only about 15 x 12 px of a
-640 x 360 frame:
+the 8 ft both courses stand the signal at the arm is only about 21 x 16 px of
+a 640 x 360 frame:
 
 * **Above the horizon only.** The arm is 32 in up and the camera 8 in up, so
   the arm is above the camera's horizon from anywhere on the course -- and for
@@ -469,8 +499,10 @@ the 4 m both courses stand the signal at the arm is only about 15 x 12 px of a
   pairing with a green somewhere else in frame.
 
 Then `confirm_frames` frames of it, which at the camera's 15 Hz costs 133 ms.
-Measured against both courses, `~/go` latches about 0.7 s into the 1 s sweep,
-on 90 to 120 px of green; see the sweep table above.
+Measured against both courses, `~/go` latches 0.79 s into the 1 s sweep on
+230 px of green -- later only when the software renderer drops frames, which
+is what puts 0.99 s at the far end of the range measured. See the sweep table
+above.
 
 Tuning is live: `ros2 param set` on any threshold rebuilds the classifier
 without disturbing the latch, and a value that does not make sense is refused

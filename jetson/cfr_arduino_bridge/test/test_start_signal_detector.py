@@ -35,14 +35,15 @@ ARM_RED = (217, 23, 18)  # 0.85 0.09 0.07
 ARM_GREEN = (26, 179, 51)  # 0.10 0.70 0.20
 RIBBON_RED = (230, 64, 51)  # 0.90 0.25 0.20, twenty car wash ribbons
 
-# Where the arm lands from the start line.  The geometry in
-# check_signal_sightline.py puts the signal 4.04 m out at a bearing of
-# 20 degrees, which for a camera 0.20 m up with a 110 degree field is 83 px
-# left of centre -- left, because a positive bearing is to port (REP-103) and
-# image x grows to starboard -- and 34 px above it.  Measured through the
-# simulated camera it lands at (257, 150) and (254, 150) on the two courses.
-ARM_X, ARM_Y = 257, 150
-ARM_SIZE = (15, 12)
+# Where the arm lands from the start line.  Both courses stand the signal 8 ft
+# down a 32 in lane, which puts the arm about 11 degrees off the lane axis and
+# 10 degrees up, 2.9 m away: 42 px left of centre for a camera with a
+# 110 degree field -- left, because a positive bearing is to port (REP-103)
+# and image x grows to starboard -- and 41 px above it.  Measured through the
+# simulated camera the red arm lands at (278, 139) on the obstacle course and
+# (273, 139) on the speed course, and the green arm some 15 px higher.
+ARM_X, ARM_Y = 278, 139
+ARM_SIZE = (21, 16)
 
 
 def scene() -> np.ndarray:
@@ -109,10 +110,10 @@ def test_green_arm_reads_green_where_it_stands():
 
 
 def test_a_part_way_round_arm_still_reads():
-    """Mid-sweep the arm is foreshortened; 35 px is what the sim shows."""
-    observation = classify(arm(ARM_RED, size=(7, 5)))
+    """Mid-sweep the arm is foreshortened; 70 px is what the sim shows."""
+    observation = classify(arm(ARM_RED, size=(10, 7)))
     assert observation.state == detector.RED
-    assert observation.red.pixels == 35
+    assert observation.red.pixels == 70
 
 
 def test_an_arm_too_small_to_be_one_is_not_read():
@@ -364,15 +365,17 @@ def test_the_simulated_sweep_starts_the_run_when_the_arm_has_turned():
     """The frame-by-frame sequence a real sweep produced, replayed in full.
 
     Pixel counts are the ones measured through the simulated camera and
-    quoted in the README.  What matters is where in the sequence `go` comes
-    up: after the green arm is established, not on the first green pixel.
+    quoted in the README: the arms trade projected area as they turn, so the
+    verdict follows the crossover rather than the first green pixel.  What
+    matters is where in the sequence `go` comes up.
     """
     sweep = [
-        (0.77, 132, 0),
-        (1.03, 35, 0),
-        (1.25, 0, 0),
-        (1.48, 0, 34),
-        (1.81, 0, 131),
+        (0.00, 246, 0),
+        (0.46, 234, 119),
+        (0.59, 211, 179),
+        (0.66, 188, 205),
+        (0.79, 121, 233),
+        (0.99, 24, 246),
     ]
     latch = detector.StartLatch()
     thresholds = detector.Thresholds()
@@ -383,7 +386,7 @@ def test_the_simulated_sweep_starts_the_run_when_the_arm_has_turned():
         else:
             state = detector.RED if red >= green else detector.GREEN
         went.append(latch.update(observed(state)))
-    assert went == [False, False, False, False, True]
+    assert went == [False, False, False, False, True, True]
 
 
 # ------------------------------------------------------------------- annotate

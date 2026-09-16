@@ -16,5 +16,5 @@ obstacle_randomizer:
       green_angle: 1.57080
       # Where the signal stands, for reference; the arm is moved
       # through the joint, so nothing here is commanded as a pose.
-      pose: [16.0000, 3.4000, 0.8130]
-      yaw: 1.88748
+      pose: [17.0116, 3.8895, 0.8130]
+      yaw: 1.57080
