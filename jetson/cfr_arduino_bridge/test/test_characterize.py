@@ -405,6 +405,17 @@ def _load_yaml(path):
         return yaml.safe_load(handle)
 
 
+def _guess_keys(loaded):
+    """The dotted keys still tagged `guess`, as apply_patch names them."""
+    return {
+        f"{section}.{key}"
+        for section, entries in loaded.items()
+        if isinstance(entries, dict)
+        for key, entry in entries.items()
+        if isinstance(entry, dict) and entry.get("provenance") == "guess"
+    }
+
+
 class TestVehiclePatch(unittest.TestCase):
     def setUp(self):
         sys.path.insert(
@@ -451,9 +462,13 @@ class TestVehiclePatch(unittest.TestCase):
         self.assertEqual(loaded["mass"]["total"]["provenance"], "measured")
         self.assertEqual(loaded["mass"]["total"]["run"], "/home/user/cfr_runs/test")
         self.assertEqual(loaded["mass"]["total"]["experiment"], "A1")  # kept
-        # An untouched entry keeps its guess tag, so the file still says what is
-        # measured and what is not.
-        self.assertEqual(loaded["tire"]["diameter"]["provenance"], "guess")
+        # Untouched entries keep their guess tag, so the file still says what is
+        # measured and what is not.  Compared as a whole rather than against one
+        # named entry: the campaign retags these one at a time, and naming one
+        # here just means this test fails the day that number gets measured.
+        guesses = _guess_keys(_load_yaml(self.source))
+        self.assertTrue(guesses, "fixture has no guesses left to check against")
+        self.assertEqual(guesses - {"steering.max_angle_left"}, _guess_keys(loaded))
 
     def test_table_patch_replaces_every_row(self):
         """Regression: the audit lines were landing inside the rows list.
