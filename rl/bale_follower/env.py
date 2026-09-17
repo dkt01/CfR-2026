@@ -51,7 +51,8 @@ class Pose2D:
     x: float
     y: float
     yaw: float
-    stamp: float
+    stamp: float          # wall clock, for "has a fresh pose arrived yet"
+    sim_stamp: float = 0.0  # simulation clock, for anything measuring motion
 
 
 def _yaw_from_quaternion(x: float, y: float, z: float, w: float) -> float:
@@ -232,6 +233,8 @@ class BaleFollowerEnv(gymnasium.Env):
             y=transform.translation.y,
             yaw=_yaw_from_quaternion(q.x, q.y, q.z, q.w),
             stamp=time.monotonic(),
+            sim_stamp=(msg.transforms[0].header.stamp.sec
+                       + msg.transforms[0].header.stamp.nanosec * 1e-9),
         )
         # Nose-down-positive pitch and roll, matching cloud_scan's convention
         # (verified: a +theta rotation about +y extracts as +theta). Without
@@ -504,8 +507,18 @@ class BaleFollowerEnv(gymnasium.Env):
 
         # The pose stream carries no twist, and the Ackermann plugin's
         # odometry is dead-reckoned (it ignores teleports), so velocities come
-        # from differencing ground-truth poses over the known sim-time step.
-        dt = 1.0 / self.control_hz
+        # from differencing ground-truth poses.
+        #
+        # dt comes from the SIMULATION clock, not 1/control_hz. The step loop
+        # sleeps on the wall clock, so those agree only while the simulator
+        # keeps up. Rendering the ZED drops the real-time factor to ~0.63,
+        # and assuming 0.1 s of sim time then under-reports every speed by
+        # ~37% -- corrupting both the speed the policy observes and the yaw
+        # rate the smoothness reward is computed from, exactly when the camera
+        # is switched on.
+        dt = pose.sim_stamp - self._prev_pose.sim_stamp
+        if not (1e-4 < dt < 1.0):
+            dt = 1.0 / self.control_hz
         measured_speed = math.hypot(pose.x - self._prev_pose.x, pose.y - self._prev_pose.y) / dt
         measured_yaw_rate = _wrap_to_pi(pose.yaw - self._prev_pose.yaw) / dt
 
@@ -526,7 +539,7 @@ class BaleFollowerEnv(gymnasium.Env):
         self._prev_angular_z = measured_yaw_rate
         self._prev_steer_fraction = self._cmd_steer_fraction
         self._episode_step += 1
-        self._episode_time += 1.0 / self.control_hz
+        self._episode_time += dt
 
         window_steps = max(1, round(self.stuck_window_s * self.control_hz))
         self._stuck_window_travel.append(abs(progress_distance))
