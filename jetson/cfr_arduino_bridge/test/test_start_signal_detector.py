@@ -36,9 +36,9 @@ WIDTH, HEIGHT = 640, 360
 SKY = (128, 128, 128)  # no sky model; the background renders flat gray
 GROUND = (41, 64, 33)  # 0.16 0.25 0.13, the ground plane
 BALE = (184, 122, 31)  # 0.72 0.48 0.12, 202 of them on the speed course
-BOARD = (135, 206, 235)  # 0.53 0.81 0.92, the signal's own board
-ARM_RED = (217, 23, 18)  # 0.85 0.09 0.07
-ARM_GREEN = (26, 179, 51)  # 0.10 0.70 0.20
+BOARD = (0, 162, 234)  # 0.00 0.64 0.92, the signal's own board (Oasis Blue)
+ARM_RED = (226, 53, 37)  # 0.89 0.21 0.15, Poppy Red
+ARM_GREEN = (88, 154, 80)  # 0.35 0.60 0.31, Leafy Green
 RIBBON_RED = (230, 64, 51)  # 0.90 0.25 0.20, twenty car wash ribbons
 
 # Things an outdoor course puts in frame that the simulator does not.  The
@@ -106,10 +106,12 @@ def under(frame, gain: float, glare: int = 0) -> np.ndarray:
 
 # Backlit: the sun has come round behind the signal, the arm's face is in
 # shade and the sky behind it is glaring over the lens.  A quarter of the
-# light and a wash that leaves the arms at (255, 220, 219) and (221, 255,
-# 227) -- hue 1.5 and 130 still, chroma 0.14 and 0.13 still, but saturation
-# 0.14 and 0.13, which is under the floor a frame has to clear before the
-# signal has been found and over the one it has to clear afterwards.
+# light and a wash that leaves the arms at (255, 228, 224) and (237, 253,
+# 235) -- hue 8 and 113 still, chroma 0.12 and 0.07 still, but saturation
+# 0.12 and 0.07.  Both are under the floor a frame has to clear before the
+# signal has been found; Leafy Green's own saturation is low enough that it
+# only just clears the relaxed one that applies afterwards, which is why
+# `focus_relaxation` sits lower than a more saturated green would need.
 BACKLIT = dict(gain=0.25, glare=215)
 
 
@@ -142,11 +144,14 @@ def test_world_colours_are_where_the_bands_say_they_are():
     """The hue the bands are drawn around, for each color in the worlds."""
     colours = np.array([[SKY, GROUND, BALE, BOARD, ARM_RED, ARM_GREEN]], dtype=np.uint8)
     hue, saturation, _value = detector.hsv(colours)
-    assert hue[0].tolist() == pytest.approx([0, 105, 36, 197, 1.5, 130], abs=1.0)
+    assert hue[0].tolist() == pytest.approx([0, 105, 36, 198, 5, 114], abs=1.0)
     # Gray has no hue at all, which is why saturation and not hue is what
-    # excludes it.
+    # excludes it.  Leafy Green's own saturation (0.48) is much lower than
+    # Poppy Red's (0.84) or the board's (1.0, since its blue channel alone
+    # carries all the light) -- that gap is what drives the thinner margins
+    # elsewhere in this module.
     assert saturation[0].tolist() == pytest.approx(
-        [0.0, 0.48, 0.83, 0.43, 0.92, 0.85], abs=0.02
+        [0.0, 0.48, 0.83, 1.0, 0.84, 0.48], abs=0.02
     )
 
     bands = detector.Thresholds()
@@ -277,12 +282,12 @@ def test_a_backlit_arm_is_still_read():
     """
     backlit = under(arm(ARM_RED), gain=0.25, glare=140)
     hue, saturation, value = detector.hsv(backlit[ARM_Y : ARM_Y + 1, ARM_X : ARM_X + 1])
-    assert hue[0, 0] == pytest.approx(1.5, abs=1.0)
-    # The glare has taken three quarters of the saturation and none of the
-    # chroma, which is why chroma is the floor that matters.
-    assert saturation[0, 0] == pytest.approx(0.26, abs=0.02)
-    assert saturation[0, 0] * value[0, 0] == pytest.approx(0.20, abs=0.02)
-    assert value[0, 0] == pytest.approx(0.76, abs=0.03)
+    assert hue[0, 0] == pytest.approx(5.1, abs=1.0)
+    # The glare has taken most of the saturation and none of the chroma,
+    # which is why chroma is the floor that matters.
+    assert saturation[0, 0] == pytest.approx(0.24, abs=0.02)
+    assert saturation[0, 0] * value[0, 0] == pytest.approx(0.18, abs=0.02)
+    assert value[0, 0] == pytest.approx(0.77, abs=0.03)
 
     assert classify(backlit).state == detector.RED
     # Under the floors this used to carry, the same frame read as nothing.
@@ -291,16 +296,27 @@ def test_a_backlit_arm_is_still_read():
 
 
 def test_an_arm_in_direct_sun_is_still_read():
-    """Clipping costs saturation the same way glare does: red, but paler."""
-    glaring = under(arm(ARM_RED), gain=1.4, glare=130)
-    assert glaring[ARM_Y, ARM_X].tolist() == [255, 162, 155]
+    """Clipping costs saturation the same way glare does: red, but paler.
+
+    Poppy Red's hue drifts towards orange under clipping faster than a
+    placeholder red does -- full clipping (gain 1.4 here) pushes it past even
+    the widened 16 degree band, so this stops at gain 1.2, which is what the
+    red band's margin against skin actually covers.
+    """
+    glaring = under(arm(ARM_RED), gain=1.2, glare=130)
+    assert glaring[ARM_Y, ARM_X].tolist() == [255, 193, 174]
     assert classify(glaring).state == detector.RED
     was = detector.Thresholds(min_saturation=0.45, min_value=0.15)
     assert classify(glaring, thresholds=was).state == detector.UNKNOWN
 
 
 def test_an_arm_in_deep_shade_is_still_read():
-    """A dark frame is not a washed one: hue and saturation both survive it."""
+    """A dark frame is not a washed one: hue and saturation both survive it.
+
+    Leafy Green's own chroma is low enough that a quarter of the light would
+    already put it under a stricter floor than this one; `min_chroma` sits at
+    0.03 rather than a placeholder green's 0.04 because of exactly this case.
+    """
     dusk = under(arm(ARM_GREEN), gain=0.12)
     assert classify(dusk).state == detector.GREEN
     was = detector.Thresholds(min_saturation=0.45, min_value=0.15)
@@ -314,7 +330,7 @@ def test_dark_noise_is_not_an_arm():
     channel has a convincing hue and a saturation of 0.8, because saturation
     is a ratio.  Its chroma says what it really is.
     """
-    noise = patch(under(scene(), gain=0.1), (10, 2, 2), (ARM_X, ARM_Y))
+    noise = patch(under(scene(), gain=0.1), (6, 1, 1), (ARM_X, ARM_Y))
     _hue, saturation, _value = detector.hsv(noise[ARM_Y : ARM_Y + 1, ARM_X : ARM_X + 1])
     assert saturation[0, 0] > 0.75
     assert classify(noise).state == detector.UNKNOWN
@@ -863,7 +879,7 @@ def test_the_focus_box_is_clipped_to_the_frame():
 
 
 def test_hue_bands_wrap_through_zero():
-    hue = np.array([0.0, 11.0, 13.0, 130.0, 337.0, 339.0, 359.0])
+    hue = np.array([0.0, 11.0, 17.0, 130.0, 337.0, 339.0, 359.0])
     bands = detector.Thresholds()
     assert bands.red.mask(hue).tolist() == [True, True, False, False, False, True, True]
     assert bands.green.mask(hue).tolist() == [False] * 3 + [True] + [False] * 3

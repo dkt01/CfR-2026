@@ -145,7 +145,7 @@ def hsv(rgb: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Hue in degrees, saturation and value in 0..1, from a uint8 RGB frame.
 
     Hue is what identifies the signal: the simulator's red arm renders at hue
-    1.5 and its green at 130, and lighting -- Gazebo's or the sun's -- moves
+    5 and its green at 114, and lighting -- Gazebo's or the sun's -- moves
     value about far more than it moves either of those.  Saturation is chroma
     over value, so it too is unchanged by a scene that is simply darker; what
     does cost saturation is light *added* to the arm's own color, which is
@@ -252,14 +252,19 @@ class Thresholds:
     The hue bands are drawn to clear what an outdoor course puts in frame, not
     merely what the simulator does:
 
-    * Red stops at 12 degrees, well short of skin at 20 to 35, of straw and
+    * Red stops at 16 degrees, short of skin at 20 to 35, of straw and
       dry grass at 30 to 50, and of the orange of cones and barrels.  It
       reaches back to 338 instead, because shade under an open sky is lit blue
-      and takes red *towards* magenta, never towards orange.
-    * Green starts at 115, above turf and foliage, which sit between 80 and
-      110 even in full sun, and above the simulated ground plane's 105.  It
-      stops short of the signal's own sky blue board at 197 and of the car
-      wash's blue ribbons at 212.  The arms themselves render at 1.5 and 130.
+      and takes red *towards* magenta, never towards orange.  Poppy Red is
+      warmer than a placeholder red would be, and drifts further towards
+      orange under direct-sun clipping than 12 degrees leaves room for; 16
+      covers that drift with 4 degrees still held clear of skin.
+    * Green starts at 110, at the edge of turf and foliage, which sit between
+      80 and 110 even in full sun, and above the simulated ground plane's
+      105.  It stops short of the signal's own oasis blue board at 198 and of
+      the car wash's blue ribbons at 212.  The arms themselves render at 5
+      and 114 -- Leafy Green sits closer to real foliage than a more saturated
+      green would, which is why the margin here is thinner than red's.
 
     `min_chroma` is the floor that does the work, and it is in absolute terms
     -- how far from gray the pixel is, in 0..1 -- because that is the quantity
@@ -268,9 +273,9 @@ class Thresholds:
     white without changing how far apart its channels are, so it costs
     saturation and not chroma.  Exposure is the other way round: it scales all
     three together, so it costs chroma and not saturation.  Between them,
-    0.04 is about ten levels of an 8-bit channel, which is a tenth of what
-    the arm renders at in the simulator and still several times the noise in
-    a daylight frame.
+    0.03 is about eight levels of an 8-bit channel, which is close to a tenth
+    of what Leafy Green -- the less saturated of the two arms -- renders at in
+    the simulator, and still several times the noise in a daylight frame.
 
     `min_saturation` is then only there to reject gray, which is what a low
     chroma over a bright value is: warm-lit concrete, a pinkish cloud, a
@@ -286,16 +291,16 @@ class Thresholds:
     `Cluster.spread`.
     """
 
-    red: HueBand = field(default_factory=lambda: HueBand(338.0, 12.0))
-    green: HueBand = field(default_factory=lambda: HueBand(115.0, 175.0))
+    red: HueBand = field(default_factory=lambda: HueBand(338.0, 16.0))
+    green: HueBand = field(default_factory=lambda: HueBand(110.0, 175.0))
     min_saturation: float = 0.15
-    min_chroma: float = 0.04
+    min_chroma: float = 0.03
     min_value: float = 0.05
     min_pixels: int = 12
     cluster_window: int = 24
     max_spread: float = 3.0
     candidates: int = 6
-    focus_relaxation: float = 0.6
+    focus_relaxation: float = 0.4
 
     def mask(self, band: HueBand, planes) -> np.ndarray:
         """Pixels of `band`'s color that are lit and colored enough to count."""

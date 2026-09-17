@@ -286,9 +286,9 @@
     </link></model>
     <!-- Tunnel: closed on top and sides, and it carries the bridge deck. -->
     <model name="tunnel"><static>true</static><link name="link">
-      <visual name="tunnel_visual"><pose>7.0976 -0.3537 0.0000 0.0000 0.0000 1.5708</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/tunnel.stl</uri></mesh></geometry><material><diffuse>0.74 0.76 0.78 1</diffuse></material></visual>
-      <collision name="wall_-1_collision"><pose>6.6662 -0.3537 0.3111 0.0000 0.0000 0.0000</pose><geometry><box><size>0.0500 1.5240 0.6223</size></box></geometry></collision>
-      <collision name="wall_1_collision"><pose>7.5290 -0.3537 0.3111 0.0000 0.0000 0.0000</pose><geometry><box><size>0.0500 1.5240 0.6223</size></box></geometry></collision>
+      <visual name="tunnel_visual"><pose>7.0976 0.4424 0.0000 0.0000 0.0000 1.5708</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/tunnel.stl</uri></mesh></geometry><material><diffuse>0.74 0.76 0.78 1</diffuse></material></visual>
+      <collision name="wall_-1_collision"><pose>6.6662 0.4424 0.3111 0.0000 0.0000 0.0000</pose><geometry><box><size>0.0500 1.5240 0.6223</size></box></geometry></collision>
+      <collision name="wall_1_collision"><pose>7.5290 0.4424 0.3111 0.0000 0.0000 0.0000</pose><geometry><box><size>0.0500 1.5240 0.6223</size></box></geometry></collision>
     </link></model>
     <!-- Helical ramp down: 4 ft centreline radius, 41.5 in wide, 11% grade. -->
     <model name="helix"><static>true</static><link name="link">
@@ -741,7 +741,7 @@
     <!-- 8.5 degree banked turn, 48 in by 128 in. -->
     <model name="bank"><static>true</static><link name="link">
       <visual name="bank_visual"><pose>-4.0276 -9.3717 0.0000 0.0000 0.0000 3.1416</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/bank.stl</uri></mesh></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
-      <collision name="surface_collision"><pose>-4.0276 -9.3717 0.0711 0.0000 0.0000 0.0000</pose><geometry><box><size>1.2192 3.2513 0.0400</size></box></geometry></collision>
+      <collision name="surface_collision"><pose>-4.0276 -9.3717 0.0711 0.0000 0.1484 0.0000</pose><geometry><box><size>1.2327 3.2513 0.0400</size></box></geometry></collision>
     </link></model>
 
     <!-- Buckets: moved at runtime by obstacle_randomizer_node. -->
@@ -828,7 +828,7 @@
          over /start_signal/arm; see scripts/start_signal.py. -->
     <model name="start_signal_frame"><static>true</static><pose>2.4384 0.8129 0 0 0 -1.57080</pose>
       <link name="link">
-        <visual name="frame_visual"><pose>0.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/start_signal_frame.stl</uri></mesh></geometry><material><diffuse>0.53 0.81 0.92 1</diffuse></material></visual>
+        <visual name="frame_visual"><pose>0.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/start_signal_frame.stl</uri></mesh></geometry><material><diffuse>0.00 0.64 0.92 1</diffuse></material></visual>
         <collision name="post_collision"><pose>0 0 0.61 0 0 0</pose><geometry><box><size>0.813 0.10 1.219</size></box></geometry></collision>
       </link>
     </model>
@@ -840,8 +840,8 @@
       <link name="arms">
         <gravity>false</gravity>
         <inertial><mass>0.5</mass><inertia><ixx>0.002</ixx><iyy>0.03</iyy><izz>0.03</izz></inertia></inertial>
-          <visual name="red_visual"><pose>0.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/start_signal_arm_red.stl</uri></mesh></geometry><material><diffuse>0.85 0.09 0.07 1</diffuse></material></visual>
-          <visual name="green_visual"><pose>0.0000 0.0000 0.0000 0.0000 1.5708 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/start_signal_arm_green.stl</uri></mesh></geometry><material><diffuse>0.10 0.70 0.20 1</diffuse></material></visual>
+          <visual name="red_visual"><pose>0.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/start_signal_arm_red.stl</uri></mesh></geometry><material><diffuse>0.89 0.21 0.15 1</diffuse></material></visual>
+          <visual name="green_visual"><pose>0.0000 0.0000 0.0000 0.0000 1.5708 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/start_signal_arm_green.stl</uri></mesh></geometry><material><diffuse>0.35 0.60 0.31 1</diffuse></material></visual>
       </link>
       <joint name="world_joint" type="fixed"><parent>world</parent><child>pivot</child></joint>
       <joint name="arm_joint" type="revolute">
