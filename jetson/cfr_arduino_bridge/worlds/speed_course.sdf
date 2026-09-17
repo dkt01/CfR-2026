@@ -481,7 +481,7 @@
          over /start_signal/arm; see scripts/start_signal.py. -->
     <model name="start_signal_frame"><static>true</static><pose>17.0116 3.8895 0 0 0 1.57080</pose>
       <link name="link">
-        <visual name="frame_visual"><pose>0.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/start_signal_frame.stl</uri></mesh></geometry><material><diffuse>0.53 0.81 0.92 1</diffuse></material></visual>
+        <visual name="frame_visual"><pose>0.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/start_signal_frame.stl</uri></mesh></geometry><material><diffuse>0.00 0.64 0.92 1</diffuse></material></visual>
         <collision name="post_collision"><pose>0 0 0.61 0 0 0</pose><geometry><box><size>0.813 0.10 1.219</size></box></geometry></collision>
       </link>
     </model>
@@ -493,8 +493,8 @@
       <link name="arms">
         <gravity>false</gravity>
         <inertial><mass>0.5</mass><inertia><ixx>0.002</ixx><iyy>0.03</iyy><izz>0.03</izz></inertia></inertial>
-          <visual name="red_visual"><pose>0.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/start_signal_arm_red.stl</uri></mesh></geometry><material><diffuse>0.85 0.09 0.07 1</diffuse></material></visual>
-          <visual name="green_visual"><pose>0.0000 0.0000 0.0000 0.0000 1.5708 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/start_signal_arm_green.stl</uri></mesh></geometry><material><diffuse>0.10 0.70 0.20 1</diffuse></material></visual>
+          <visual name="red_visual"><pose>0.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/start_signal_arm_red.stl</uri></mesh></geometry><material><diffuse>0.89 0.21 0.15 1</diffuse></material></visual>
+          <visual name="green_visual"><pose>0.0000 0.0000 0.0000 0.0000 1.5708 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/start_signal_arm_green.stl</uri></mesh></geometry><material><diffuse>0.35 0.60 0.31 1</diffuse></material></visual>
       </link>
       <joint name="world_joint" type="fixed"><parent>world</parent><child>pivot</child></joint>
       <joint name="arm_joint" type="revolute">

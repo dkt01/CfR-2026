@@ -107,8 +107,10 @@ puts it on, clamped by half a base length so a hoop cannot end up half
 outside the bales.
 
 **Start signal, on both courses.** Red and green arms 90 degrees apart on a
-common pivot 32 in up; whichever is horizontal stands out past the sky blue
-board and is the one the car sees. The arms ride a revolute joint whose limits
+common pivot 32 in up; whichever is horizontal stands out past the oasis blue
+board and is the one the car sees. The arms are painted Rust-Oleum 2X Satin
+Poppy Red and Leafy Green, and the board Rust-Oleum Satin Oasis Blue. The arms
+ride a revolute joint whose limits
 are those two positions, and it rests at the red one, so **a freshly loaded
 world always shows red** without anything having to command it.
 
@@ -506,12 +508,16 @@ optional:
   the floor that does the work, and `min_saturation` is only there to reject
   gray. Measured, the arm is still read at a fifth of the chroma it renders
   with and at a fifth of its saturation; see the lighting check below.
-* **Hue bands drawn for a field, not a renderer.** Red stops at 12 degrees,
-  short of skin at 20 to 35, straw and dry grass at 30 to 50, and the orange
-  of cones and barrels; it reaches back to 338 instead, because open shade is
-  lit blue and takes red towards magenta. Green starts at 115, above turf and
-  foliage at 80 to 110, and stops short of the board's sky blue at 197 and the
-  car wash's blue ribbons at 212. The arms render at 1.5 and 130.
+* **Hue bands drawn for a field, not a renderer.** Red stops at 16 degrees,
+  leaving 4 degrees to skin at 20 to 35, straw and dry grass at 30 to 50, and
+  the orange of cones and barrels; it reaches back to 338 instead, because
+  open shade is lit blue and takes red towards magenta. Poppy Red is warm
+  enough to drift past a tighter band under direct-sun clipping, which is why
+  16 rather than 12. Green starts at 110, right at the edge of turf and
+  foliage at 80 to 110, and stops short of the board's oasis blue at 198 and
+  the car wash's blue ribbons at 212. The arms render at 5 and 114 -- Leafy
+  Green sits close enough to real foliage that size and place, not hue, are
+  what keep foliage out here.
 * **Arm-sized, not merely the right color.** The count applies to the densest
   `cluster_window` box, and a candidate whose color keeps going outside that
   box is thrown out on its size: `max_spread`. A shirt on somebody 5 m away
