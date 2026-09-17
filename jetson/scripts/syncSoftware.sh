@@ -147,6 +147,21 @@ if ! ssh -o BatchMode=yes -o ConnectTimeout=5 "${REMOTE_HOST}" true >/dev/null 2
   fi
 fi
 
+# The Orin has no RTC, so its clock resets to some fixed build date on every
+# power cycle and only free-runs from there. rsync/scp compare timestamps to
+# decide what changed, and a build clean-rebuilds two packages specifically
+# because of clock skew (see the comment below) -- so fix the clock first.
+LOCAL_EPOCH="$(date +%s)"
+if [[ "${DRY_RUN}" == true ]]; then
+  echo "would sync the Orin's clock to $(date -d "@${LOCAL_EPOCH}" 2>/dev/null || date -r "${LOCAL_EPOCH}")"
+elif "${SSH_CMD[@]}" "${REMOTE_HOST}" "sudo -n date --set=@${LOCAL_EPOCH}" >/dev/null 2>&1; then
+  echo "synced the Orin's clock to this host's time"
+else
+  echo "warning: couldn't set the Orin's clock (needs passwordless sudo for" >&2
+  echo "         'date' on the Orin); if timestamps still look wrong, run:" >&2
+  echo "           ssh ${REMOTE_HOST} 'sudo date --set=@${LOCAL_EPOCH}'" >&2
+fi
+
 HAS_RSYNC=false
 if command -v rsync >/dev/null; then
   HAS_RSYNC=true
@@ -244,9 +259,9 @@ echo "building on ${REMOTE_HOST} in ${REMOTE_WS}"
   set -u
   mkdir -p ${REMOTE_WS}
   cd ${REMOTE_WS}
-  # The Jetson clock can lag files synced from the development host.  A clean
-  # package build prevents Make from retaining an older installed binary when
-  # source timestamps appear to be in the future.
+  # Belt and suspenders alongside the clock sync above: if that couldn't set
+  # the time (no passwordless sudo), stale timestamps could still make Make
+  # retain an older installed binary, so force these two packages to rebuild.
   rm -rf build/cfr_interfaces install/cfr_interfaces build/cfr_arduino_bridge install/cfr_arduino_bridge
   colcon build --base-paths ${REMOTE_DIR} --cmake-args -DCMAKE_BUILD_TYPE=Release
 '"
