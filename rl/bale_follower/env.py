@@ -34,6 +34,7 @@ from geometry_msgs.msg import Twist
 from rclpy.node import Node
 from tf2_msgs.msg import TFMessage
 from sensor_msgs.msg import PointCloud2
+from rosgraph_msgs.msg import Clock
 
 import bale_geometry
 import zed_sim
@@ -204,6 +205,16 @@ class BaleFollowerEnv(gymnasium.Env):
         self._node.create_subscription(
             TFMessage, f"/world/{world_name}/dynamic_pose/info", self._on_pose, 10
         )
+        # Simulation clock. The pose messages themselves carry header.stamp 0
+        # (the ros_gz bridge does not fill it in -- measured), so /clock is the
+        # only source of sim time, and sim time is what motion has to be
+        # measured against once rendering pulls the real-time factor below 1.
+        self._sim_time = 0.0
+        self._node.create_subscription(
+            Clock, "/clock",
+            lambda m: setattr(self, "_sim_time", m.clock.sec + m.clock.nanosec * 1e-9),
+            10,
+        )
         if self.scan_source == "cloud":
             qos = rclpy.qos.QoSProfile(depth=1)
             qos.reliability = rclpy.qos.ReliabilityPolicy.BEST_EFFORT
@@ -220,10 +231,13 @@ class BaleFollowerEnv(gymnasium.Env):
 
     def _on_pose(self, msg: TFMessage) -> None:
         # Gazebo publishes the model's world pose first, then its links'
-        # poses relative to the model. The Slash is the only dynamic model in
-        # this world -- bales and ground are static -- so index 0 is its
-        # world pose. The bridge drops entity names, hence the positional
-        # access rather than a lookup by name.
+        # poses relative to the model, and the bridge drops entity names --
+        # hence the positional access rather than a lookup by name.
+        #
+        # index 0 is the Slash. It is no longer the only dynamic model: the
+        # start signal added a second one (verified -- transforms[0] reads the
+        # SDF spawn pose 20.15, 4.76 while transforms[1] sits at 17.01, 3.89),
+        # so this depends on the Slash being declared first in the world.
         if not msg.transforms:
             return
         transform = msg.transforms[0].transform
@@ -233,8 +247,7 @@ class BaleFollowerEnv(gymnasium.Env):
             y=transform.translation.y,
             yaw=_yaw_from_quaternion(q.x, q.y, q.z, q.w),
             stamp=time.monotonic(),
-            sim_stamp=(msg.transforms[0].header.stamp.sec
-                       + msg.transforms[0].header.stamp.nanosec * 1e-9),
+            sim_stamp=self._sim_time,
         )
         # Nose-down-positive pitch and roll, matching cloud_scan's convention
         # (verified: a +theta rotation about +y extracts as +theta). Without

@@ -45,7 +45,12 @@ start_sim() {
     trap stop_sim EXIT INT TERM
 
     echo -n "waiting for teleport API and pose bridge"
-    local deadline=$((SECONDS + 60))
+    # Rendering the ZED adds world rewriting, ogre2 startup and the first
+    # render pass before anything answers, which overruns a 60 s budget on a
+    # busy machine.
+    local wait_s=60
+    [ -n "${CFR_SENSORS}" ] && wait_s=180
+    local deadline=$((SECONDS + wait_s))
     while [ $SECONDS -lt $deadline ]; do
         if (exec 3<>/dev/tcp/localhost/9003) 2>/dev/null; then
             exec 3>&-
@@ -59,7 +64,7 @@ start_sim() {
         sleep 1
     done
     echo
-    die "simulation not ready after 60 s; see $LAUNCH_LOG"
+    die "simulation not ready after ${wait_s} s; see $LAUNCH_LOG"
 }
 
 stop_sim() {

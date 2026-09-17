@@ -32,7 +32,7 @@ kill_sim() {
     # orphaned servers survived earlier cleanups and silently corrupted a day
     # of measurements by publishing a second car onto the same pose topic.
     ps -eo pid,cmd \
-        | grep -E "gz sim|ros2 launch cfr_arduino_bridge|parameter_bridge|sim_vehicle_node|cmd_vel_to_drive|teleport_api" \
+        | grep -E "gz sim|ros2 launch cfr_arduino_bridge|parameter_bridge|sim_vehicle_node|cmd_vel_to_drive|teleport_api|path_follower|lap_counter|start_signal" \
         | grep -v grep | awk '{print $1}' \
         | while read -r pid; do kill -9 "$pid" 2>/dev/null || true; done
     sleep 3
@@ -40,6 +40,12 @@ kill_sim() {
 
 start_sim() {
     kill_sim
+    # The ros2 CLI daemon caches the node graph. A stale cache survives the
+    # simulator it described, and then `topic list` reports the previous
+    # stack's topics while missing the new one's -- which reads exactly like
+    # "simulation failed to start" and retries forever (observed). Drop it so
+    # each attempt rebuilds discovery from scratch.
+    ros2 daemon stop >/dev/null 2>&1 || true
     # CFR_SENSORS=1 renders the ZED and bridges its point cloud, which the
     # environment needs when config.yaml sets scan_source: cloud. This wrapper
     # relaunches the sim on every chunk, so the flag has to be repeated here --
