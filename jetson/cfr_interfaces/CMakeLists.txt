@@ -11,6 +11,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/ArduinoStatus.msg"
   "msg/PathSegment.msg"
   "msg/StartSignal.msg"
+  "msg/LapCount.msg"
   "action/DrivePath.action"
   DEPENDENCIES std_msgs action_msgs
 )

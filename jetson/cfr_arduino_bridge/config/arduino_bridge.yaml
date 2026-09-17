@@ -138,3 +138,63 @@ start_signal_detector:
     image_timeout: 3.0          # s without a frame before saying so
     debug_image: false          # annotated frames on ~/debug_image, for tuning
     debug_image_period: 0.2     # s
+
+lap_counter:
+  ros__parameters:
+    # NOTE: target_laps, require_go and require_auto_active are deliberately
+    # absent from this block, and must not be added to it.  The launch files
+    # set them -- `laps:=` and `free_run:=` -- and a launch parameter dict
+    # reaches the node as a `/**` wildcard entry, which rcl ranks BELOW a
+    # node-specific block like this one.  Naming them here would silently
+    # beat the launch argument, and even `-p target_laps:=2` on the command
+    # line.  Their defaults live in lap_counter_node.py instead: three laps,
+    # arm on the start signal, count only under AUTO_ACTIVE.  The parameters
+    # below are tuning, which nothing overrides at launch, so they belong
+    # here.
+    #
+    # The car waits behind the line, so it crosses it once on the way out --
+    # that pass starts the run and is not counted, and three laps is four
+    # crossings in all.
+
+    # How far ahead of the parked car the line sits.  Both generated courses
+    # put it at 0.70 m (generate_speed_course.py's LINE_AHEAD_OF_CAR, and the
+    # obstacle course's VEHICLE_START), but nothing marks it on the speed
+    # course, so measure it at the venue and set it here rather than trusting
+    # the simulator.
+    line_offset: 0.70
+
+    # A crossing only scores if the car is travelling within this of the way
+    # it was pointing when the run started.  This is the gate that rejects the
+    # oval's far side, which passes through the plane of the line too, 14 m out
+    # and going the other way -- and it rejects it because of the direction
+    # rather than the distance, so it does not care how wide the course is.
+    # 60 degrees is loose enough for a car still unwinding out of the last
+    # corner and nowhere near the 180 degrees the return leg sits at.
+    heading_tolerance: 1.05     # rad
+
+    # A lap is at least this long.  Both courses are about ten times this, so
+    # the gate is doing one job: stopping a car that halts astride the line
+    # from scoring again every time it twitches forward.
+    min_lap_distance: 10.0      # m
+
+    # Optional cross-track backstop, for a course that runs a second leg
+    # parallel to the start straight in the same direction.  Zero disables it,
+    # which is the default -- a distance gate is a claim about the course's
+    # shape, and the course built on the day will not match the drawing.
+    lateral_gate: 0.0           # m
+
+    # A step larger than this between pose samples is the SDK closing a loop
+    # or recovering tracking, not the car driving.  Reported, and kept out of
+    # the distance travelled so it cannot push a short lap past the gate
+    # above.  At 8 m/s and the ZED's 30 Hz a real step is 0.27 m.
+    max_step: 1.0               # m
+
+    # How far the car may be from where it was e-stopped before the distance
+    # it had driven is thrown away.  Pausing in place keeps the lap; being
+    # lifted past an obstacle and set down starts the lap distance again, so a
+    # car put down behind the line cannot score on the way back over it with
+    # travel from before the stop.
+    carry_tolerance: 0.5        # m
+
+    pose_timeout: 0.5           # s without a pose before saying so
+    status_timeout: 1.0         # s before Arduino status is treated as gone

@@ -6,8 +6,8 @@ Traxxas Slash 4X4 through the Arduino over the USB serial link described in the
 
 | Package | Contents |
 | ------- | -------- |
-| [`cfr_interfaces`](cfr_interfaces/) | `DriveCommand`, `ArduinoStatus`, `PathSegment`, `StartSignal` messages; `DrivePath` action |
-| [`cfr_arduino_bridge`](cfr_arduino_bridge/) | `arduino_bridge_node`, `cmd_vel_to_drive_node`, `path_follower_node`, `start_signal_detector_node`, `obstacle_randomizer_node` |
+| [`cfr_interfaces`](cfr_interfaces/) | `DriveCommand`, `ArduinoStatus`, `PathSegment`, `StartSignal`, `LapCount` messages; `DrivePath` action |
+| [`cfr_arduino_bridge`](cfr_arduino_bridge/) | `arduino_bridge_node`, `cmd_vel_to_drive_node`, `path_follower_node`, `start_signal_detector_node`, `lap_counter_node`, `obstacle_randomizer_node` |
 
 ## Gazebo Simulation
 
@@ -225,6 +225,7 @@ Slash and publishes it under ZED-compatible names:
 | Topic | Type | Source |
 | ----- | ---- | ------ |
 | `/zed/zed_node/odom` | `nav_msgs/Odometry` | Gazebo vehicle odometry |
+| `/zed/zed_node/pose` | `geometry_msgs/PoseStamped` | Gazebo ground truth, standing in for the ZED's map frame pose |
 | `/zed/zed_node/left/image_rect_color` | `sensor_msgs/Image` | simulated left color camera |
 | `/zed/zed_node/left/image_rect_color/camera_info` | `sensor_msgs/CameraInfo` | simulated camera calibration |
 | `/zed/zed_node/depth/depth_registered` | `sensor_msgs/Image` | simulated depth camera |
@@ -623,6 +624,104 @@ Both course launches start the detector themselves with `sensors:=true`; on
 the car it comes up with `start_signal.launch.py` alongside the ZED. It needs
 no GPU: llvmpipe renders the camera at about 5 Hz, which still puts three or
 four frames inside the turn.
+
+### `lap_counter_node`
+
+Counts crossings of the start/finish line and latches `~/done` once the course
+has been run: three laps of the speed course, two of the obstacle course. A
+driver subscribes to `~/done` and stops the car; nothing does yet.
+
+| Interface | Type | Notes |
+| --------- | ---- | ----- |
+| `pose` | `geometry_msgs/PoseStamped` | subscribed (remapped to `/zed/zed_node/pose`) |
+| `status` | `cfr_interfaces/ArduinoStatus` | subscribed (remapped to `/arduino_bridge/status`) |
+| `go` | `std_msgs/Bool` | subscribed (remapped to `/start_signal_detector/go`), transient local |
+| `~/count` | `cfr_interfaces/LapCount` | published per pose sample |
+| `~/done` | `std_msgs/Bool` | published latched, transient local, on change |
+| `~/reset` | `std_srvs/Trigger` | service, re-arm for another run |
+
+The pose is the ZED's **map** frame topic, not `~/odom`. The SDK applies loop
+closure to that one and deliberately never to odometry, and three laps of the
+speed course is about 300 m of travel returning to the same spot, which raw
+dead reckoning will not hold. `zed/config/cfr_zed2i.yaml` pins `area_memory`
+on rather than leaving it to whatever the installed wrapper defaults to;
+confirm on the car with
+
+```bash
+ros2 param get /zed/zed_node pos_tracking.area_memory
+```
+
+Note that the same setting makes `~/odom` jump as well -- the wrapper's
+`reset_odom_with_loop_closure` defaults to true -- so nothing should treat
+that topic as continuous.
+
+There is no map of the course and the line is not published anywhere at run
+time, but both courses park the car 0.70 m behind it, on the lane centerline,
+pointed down the lane. So the counter latches the pose the car held at the
+start and works relative to that: the line is the plane `line_offset` ahead.
+The car crosses it on the way out, which arms the counter rather than scoring
+-- three laps is four crossings in all.
+
+What stops the oval's far side counting is **heading**, not distance. The
+return leg passes through the plane of the line too, 14 m out and travelling
+the opposite way; at the line the car travels the way the run started. That
+holds for any start/finish line on any closed course, where "within a few
+metres of where we started" is a claim about how wide this particular course
+is -- and the course built on the day will not match the drawing. So the
+counter holds no model of the course's shape at all. `lateral_gate` is
+available as a backstop and is off by default.
+
+Counting is suspended unless the Arduino reports `AUTO_ACTIVE` with no e-stop.
+The rules allow an e-stop to lift the car past an obstacle or off the course,
+and when counting resumes the motion baseline is re-seeded, so the
+displacement cannot read as driving. If the car was set down more than
+`carry_tolerance` from where it stopped, the distance it had driven is thrown
+away too -- otherwise a car lifted back behind the line would score on the way
+over it using travel banked before the stop, a lap it never completed. An
+e-stop that does not move the car keeps its lap, so a pause costs nothing.
+
+A loop closure is the opposite case and is handled differently. It shows up as
+a pose step no ground vehicle could drive, and is reported and kept out of the
+distance travelled, but it re-seeds nothing -- the correction moves the
+estimate towards truth, and the latched reference is in the same corrected
+frame. A carry is the car really moving; a closure is an estimate improving.
+
+Every pass through the line is logged, counted or not, with the gate that
+rejected it:
+
+```
+lap 2 counted   heading +0.0 deg  lateral +0.00 m  travelled 114.0 m
+crossing rejected (heading)   heading +178.4 deg  lateral -13.9 m  travelled 48.1 m
+carried 40.03 m while stopped; lap distance restarted
+loop closure   jump 1.50 m  at s=0.8 d=0.0
+```
+
+That is how the gates get tuned against the real course rather than the
+idealized one. Every gate is a reason to reject, so a gate set too tight means
+a missed lap and a car that keeps driving, never one that stops early --
+watch `rejected` on `~/count` during practice runs.
+
+On the car, alongside the bridge and the ZED:
+
+```bash
+ros2 launch cfr_arduino_bridge lap_counter.launch.py laps:=3
+ros2 launch cfr_arduino_bridge lap_counter.launch.py free_run:=true
+```
+
+`free_run:=true` arms on the first pose instead of the start signal and counts
+without waiting for `AUTO_ACTIVE`, which is what makes the counter usable from
+`path_tui.py` with nothing else running. Both course launches set the right
+lap target themselves.
+
+`scripts/check_lap_counter.py` drives a synthetic run -- three laps, an e-stop
+and a carry over the line, and a loop-closure jump -- at a running node and
+checks what it reports. It needs no simulator and no car, and covers the
+wiring the unit tests cannot:
+
+```bash
+ros2 run cfr_arduino_bridge lap_counter_node.py --ros-args     -r pose:=/check/pose -r status:=/check/status -r go:=/check/go
+python3 scripts/check_lap_counter.py
+```
 
 ## Wire format
 

@@ -44,6 +44,15 @@ Run [`launch_zed.sh`](launch_zed.sh) to start the camera node and rosboard toget
 ./launch_zed.sh
 ```
 
+It passes [`config/cfr_zed2i.yaml`](config/cfr_zed2i.yaml) as `ros_params_override_path`, which pins positional tracking rather than inheriting whatever the installed wrapper defaults to. The setting that matters is `area_memory`, the SDK's loop closure: `lap_counter_node` reads `/zed/zed_node/pose` — the **map** frame pose, which the SDK corrects when it closes a loop — because three laps of the speed course is about 300 m of travel returning to the same spot, and `/zed/zed_node/odom` is pure visual odometry that is deliberately never corrected. `two_d_mode` is on as well, since the car is a ground vehicle.
+
+Confirm it took, on the car:
+```bash
+ros2 param get /zed/zed_node pos_tracking.area_memory
+```
+
+Note that `reset_odom_with_loop_closure` is left at the wrapper's default of true, which means `/zed/zed_node/odom` is re-initialized when a loop closes — so nothing should treat that topic as continuous either.
+
 Or start them manually in separate terminals:
 
 1. Launch the camera node:
@@ -75,9 +84,9 @@ These are all the topics observed from ZED:
 | `/zed/zed_node/depth/depth_registered/compressedDepth` | Compressed depth image |
 | `/zed/zed_node/depth/depth_registered/zstd` | zstd-compressed depth image |
 | `/zed/zed_node/imu/data` | IMU data |
-| `/zed/zed_node/odom` | Visual-inertial odometry |
+| `/zed/zed_node/odom` | Visual-inertial odometry; no loop closure, and reset when one happens |
 | `/zed/zed_node/point_cloud/cloud_registered` | Registered colored point cloud |
-| `/zed/zed_node/pose` | Camera pose (positional tracking) |
+| `/zed/zed_node/pose` | Camera pose in the map frame, loop closure applied; what `lap_counter_node` reads |
 | `/zed/zed_node/pose/status` | Positional tracking status |
 | `/zed/zed_node/rgb/color/rect/camera_info` | RGB camera intrinsics |
 | `/zed/zed_node/rgb/color/rect/image` | Rectified RGB image |
