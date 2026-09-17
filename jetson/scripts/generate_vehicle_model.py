@@ -231,6 +231,16 @@ def build_model(vehicle):
         f"<wheel_radius>{radius:.5f}</wheel_radius>"
         f"<steering_limit>{steering_limit:.5f}</steering_limit>",
         "      </plugin>",
+        "      <!-- Ground truth pose, bridged to /zed/zed_node/pose.  It stands in for",
+        "           the ZED's map frame topic, which the SDK corrects on loop closure;",
+        "           the ackermann odometry above drifts and is never corrected, exactly",
+        "           as the real camera's ~/odom is not.  lap_counter reads this one. -->",
+        '      <plugin filename="gz-sim-pose-publisher-system" name="gz::sim::systems::PosePublisher">',
+        "        <publish_model_pose>true</publish_model_pose><publish_link_pose>false</publish_link_pose>",
+        "        <publish_collision_pose>false</publish_collision_pose><publish_visual_pose>false</publish_visual_pose>",
+        "        <publish_nested_model_pose>false</publish_nested_model_pose><use_pose_vector_msg>false</use_pose_vector_msg>",
+        "        <update_frequency>30</update_frequency>",
+        "      </plugin>",
         "    </model>",
         END,
     ]

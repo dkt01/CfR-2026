@@ -117,6 +117,17 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# The Orin has no fixed IP: it's reached over a direct USB-gadget link
+# (192.168.55.1) or over Wi-Fi/LAN (something like 192.168.0.167) depending
+# on how it's plugged in, and both addresses front the same host key. Without
+# accept-new, connecting from a new address makes every ssh/scp/rsync call
+# below fail outright with "Host key verification failed" -- and worse, the
+# BatchMode probe just below reports that as "no public-key auth" and walks
+# the user into an unnecessary password prompt that would not have fixed
+# anything. accept-new still errors out if the host key ever actually
+# *changes*, so this doesn't disable verification, just first-contact TOFU.
+SSH_OPTS=(-o StrictHostKeyChecking=accept-new)
+
 # ssh, scp, and rsync each open their own connection, so a host that only
 # accepts a password (no key in ssh-agent) would otherwise ask for it once
 # per remote command below. ControlMaster connection sharing would fix that
@@ -124,10 +135,10 @@ done
 # (session multiplexing fails there), which this script must also support.
 # So instead: probe whether public-key auth alone gets in, and if not, read
 # the password once here and hand it to every remote command via sshpass.
-SSH_CMD=(ssh)
-SCP_CMD=(scp)
-RSYNC_RSH="ssh"
-if ! ssh -o BatchMode=yes -o ConnectTimeout=5 "${REMOTE_HOST}" true >/dev/null 2>&1; then
+SSH_CMD=(ssh "${SSH_OPTS[@]}")
+SCP_CMD=(scp "${SSH_OPTS[@]}")
+RSYNC_RSH="ssh ${SSH_OPTS[*]}"
+if ! ssh "${SSH_OPTS[@]}" -o BatchMode=yes -o ConnectTimeout=5 "${REMOTE_HOST}" true >/dev/null 2>&1; then
   # The `&&` chain keeps this compatible with `set -e`: if sshpass is missing,
   # or there is no controlling terminal to prompt on (e.g. run from cron), the
   # read is skipped rather than aborting the script on a failed redirect.
@@ -135,9 +146,9 @@ if ! ssh -o BatchMode=yes -o ConnectTimeout=5 "${REMOTE_HOST}" true >/dev/null 2
     echo
     export SSHPASS="${SSH_PASSWORD}"
     unset SSH_PASSWORD
-    SSH_CMD=(sshpass -e ssh)
-    SCP_CMD=(sshpass -e scp)
-    RSYNC_RSH="sshpass -e ssh"
+    SSH_CMD=(sshpass -e ssh "${SSH_OPTS[@]}")
+    SCP_CMD=(sshpass -e scp "${SSH_OPTS[@]}")
+    RSYNC_RSH="sshpass -e ssh ${SSH_OPTS[*]}"
   else
     echo "note: public-key login to ${REMOTE_HOST} isn't set up (or no" >&2
     echo "      terminal is available to ask for the password once), so" >&2
@@ -259,7 +270,7 @@ echo "building on ${REMOTE_HOST} in ${REMOTE_WS}"
   set -u
   mkdir -p ${REMOTE_WS}
   cd ${REMOTE_WS}
-  # Belt and suspenders alongside the clock sync above: if that couldn't set
+  # Belt and suspenders alongside the clock sync above: if that did not set
   # the time (no passwordless sudo), stale timestamps could still make Make
   # retain an older installed binary, so force these two packages to rebuild.
   rm -rf build/cfr_interfaces install/cfr_interfaces build/cfr_arduino_bridge install/cfr_arduino_bridge
