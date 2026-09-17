@@ -68,6 +68,44 @@ closes the run cleanly. The E-Stop is the safety device; the runner has no
 safety authority of its own and is subject to it, to the Arduino's 200 ms
 watchdog, and to the `AUTO_ARMED -> AUTO_ACTIVE` handshake like any other client.
 
+### Dry run in simulation
+
+Before taking any of this to the car, rehearse it against Gazebo:
+
+```bash
+ros2 launch cfr_arduino_bridge characterize.launch.py \
+    profile:=coastdown use_sim:=true require_estop_cycle:=false
+```
+
+`use_sim:=true` swaps the real Arduino and ZED for Gazebo and
+`sim_vehicle_node` (the same stand-in `simulation.launch.py` uses), which
+brings up its own world - no separately running simulation needed. This
+exercises the actual procedure end to end: arming, the gains handshake, every
+step's timing, the safety envelope's distance/duration limits, return-to-start,
+and the CSV/bag/`metadata.yaml` output that `analyze_run.py` reads afterward.
+That is the class of surprise worth finding on a laptop rather than at the
+test site - a typo in a profile's step list, a limit sized wrong, a launch
+argument that does not do what it says.
+
+Two things it cannot do, on purpose:
+
+- **No safety interlock.** The simulated status never reports E-Stop asserted,
+  so the normal arming sequence would hang forever waiting for it -
+  `require_estop_cycle:=false` is required, not optional, with `use_sim:=true`.
+  Never pass it on the real car.
+- **No plant.** `sim_vehicle_node` is an ideal, instant-response model with no
+  ESC deadband, lag, or PID loop - it accepts every `speed_*` gain a profile
+  sends (so a gains-setting profile does not abort) but ignores all of them.
+  Longitudinal profiles (`coastdown`, `pulse_staircase`, `brake_sweep`,
+  `tune_profile`) will run to completion and produce a `report.md`, but the
+  numbers in it describe the ideal model, not the car, and none of them belong
+  in `vehicle.yaml`. Steering profiles (`steer_authority`, `skidpad`,
+  `step_steer`) at least exercise real Gazebo kinematics and collision, for
+  whatever that is worth pending A6/A8.
+
+`world:=` picks the course (default `speed_course.sdf`); `gui:=true` opens the
+Gazebo window instead of running headless, if there is an authorized display.
+
 ### When Wi-Fi drops
 
 It will, at range. It does not matter. The run is autonomous once armed and

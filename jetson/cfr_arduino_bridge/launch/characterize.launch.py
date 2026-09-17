@@ -25,14 +25,21 @@ from launch.actions import (
     DeclareLaunchArgument,
     EmitEvent,
     ExecuteProcess,
+    IncludeLaunchDescription,
     OpaqueFunction,
     RegisterEventHandler,
+    SetEnvironmentVariable,
 )
-from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
 from launch.events import Shutdown
-from launch.substitutions import LaunchConfiguration
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import (
+    EnvironmentVariable,
+    LaunchConfiguration,
+    PathJoinSubstitution,
+)
 from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
 
 
 def _resolve_profile(share, name):
@@ -85,6 +92,15 @@ def _launch_setup(context, *args, **kwargs):
         # alone for tune_profile, which scores the loop as it will be flown.
         bridge_overrides["speed_slew_rate"] = float(slew)
 
+    use_sim = LaunchConfiguration("use_sim").perform(context).lower() in ("true", "1")
+    # The real Arduino has its own node name; the Gazebo stand-in is a
+    # different node ("sim_vehicle", see simulation.launch.py), so the runner
+    # has to be told which one hosts the (no-op, in sim) speed_* gains
+    # parameter service.
+    bridge_node_name = "/sim_vehicle" if use_sim else "/arduino_bridge"
+
+    use_zed = LaunchConfiguration("use_zed").perform(context).lower() in ("true", "1")
+
     bridge = Node(
         package="cfr_arduino_bridge",
         executable="arduino_bridge_node",
@@ -103,7 +119,71 @@ def _launch_setup(context, *args, **kwargs):
             f"camera_model:={LaunchConfiguration('zed_model').perform(context)}",
         ],
         output="screen",
-        condition=IfCondition(LaunchConfiguration("use_zed")),
+    )
+
+    # Gazebo stand-in for the Arduino + ZED, so the characterization procedure
+    # itself - arming, the safety envelope, gains handshake, CSV/bag output -
+    # can be rehearsed before it ever runs against the real car.  The
+    # simulated vehicle is an ideal, instant-response model (see
+    # sim_vehicle_node.cpp): this exercises the software, not the plant, and
+    # produces no data that belongs in vehicle.yaml.
+    world_name = LaunchConfiguration("world").perform(context)
+    world_path = (
+        world_name
+        if os.path.isabs(world_name)
+        else os.path.join(share, "worlds", world_name)
+    )
+    resource_path = SetEnvironmentVariable(
+        "GZ_SIM_RESOURCE_PATH",
+        [
+            PathJoinSubstitution([FindPackageShare("cfr_arduino_bridge"), ".."]),
+            ":",
+            EnvironmentVariable("GZ_SIM_RESOURCE_PATH", default_value=""),
+        ],
+    )
+    gui = LaunchConfiguration("gui").perform(context).lower() in ("true", "1")
+    gz_flags = "-r -v 3" if gui else "-r -s -v 3"
+    gazebo = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            PathJoinSubstitution(
+                [FindPackageShare("ros_gz_sim"), "launch", "gz_sim.launch.py"]
+            )
+        ),
+        launch_arguments={"gz_args": f"{gz_flags} {world_path}"}.items(),
+    )
+    sim_vehicle = Node(
+        package="cfr_arduino_bridge",
+        executable="sim_vehicle_node",
+        name="sim_vehicle",
+        output="screen",
+        parameters=[params_file, {"use_sim_time": True}, bridge_overrides],
+        remappings=[
+            ("~/drive_cmd", "/drive_cmd"),
+            ("~/status", "/arduino_bridge/status"),
+            # Gazebo's AckermannSteering plugin subscribes here (see the world
+            # file); missing this remap leaves the vehicle receiving nothing
+            # and looking stationary with no error anywhere.
+            ("cmd_vel", "/sim/cmd_vel"),
+        ],
+    )
+    gazebo_bridge = Node(
+        package="ros_gz_bridge",
+        executable="parameter_bridge",
+        output="screen",
+        arguments=[
+            # ROS->GZ: without this, sim_vehicle_node's Twist never reaches
+            # Gazebo's transport - the AckermannSteering plugin subscribes via
+            # gz transport, not ROS, and the two only meet through this bridge.
+            "/sim/cmd_vel@geometry_msgs/msg/Twist]gz.msgs.Twist",
+            "/model/slash/odometry@nav_msgs/msg/Odometry[gz.msgs.Odometry",
+            "/model/slash/pose@geometry_msgs/msg/PoseStamped[gz.msgs.Pose",
+            "/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock",
+        ],
+        remappings=[
+            ("/model/slash/odometry", "/zed/zed_node/odom"),
+            ("/model/slash/pose", "/zed/zed_node/pose"),
+        ],
+        parameters=[{"use_sim_time": True}],
     )
 
     runner = Node(
@@ -125,6 +205,8 @@ def _launch_setup(context, *args, **kwargs):
                 .perform(context)
                 .lower()
                 == "true",
+                "bridge_node": bridge_node_name,
+                "use_sim_time": use_sim,
             }
         ],
         remappings=[
@@ -146,7 +228,15 @@ def _launch_setup(context, *args, **kwargs):
         OnProcessExit(target_action=runner, on_exit=[EmitEvent(event=Shutdown())])
     )
 
-    return [banner, bridge, zed, runner, shutdown_with_runner]
+    actions = [banner]
+    if use_sim:
+        actions += [resource_path, gazebo, sim_vehicle, gazebo_bridge]
+    else:
+        actions.append(bridge)
+        if use_zed:
+            actions.append(zed)
+    actions += [runner, shutdown_with_runner]
+    return actions
 
 
 def generate_launch_description():
@@ -216,6 +306,27 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "notes", default_value="", description="Recorded in metadata"
+            ),
+            DeclareLaunchArgument(
+                "use_sim",
+                default_value="false",
+                description="Run against Gazebo (sim_vehicle_node) instead of the real "
+                "Arduino and ZED. Rehearses the procedure, not the plant - the sim "
+                "vehicle is an ideal instant-response model, so runs against it produce "
+                "no data for vehicle.yaml. The sim never reports E-Stop asserted, so "
+                "pass require_estop_cycle:=false alongside this.",
+            ),
+            DeclareLaunchArgument(
+                "world",
+                default_value="speed_course.sdf",
+                description="Gazebo world (bare filename under worlds/, or an absolute "
+                "path); only used with use_sim:=true",
+            ),
+            DeclareLaunchArgument(
+                "gui",
+                default_value="false",
+                description="Show the Gazebo GUI; only used with use_sim:=true and "
+                "needs an authorized display",
             ),
             OpaqueFunction(function=_launch_setup),
         ]

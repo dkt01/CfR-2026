@@ -30,6 +30,25 @@ namespace cfr_arduino_bridge {
       reverse_neutral_coast_deceleration_ =
           declare_parameter<double>("reverse_neutral_coast_deceleration", neutral_coast_deceleration_);
 
+      // Declared so characterization profiles built for the real bridge's
+      // speed_* gains (and speed_trace) can set them here without the
+      // parameter service rejecting an undeclared name and aborting the run.
+      // This model has no PID loop to tune -- it is ignored, on purpose: a
+      // dry run against Gazebo exercises the launch/runner/safety-envelope
+      // procedure, not the plant, which is why the real numbers still come
+      // from the car.
+      declare_parameter<bool>("speed_trace", false);
+      for (const char* name : {"speed_ks",
+                               "speed_kv",
+                               "speed_kp",
+                               "speed_ki",
+                               "speed_kd",
+                               "speed_i_limit",
+                               "speed_output_limit",
+                               "speed_brake_limit"}) {
+        declare_parameter<double>(name, 0.0);
+      }
+
       if (wheelbase_ <= 0.0 || max_speed_ <= 0.0 || max_steering_angle_ <= 0.0 || neutral_speed_deadband_ < 0.0 ||
           neutral_coast_deceleration_ < 0.0 || forward_neutral_coast_deceleration_ < 0.0 ||
           reverse_neutral_coast_deceleration_ < 0.0) {

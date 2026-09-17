@@ -144,6 +144,12 @@ if(BUILD_TESTING)
   # lap_counter_node's crossing logic, imported straight out of src/ the same
   # way -- also free of ROS, so it also needs no workspace.
   ament_add_pytest_test(test_lap_counter test/test_lap_counter.py)
+
+  # maneuver_runner_node's arming/abort state machine -- unlike the two tests
+  # above, this one has no ROS-free module to import: it constructs a real
+  # rclpy Node and drives it with cfr_interfaces/nav_msgs messages on a fake
+  # clock, so it needs the built workspace rather than running standalone.
+  ament_add_pytest_test(test_maneuver_runner test/test_maneuver_runner.py)
 endif()
 
 ament_export_include_directories(include)

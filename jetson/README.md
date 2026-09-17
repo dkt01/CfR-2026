@@ -900,6 +900,12 @@ directions cancels the path's grade into the bargain.
 | `brake_sweep` | 60 m straight | braking authority against `speed_brake_limit` |
 | `tune_profile` | 60 m straight | closed-loop scoring, matching the on-blocks table |
 
+Rehearse the procedure against Gazebo before the car ever sees it:
+`use_sim:=true require_estop_cycle:=false` swaps in `sim_vehicle_node` (bringing
+up its own world), exercising arming, gains handshake, limits and output end to
+end - but with no E-Stop interlock and no plant to characterize. See
+[Dry run in simulation](../docs/characterization.md#dry-run-in-simulation).
+
 Afterwards:
 
 ```bash
