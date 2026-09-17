@@ -27,6 +27,19 @@ cmd_sync() {
         esac
     done
 
+    # --host is easy to pass as a bare hostname/IP (the sync target, e.g.
+    # "192.168.0.167" copied from a ping/nmap result) without the "user@"
+    # SSH needs. That used to fail the reachability check below while
+    # blaming power/network -- ssh was actually trying to auth as whatever
+    # the local shell's username is. Default the user the same way
+    # syncSoftware.sh's own ORIN_HOST does.
+    local default_user="${ORIN_HOST:-tejam@192.168.55.1}"
+    default_user="${default_user%%@*}"
+    if [ -n "$host" ] && [[ "$host" != *@* ]]; then
+        log "no user in --host '$host' -- assuming '$default_user' (pass user@host to override)"
+        host="${default_user}@${host}"
+    fi
+
     local args=(--build)
     [ "$do_test" = true ] && args=(--test)
     [ -n "$host" ] && args+=(--host "$host")
@@ -39,7 +52,7 @@ cmd_sync() {
     local check_host="${host:-${ORIN_HOST:-tejam@192.168.55.1}}"
     log "checking Orin reachability ($check_host)"
     if ! ssh -o ConnectTimeout=5 -o BatchMode=yes "$check_host" true 2>/dev/null; then
-        echo "[deploy.sh] can't reach $check_host over ssh -- is the Orin powered on and connected (USB-Ethernet or the robot's network)?" >&2
+        echo "[deploy.sh] can't reach $check_host over ssh -- either it's not powered on/connected (USB-Ethernet or Wi-Fi), or the user/host is wrong (expected user@host, e.g. tejam@192.168.0.167; got '$check_host')" >&2
         exit 1
     fi
 

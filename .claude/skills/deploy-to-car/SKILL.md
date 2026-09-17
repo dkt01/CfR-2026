@@ -14,8 +14,14 @@ on purpose (launching real hardware).
 .claude/skills/deploy-to-car/scripts/deploy.sh sync                # sync + colcon build on the Orin
 .claude/skills/deploy-to-car/scripts/deploy.sh sync --test          # also colcon test there
 .claude/skills/deploy-to-car/scripts/deploy.sh sync --dry-run       # show what would transfer, change nothing
-.claude/skills/deploy-to-car/scripts/deploy.sh sync --host orin.local
+.claude/skills/deploy-to-car/scripts/deploy.sh sync --host tejam@192.168.0.167  # e.g. over Wi-Fi instead of USB-Ethernet
 ```
+
+`--host` without a `user@` prefix (e.g. `--host 192.168.0.167`) has the
+user defaulted for you (from `ORIN_HOST`, normally `tejam`) rather than
+failing -- a bare IP used to make the reachability check below fail while
+blaming "is the Orin powered on", when the real problem was ssh trying to
+authenticate as the local machine's own user.
 
 This is a thin wrapper around `jetson/scripts/syncSoftware.sh --build`, which
 already does the real work (rsync with the right excludes, then `ssh` +
