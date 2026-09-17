@@ -19,12 +19,12 @@ namespace cfr_arduino_bridge {
     kTurn = 1,
   };
 
-  /// One leg of a path.  Units match ROS conventions: metres, radians,
+  /// One leg of a path.  Units match ROS conventions: meters, radians,
   /// positive turn_angle is left (counter-clockwise, REP-103), matching the
   /// sign of DriveCommand::steering.
   struct Segment {
     SegmentType type = SegmentType::kStraight;
-    double distance = 0.0;    ///< STRAIGHT: target distance, metres.  Negative reverses.
+    double distance = 0.0;    ///< STRAIGHT: target distance, meters.  Negative reverses.
     double turn_angle = 0.0;  ///< TURN: target heading change, radians.  Should
                               ///< satisfy |turn_angle| <= kPi.
   };

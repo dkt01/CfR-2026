@@ -1,0 +1,40 @@
+# CfR overrides for the ZED 2i wrapper's positional tracking.
+#
+# Passed to zed_camera.launch.py as `ros_params_override_path`; see
+# launch_zed.sh.  Everything not named here keeps the wrapper's own default.
+#
+# The point of this file is that lap_counter reads `/zed/zed_node/pose` -- the
+# map frame pose, which the SDK corrects when it closes a loop -- rather than
+# `/zed/zed_node/odom`, which is pure visual odometry and is deliberately
+# never corrected.  Three laps of the speed course is about 300 m of travel
+# returning to the same spot, which raw odometry will not hold.
+#
+# Loop closure is on by default in the wrapper, so most of this is pinning
+# rather than changing.  It is written down anyway: the defaults belong to
+# whatever wrapper revision happens to be built on the Orin, and a run is not
+# the time to discover one of them moved.  Verify on the car with
+#
+#     ros2 param get /zed/zed_node pos_tracking.area_memory
+
+/**:
+  ros__parameters:
+    pos_tracking:
+      pos_tracking_enabled: true
+      # Detect loop closure.  This is what keeps the start/finish line where
+      # the counter latched it over a long run.
+      area_memory: true
+      # Re-initialize odometry to the last valid pose on a closure.  Left on
+      # to match the wrapper default -- but note it means `~/odom` jumps too,
+      # which is why nothing here treats that topic as continuous.
+      reset_odom_with_loop_closure: true
+      # The car is a ground vehicle: pin Z, roll and pitch.  Keeps the pose
+      # from wandering vertically on a rough course, and matches the 2D maths
+      # lap_counter does on the pose it gets.
+      two_d_mode: true
+      fixed_z_value: 0.0
+      imu_fusion: true
+      # Align the tracking world to gravity, keeping the yaw the camera booted
+      # at.  The lap counter latches its own reference at the start signal, so
+      # it does not care where the map origin is, only that it holds still.
+      set_gravity_as_origin: true
+      publish_odom_pose: true

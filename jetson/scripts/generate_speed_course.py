@@ -18,8 +18,11 @@ courses are separated by y instead, so it selects 82 bales there rather than
 laid out up to 39 m away and rotated a quarter turn from the ones committed in
 the world, so the committed Speed Course came from a different revision again.
 Until that is reconciled, regenerating bales from a drawing that does not match
-them would silently replace the course, so the bale block is only rewritten
-when a DXF is actually passed.
+them would silently replace the course, so the bale layout is only re-derived
+when a DXF is actually passed.  The bale *block* is rewritten either way,
+because the bale the start signal's board now stands in has to move along the
+wall to clear it -- without a DXF it is read out of the world, moved, and
+written back, which leaves the other 201 exactly as they were.
 """
 
 from __future__ import annotations
@@ -41,14 +44,33 @@ PACKAGE = Path(__file__).parents[1] / "cfr_arduino_bridge"
 WORLD_FILE = PACKAGE / "worlds/speed_course.sdf"
 LAYOUT_FILE = PACKAGE / "config/speed_course_layout.yaml"
 
-# Where the car waits, matching the hand written <model name="slash"> pose.
+# Where the car waits, matching the hand written <model name="slash"> pose,
+# and the direction it drives away in -- the yaw in that same pose.
 VEHICLE_START = (20.15, 4.76)
+HEADING = math.pi
 
-# Where the start signal stands, in world metres.  Outside the outer bale wall
-# on the start straight, 4.1 m ahead of the car at a bearing of 20 degrees,
-# which clears the 14 in wall between the two by 54 mm.  scripts/start_signal.py
-# explains the three constraints; check_signal_sightline.py re-checks them.
-SIGNAL_POSITION = (16.00, 3.40)
+# The start/finish line, on the lane centerline.  Nothing in this world marks
+# it: the bales and the car are all there is, and the drawing only says the car
+# starts behind the line.  So it is taken to sit the same 0.70 m ahead of the
+# waiting car as the obstacle course's line does, which keeps the two start
+# sections identical from the driver's seat.
+LINE_AHEAD_OF_CAR = 0.70
+START_LINE = (
+    VEHICLE_START[0] + LINE_AHEAD_OF_CAR * math.cos(HEADING),
+    VEHICLE_START[1] + LINE_AHEAD_OF_CAR * math.sin(HEADING),
+)
+
+# Distance from the lane centerline to the inner edge of the bale border on the
+# car's left, which is the side the drawing stands the signal on.  Measured off
+# the committed wall: its bales sit at y = 4.0673 and are 18 in deep, so their
+# inner faces stand at 4.2959, which is 0.464 m from the car's line.
+# check_signal_sightline.py re-measures it against the bales in the world.
+LANE_EDGE = 0.464
+
+# Where the start signal stands, in world meters: three bales down the wall
+# from the start line and in line with the border's inner edge, the same as on
+# the obstacle course.  See scripts/start_signal.py.
+SIGNAL_POSITION = start_signal.position(START_LINE, HEADING, LANE_EDGE)
 
 
 def bale_xml(index: int, x: float, y: float, yaw: float) -> str:
@@ -135,8 +157,23 @@ def dxf_speed_bales(dxf_file: Path) -> list[tuple[float, float, float]]:
     ]
 
 
-def build_course(dxf_file: Path) -> str:
-    bales = dxf_speed_bales(dxf_file)
+def world_bales(contents: str) -> list[tuple[float, float, float]]:
+    """The bale poses already written into the world, in world meters.
+
+    The bale block is only re-derived from the drawing when a DXF is passed --
+    see the module docstring -- but the bales the start signal displaces move
+    either way, so the committed ones have to be readable back out.
+    """
+    pattern = (
+        r'<collision name="bale_\d+_collision"><pose>'
+        r"(-?[\d.]+) (-?[\d.]+) -?[\d.]+ 0 0 (-?[\d.]+)</pose>"
+    )
+    return [
+        (float(x), float(y), float(yaw)) for x, y, yaw in re.findall(pattern, contents)
+    ]
+
+
+def build_course(bales: list[tuple[float, float, float]]) -> str:
     lines = [
         "    <!-- 135 ft by 47 ft speed course, built from individual 14 x 18 x 36 in straw bales. -->",
         '    <model name="course_bales"><static>true</static><link name="bales">',
@@ -155,27 +192,42 @@ def main() -> None:
         type=Path,
         nargs="?",
         help=(
-            "site-layout DXF; rewrites the straw-bale block when given. "
-            "The start signal is rewritten either way."
+            "site-layout DXF; re-derives the straw-bale layout when given. "
+            "The start signal, and the bales it displaces, are rewritten "
+            "either way."
         ),
     )
     args = parser.parse_args()
     contents = WORLD_FILE.read_text()
 
-    if args.dxf_file is not None:
-        replacement = build_course(args.dxf_file) + '\n\n    <model name="slash">'
-        contents, replacements = re.subn(
-            r"    <!-- (?:44\.7 m by 34\.5 m drawing area|135 ft by 47 ft speed course).*?    <model name=\"slash\">",
-            replacement,
-            contents,
-            flags=re.DOTALL,
-        )
-        if replacements != 1:
-            raise RuntimeError("Could not find the existing course-bale block")
+    # From the drawing when one is passed, and otherwise straight back out of
+    # the world.  The block is rewritten either way, because the bale the
+    # signal's board stands in has to move along the wall to clear it.
+    bales = (
+        dxf_speed_bales(args.dxf_file)
+        if args.dxf_file is not None
+        else world_bales(contents)
+    )
+    cleared = start_signal.clear_bales(
+        bales, SIGNAL_POSITION, HEADING, (BALE_LENGTH, BALE_WIDTH)
+    )
+    shifted = sum(1 for before, after in zip(bales, cleared) if before != after)
+    if shifted:
+        print(f"moved {shifted} bale(s) along the wall to clear the start signal")
+
+    replacement = build_course(cleared) + '\n\n    <model name="slash">'
+    contents, replacements = re.subn(
+        r"    <!-- (?:44\.7 m by 34\.5 m drawing area|135 ft by 47 ft speed course).*?    <model name=\"slash\">",
+        replacement,
+        contents,
+        flags=re.DOTALL,
+    )
+    if replacements != 1:
+        raise RuntimeError("Could not find the existing course-bale block")
 
     signal = (
         "    <!-- start signal: generated by generate_speed_course.py -->\n"
-        + start_signal.models(SIGNAL_POSITION, VEHICLE_START)
+        + start_signal.models(SIGNAL_POSITION, HEADING)
         + "    <!-- end start signal -->"
     )
     contents, replacements = re.subn(
@@ -197,7 +249,7 @@ def main() -> None:
         start_signal.layout_file(
             "cfr_speed_course",
             SIGNAL_POSITION,
-            VEHICLE_START,
+            HEADING,
             "generate_speed_course.py",
         ),
         newline="\n",

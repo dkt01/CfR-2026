@@ -2,7 +2,7 @@
 
     ros2 launch cfr_arduino_bridge obstacle_course.launch.py
 
-Adds the randomiser and its layout to the shared simulation bringup.  See
+Adds the randomizer and its layout to the shared simulation bringup.  See
 speed_course.launch.py for the other course.
 """
 
@@ -47,6 +47,7 @@ def generate_launch_description():
             "sensors": LaunchConfiguration("sensors"),
             "world_name": "cfr_obstacle_course",
             "randomizer": "true",
+            "laps": "2",
             "layout_file": PathJoinSubstitution(
                 [package_share, "config", "obstacle_course_layout.yaml"]
             ),
