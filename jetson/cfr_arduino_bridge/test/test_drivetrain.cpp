@@ -26,7 +26,7 @@ TEST(SpurRpmToWheelRpm, RejectsNonPositiveRatio) {
 
 TEST(WheelRpmToSpeed, OneRevPerSecondIsOneCircumference) {
   EXPECT_DOUBLE_EQ(WheelRpmToSpeed(60.0), kPi * kTireDiameterM);
-  // A 1/pi metre tire has a 1 m circumference.
+  // A 1/pi meter tire has a 1 m circumference.
   EXPECT_NEAR(WheelRpmToSpeed(60.0, 1.0 / kPi), 1.0, 1e-12);
 }
 

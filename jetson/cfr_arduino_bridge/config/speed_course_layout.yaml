@@ -8,7 +8,7 @@ obstacle_randomizer:
     world: cfr_speed_course
     start_signal:
       # Joint setpoint topic, bridged from Gazebo by
-      # simulation.launch.py.  The randomiser ramps the setpoint
+      # simulation.launch.py.  The randomizer ramps the setpoint
       # across it rather than commanding the far end, so the arm
       # turns at a stated rate instead of as fast as it can.
       topic: /start_signal/arm
@@ -16,5 +16,5 @@ obstacle_randomizer:
       green_angle: 1.57080
       # Where the signal stands, for reference; the arm is moved
       # through the joint, so nothing here is commanded as a pose.
-      pose: [16.0000, 3.4000, 0.8130]
-      yaw: 1.88748
+      pose: [17.0116, 3.8895, 0.8130]
+      yaw: 1.57080

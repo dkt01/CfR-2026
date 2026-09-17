@@ -1,7 +1,7 @@
 """Shared Gazebo Harmonic bringup behind the two per-course launch files.
 
 Prefer `speed_course.launch.py` or `obstacle_course.launch.py`, which name a
-world and its randomiser layout.  This file is what they both include, and is
+world and its randomizer layout.  This file is what they both include, and is
 still usable directly with `world:=`.
 """
 
@@ -24,6 +24,7 @@ from launch.substitutions import (
     PathJoinSubstitution,
 )
 from launch_ros.actions import Node
+from launch_ros.descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 # Both worlds carry these two markers, one at world level and one inside the
@@ -41,7 +42,7 @@ SENSORS_SYSTEM = """<plugin filename="gz-sim-sensors-system" name="gz::sim::syst
       <render_engine>ogre2</render_engine>
     </plugin>"""
 
-# One rgbd_camera rather than a colour and a depth sensor: they would share a
+# One rgbd_camera rather than a color and a depth sensor: they would share a
 # calibration anyway, and Gazebo publishes image, depth_image, points and
 # camera_info off this one.  simulation.launch.py's bridge renames them to the
 # ZED's topics below.
@@ -121,7 +122,7 @@ def generate_launch_description():
         "world_name",
         default_value="cfr_speed_course",
         # The <world name> inside the SDF, which is not derivable from its
-        # path.  teleport_api and the randomiser both address Gazebo services
+        # path.  teleport_api and the randomizer both address Gazebo services
         # under it.
         description="Name of the world inside the SDF",
     )
@@ -136,6 +137,11 @@ def generate_launch_description():
             [package_share, "config", "obstacle_course_layout.yaml"]
         ),
         description="Bounds for the course's variable elements",
+    )
+    laps_arg = DeclareLaunchArgument(
+        "laps",
+        default_value="3",
+        description="Laps before lap_counter latches ~/done; 3 speed, 2 obstacle",
     )
 
     # Mesh URIs in the worlds are model://cfr_arduino_bridge/meshes/..., which
@@ -226,7 +232,7 @@ def generate_launch_description():
 
     # The camera topics are bridged under the names Gazebo's rgbd_camera
     # sensor actually publishes and renamed to the ZED's on the ROS side.
-    # Colour and depth come from one sensor, so they share a calibration and
+    # Color and depth come from one sensor, so they share a calibration and
     # there is only one camera_info to bridge.
     gazebo_bridge = Node(
         package="ros_gz_bridge",
@@ -235,18 +241,23 @@ def generate_launch_description():
         arguments=[
             "/sim/cmd_vel@geometry_msgs/msg/Twist]gz.msgs.Twist",
             "/model/slash/odometry@nav_msgs/msg/Odometry[gz.msgs.Odometry",
+            # Ground truth, standing in for the ZED's map-frame pose: the
+            # ackermann plugin's odometry above drifts and is never
+            # corrected, exactly as the real camera's ~/odom is not.
+            "/model/slash/pose@geometry_msgs/msg/PoseStamped[gz.msgs.Pose",
             "/zed/gz/rgbd/image@sensor_msgs/msg/Image[gz.msgs.Image",
             "/zed/gz/rgbd/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo",
             "/zed/gz/rgbd/depth_image@sensor_msgs/msg/Image[gz.msgs.Image",
             "/zed/gz/rgbd/points@sensor_msgs/msg/PointCloud2[gz.msgs.PointCloudPacked",
             "/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock",
-            # Setpoint for the start signal's arm joint.  The randomiser ramps
+            # Setpoint for the start signal's arm joint.  The randomizer ramps
             # this to turn the arm at a stated rate; going through the bridge
             # rather than the gz CLI is what makes a smooth sweep affordable.
             "/start_signal/arm@std_msgs/msg/Float64]gz.msgs.Double",
         ],
         remappings=[
             ("/model/slash/odometry", "/zed/zed_node/odom"),
+            ("/model/slash/pose", "/zed/zed_node/pose"),
             ("/zed/gz/rgbd/image", "/zed/zed_node/left/image_rect_color"),
             (
                 "/zed/gz/rgbd/camera_info",
@@ -255,6 +266,19 @@ def generate_launch_description():
             ("/zed/gz/rgbd/depth_image", "/zed/zed_node/depth/depth_registered"),
             ("/zed/gz/rgbd/points", "/zed/zed_node/point_cloud/cloud_registered"),
         ],
+    )
+
+    # Only with the camera rendered, since it has nothing to read otherwise.
+    # The arm turns over about a second and the detector wants a couple of
+    # frames of it, so llvmpipe's ~5 Hz is enough; see the README.
+    start_signal_detector = Node(
+        package="cfr_arduino_bridge",
+        executable="start_signal_detector_node.py",
+        name="start_signal_detector",
+        output="screen",
+        parameters=[LaunchConfiguration("params_file"), {"use_sim_time": True}],
+        remappings=[("image", "/zed/zed_node/left/image_rect_color")],
+        condition=IfCondition(LaunchConfiguration("sensors")),
     )
 
     cmd_vel_to_drive = Node(
@@ -275,6 +299,29 @@ def generate_launch_description():
         remappings=[("~/odom", "/zed/zed_node/odom"), ("cmd_vel", "/cmd_vel")],
     )
 
+    lap_counter = Node(
+        package="cfr_arduino_bridge",
+        executable="lap_counter_node.py",
+        name="lap_counter",
+        output="screen",
+        parameters=[
+            LaunchConfiguration("params_file"),
+            {"use_sim_time": True},
+            # Typed, because a launch argument arrives as the string "3" and
+            # the node declares this one as an int.
+            {
+                "target_laps": ParameterValue(
+                    LaunchConfiguration("laps"), value_type=int
+                )
+            },
+        ],
+        remappings=[
+            ("pose", "/zed/zed_node/pose"),
+            ("status", "/arduino_bridge/status"),
+            ("go", "/start_signal_detector/go"),
+        ],
+    )
+
     return LaunchDescription(
         [
             params_arg,
@@ -285,6 +332,7 @@ def generate_launch_description():
             world_name_arg,
             randomizer_arg,
             layout_arg,
+            laps_arg,
             resource_path,
             gazebo,
             websocket_server,
@@ -292,7 +340,9 @@ def generate_launch_description():
             randomizer,
             command_bridge,
             gazebo_bridge,
+            start_signal_detector,
             cmd_vel_to_drive,
             path_follower,
+            lap_counter,
         ]
     )

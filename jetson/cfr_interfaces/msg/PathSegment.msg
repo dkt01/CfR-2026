@@ -8,7 +8,7 @@ uint8 TURN=1
 
 uint8 type
 
-# STRAIGHT: target distance, metres.  Negative reverses.  Ignored for TURN.
+# STRAIGHT: target distance, meters.  Negative reverses.  Ignored for TURN.
 float32 distance
 
 # TURN: target heading change, radians.  Positive is left (counter-clockwise,

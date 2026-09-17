@@ -3,7 +3,7 @@
     ros2 launch cfr_arduino_bridge speed_course.launch.py
 
 The Speed Course has no buckets or hoops, but it starts on the same visual
-signal the Obstacle Course does, so the randomiser runs here too -- with a
+signal the Obstacle Course does, so the randomizer runs here too -- with a
 layout that carries only the start signal.  See obstacle_course.launch.py for
 the other course.
 """
@@ -49,6 +49,7 @@ def generate_launch_description():
             "sensors": LaunchConfiguration("sensors"),
             "world_name": "cfr_speed_course",
             "randomizer": "true",
+            "laps": "3",
             "layout_file": PathJoinSubstitution(
                 [package_share, "config", "speed_course_layout.yaml"]
             ),

@@ -75,6 +75,14 @@ install(TARGETS arduino_bridge_node cmd_vel_to_drive_node sim_vehicle_node path_
 )
 
 install(PROGRAMS src/teleport_api.py src/maneuver_runner_node.py src/obstacle_randomizer_node.py
+  src/start_signal_detector_node.py src/lap_counter_node.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+# These are imported from beside their nodes, so they are installed into the
+# same directory -- but as modules rather than programs, since they have no
+# shebang and are not meant to be run.
+install(FILES src/start_signal_detector.py src/lap_counter.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -91,6 +99,7 @@ install(DIRECTORY config launch meshes worlds
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
+  find_package(ament_cmake_pytest REQUIRED)
 
   ament_add_gtest(test_protocol test/test_protocol.cpp)
   target_link_libraries(test_protocol cfr_arduino_protocol)
@@ -109,7 +118,6 @@ if(BUILD_TESTING)
   # Offline characterization analysis: trace parsers, fits, the run loader and
   # the vehicle.yaml patcher.  Plain unittest, so it also runs as a bare script
   # on a laptop with no test runner installed - which is where runs get analysed.
-  find_package(ament_cmake_pytest REQUIRED)
   ament_add_pytest_test(test_characterize test/test_characterize.py)
 
   # The Gazebo vehicle model is generated from config/vehicle.yaml.  This fails
@@ -127,6 +135,14 @@ if(BUILD_TESTING)
             --world "${CMAKE_CURRENT_SOURCE_DIR}/worlds/speed_course.sdf"
     OUTPUT_FILE "${CMAKE_BINARY_DIR}/test_results/${PROJECT_NAME}/test_vehicle_model_up_to_date.txt"
   )
+
+  # start_signal_detector_node's color decision, which the test imports
+  # straight out of src/ -- it is free of ROS, so it needs no workspace.
+  ament_add_pytest_test(test_start_signal_detector test/test_start_signal_detector.py)
+
+  # lap_counter_node's crossing logic, imported straight out of src/ the same
+  # way -- also free of ROS, so it also needs no workspace.
+  ament_add_pytest_test(test_lap_counter test/test_lap_counter.py)
 endif()
 
 ament_export_include_directories(include)

@@ -7,7 +7,7 @@ pieces already sit in the right place relative to each other, and only the
 placement of whole obstacles on the course has to come from the DXF.
 
 Each obstacle is emitted as one STL in a canonical local frame -- footprint
-centred on the origin, ground at ``z = 0`` -- so the generator can place it
+centered on the origin, ground at ``z = 0`` -- so the generator can place it
 with a plain ``<pose>`` and nothing has to know about the CAD origin.
 
 Meshes are visual only -- collision stays on primitives in the generated SDF
@@ -46,7 +46,7 @@ import trimesh
 # shifted by this so that the course floor is z = 0.
 GROUND_Z = -5.2336
 
-# Tessellation tolerance, in metres, before decimation.  Finer than the final
+# Tessellation tolerance, in meters, before decimation.  Finer than the final
 # meshes need, because decimating a good mesh beats tessellating a coarse one.
 TOL_LINEAR = 0.02
 TOL_ANGULAR = 0.4
@@ -59,7 +59,7 @@ TOL_ANGULAR = 0.4
 # instance each mesh is cut from.
 #
 # `budget` is the triangle count to decimate to.  Without `anchor` the local
-# origin is the footprint centre at ground level; `"pivot"` instead centres
+# origin is the footprint center at ground level; `"pivot"` instead centers
 # the signal arms on the axis they swing about.
 OBSTACLES = [
     {
@@ -273,7 +273,7 @@ def main() -> int:
             # arm lies along +x and the model can state its own angle.
             origin = whole.vertices.mean(axis=0)
             # ptp is unchanged by translation, so the angle measured on the
-            # part in place is still the angle to undo once it is centred.
+            # part in place is still the angle to undo once it is centered.
             swing = trimesh.transformations.rotation_matrix(
                 plate_angle(whole), [0, 1, 0], [0, 0, 0]
             )
