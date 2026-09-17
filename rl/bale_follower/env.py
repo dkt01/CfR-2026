@@ -33,10 +33,13 @@ import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
 from tf2_msgs.msg import TFMessage
+from sensor_msgs.msg import PointCloud2
 
 import bale_geometry
 import zed_sim
 from reward import RewardConfig, compute_reward, forward_progress
+from speed_boost import BoostConfig, BoostLimiter
+from cloud_scan import points_from_pointcloud2, scan_from_points
 
 WHEELBASE = 0.324
 MAX_STEERING_ANGLE = 0.40  # rad, matches jetson/cfr_arduino_bridge/config/arduino_bridge.yaml
@@ -105,10 +108,15 @@ class BaleFollowerEnv(gymnasium.Env):
         reward_config: RewardConfig | None = None,
         odom_timeout_s: float = 2.0,
         traction: float = 0.6,
+        max_steering_rate: float = 3.5,
+        straight_speed: float = 0.0,
+        scan_source: str = "analytic",
+        cloud_topic: str = "/zed/zed_node/point_cloud/cloud_registered",
         zed_config: zed_sim.ZedSimConfig | None = None,
     ) -> None:
         super().__init__()
         self.traction = traction
+        self.max_steering_rate = max_steering_rate
         self.zed_config = zed_config or zed_sim.ZedSimConfig(enabled=False)
         # When the ZED model is on, the observation FOV is the camera's FOV --
         # the policy must not be trained on rays a real ZED 2i cannot see.
@@ -122,6 +130,20 @@ class BaleFollowerEnv(gymnasium.Env):
         self.control_hz = control_hz
         self.max_speed = max_speed
         self.reverse_speed = reverse_speed
+        # Speed envelope, shared verbatim with run_policy.py. Training inside
+        # the same envelope the car deploys with is the whole point: the
+        # policy learns what the boosted straights feel like instead of
+        # meeting them for the first time at deployment.
+        self.boost = BoostLimiter(
+            BoostConfig(straight_speed=straight_speed),
+            base_speed=max_speed,
+            control_hz=control_hz,
+            lidar_fov_deg=lidar_fov_deg,
+        )
+        # Observation scale for speed. With boosting the car exceeds
+        # max_speed, and normalising by max_speed would clip every boosted
+        # straight to 1.0 -- the policy could not tell 2 m/s from 4.5.
+        self.obs_speed_scale = max(max_speed, straight_speed)
         self.episode_time_limit_s = episode_time_limit_s
         self.stuck_window_s = stuck_window_s
         self.stuck_distance = stuck_distance
@@ -151,9 +173,27 @@ class BaleFollowerEnv(gymnasium.Env):
         self._episode_time = 0.0
         self._prev_pose: Pose2D | None = None
         self._prev_angular_z = 0.0
+        self._prev_steer_fraction = 0.0
         self._stuck_window_travel: list[float] = []
         self._cmd_speed = 0.0
+        self._cmd_steer_fraction = 0.0
         self._rng = np.random.default_rng()
+
+        # "cloud" runs the observation through the same point-cloud path the
+        # robot will use (cloud_scan.scan_from_points), so what the policy
+        # learns on is what a real ZED can produce. "analytic" ray-casts the
+        # known bale geometry: faster, but it is the input that made earlier
+        # checkpoints undeployable.
+        self.scan_source = scan_source
+        self.cloud_topic = cloud_topic
+        self._latest_cloud = None
+        self._cloud_lock = threading.Lock()
+        # Camera tilt, for levelling the cloud before its height band is
+        # applied. The ZED is bolted to the chassis with no relative rotation
+        # (<pose>0.315 0 0.20 0 0 0</pose>), so chassis tilt is camera tilt.
+        self._tilt = (0.0, 0.0)
+        self._cloud_hits = 0
+        self._cloud_misses = 0
 
         self._closed = False
         if not rclpy.ok():
@@ -163,6 +203,12 @@ class BaleFollowerEnv(gymnasium.Env):
         self._node.create_subscription(
             TFMessage, f"/world/{world_name}/dynamic_pose/info", self._on_pose, 10
         )
+        if self.scan_source == "cloud":
+            qos = rclpy.qos.QoSProfile(depth=1)
+            qos.reliability = rclpy.qos.ReliabilityPolicy.BEST_EFFORT
+            self._node.create_subscription(
+                PointCloud2, self.cloud_topic, self._on_cloud, qos
+            )
         self._executor = rclpy.executors.SingleThreadedExecutor()
         self._executor.add_node(self._node)
         self._spin_thread = threading.Thread(target=self._executor.spin, daemon=True)
@@ -187,8 +233,36 @@ class BaleFollowerEnv(gymnasium.Env):
             yaw=_yaw_from_quaternion(q.x, q.y, q.z, q.w),
             stamp=time.monotonic(),
         )
+        # Nose-down-positive pitch and roll, matching cloud_scan's convention
+        # (verified: a +theta rotation about +y extracts as +theta). Without
+        # these the height band stops rejecting the ground the moment the car
+        # pitches, and 3 degrees is enough to fill every bin with phantom
+        # returns at 2.5 m.
+        sin_pitch = max(-1.0, min(1.0, 2.0 * (q.w * q.y - q.z * q.x)))
+        pitch = math.asin(sin_pitch)
+        roll = math.atan2(2.0 * (q.w * q.x + q.y * q.z),
+                          1.0 - 2.0 * (q.x * q.x + q.y * q.y))
         with self._pose_lock:
             self._latest_pose = pose
+            self._tilt = (pitch, roll)
+
+    def _on_cloud(self, msg: PointCloud2) -> None:
+        with self._cloud_lock:
+            self._latest_cloud = msg
+
+    def _cloud_scan(self) -> np.ndarray | None:
+        """Latest camera scan, or None if no cloud has arrived yet."""
+        with self._cloud_lock:
+            msg = self._latest_cloud
+        if msg is None:
+            return None
+        with self._pose_lock:
+            pitch, roll = self._tilt
+        return scan_from_points(
+            points_from_pointcloud2(msg),
+            self.num_lidar_bins, self.lidar_fov_deg, self.lidar_max_range,
+            pitch=pitch, roll=roll,
+        )
 
     def _wait_for_pose(self, since: float) -> Pose2D:
         deadline = time.monotonic() + self.odom_timeout_s
@@ -314,6 +388,30 @@ class BaleFollowerEnv(gymnasium.Env):
     def _build_observation(
         self, pose: Pose2D, speed: float, yaw_rate: float, scan: np.ndarray | None = None
     ) -> np.ndarray:
+        if scan is None and self.scan_source == "cloud":
+            scan = self._cloud_scan()
+            # Falling back to the analytic scan here would silently train a
+            # policy that never saw a point cloud, which is the exact failure
+            # this whole path exists to avoid -- and it would look like a
+            # normal run for all fifteen hours of it. Say so, once.
+            if scan is None:
+                # Consecutive, not cumulative: scattered misses across a long
+                # run are normal (the camera publishes at 15 Hz against a
+                # 10 Hz control loop), and aborting on their sum would kill a
+                # healthy run hours in. A sustained run of them is the real
+                # signal that the camera is not there.
+                self._cloud_misses += 1
+                if self._cloud_misses == 1:
+                    print("WARNING: scan_source=cloud but no cloud yet; using analytic scan",
+                          flush=True)
+                elif self._cloud_misses >= 200:
+                    raise RuntimeError(
+                        f"scan_source=cloud but {self.cloud_topic} has produced nothing "
+                        "in 200 steps -- launch with sensors:=true (CFR_SENSORS=1)"
+                    )
+            else:
+                self._cloud_hits += 1
+                self._cloud_misses = 0
         if scan is None:
             scan = bale_geometry.lidar_scan(
                 self.bales, pose.x, pose.y, pose.yaw, self.num_lidar_bins, self.lidar_fov_deg, self.lidar_max_range
@@ -323,7 +421,7 @@ class BaleFollowerEnv(gymnasium.Env):
         # robot has between what it senses and what physically happens.
         scan = zed_sim.apply(scan.copy(), self.zed_config, self.lidar_max_range, self._rng)
         normalized_scan = (scan / self.lidar_max_range).astype(np.float32)
-        normalized_speed = np.clip(speed / self.max_speed, 0.0, 1.0)
+        normalized_speed = np.clip(speed / self.obs_speed_scale, 0.0, 1.0)
         normalized_yaw_rate = np.clip((yaw_rate + 1.0) / 2.0, 0.0, 1.0)
         return np.concatenate([normalized_scan, [normalized_speed, normalized_yaw_rate]]).astype(np.float32)
 
@@ -347,14 +445,39 @@ class BaleFollowerEnv(gymnasium.Env):
         self._episode_time = 0.0
         self._prev_pose = pose
         self._prev_angular_z = 0.0
+        self._prev_steer_fraction = 0.0
         self._stuck_window_travel = []
         self._cmd_speed = 0.0
+        self._cmd_steer_fraction = 0.0
+        self.boost.reset()
 
         observation = self._build_observation(pose, speed=0.0, yaw_rate=0.0)
         return observation, {}
 
     def step(self, action: np.ndarray):
         speed, steer_fraction = self.decode_action(action)
+        # Steering slew, matching the physical servo (Traxxas 2075: 0.17 s/60
+        # deg at the horn, ~3.5 rad/s at the road wheel). Without this the
+        # policy learns to flick the wheels instantaneously and then fails the
+        # moment a rate-limited controller sits in front of it: the v5 policy
+        # scored 130 m raw but 44 m with the CasADi smoother, crashing every
+        # episode, purely because it had never trained against a limit the
+        # real hardware always imposes.
+        max_delta_step = self.max_steering_rate / self.control_hz / MAX_STEERING_ANGLE
+        steer_fraction = float(np.clip(
+            steer_fraction,
+            self._cmd_steer_fraction - max_delta_step,
+            self._cmd_steer_fraction + max_delta_step,
+        ))
+        self._cmd_steer_fraction = steer_fraction
+        # Raise the ceiling on clear straights, before the traction limit --
+        # the friction circle still has the last word on what the tires allow.
+        if self.boost.enabled:
+            ground_truth = bale_geometry.lidar_scan(
+                self.bales, self._prev_pose.x, self._prev_pose.y, self._prev_pose.yaw,
+                self.num_lidar_bins, self.lidar_fov_deg, self.lidar_max_range,
+            )
+            speed = self.boost.apply(speed, ground_truth, steer_fraction)
         speed = self._apply_traction(speed, steer_fraction)
         angular_z = 0.0
         if abs(speed) > 1e-3:
@@ -395,10 +518,13 @@ class BaleFollowerEnv(gymnasium.Env):
             prev_angular_z=self._prev_angular_z,
             collided=collided,
             center_error=center_error,
+            steer_fraction=self._cmd_steer_fraction,
+            prev_steer_fraction=self._prev_steer_fraction,
         )
 
         self._prev_pose = pose
         self._prev_angular_z = measured_yaw_rate
+        self._prev_steer_fraction = self._cmd_steer_fraction
         self._episode_step += 1
         self._episode_time += 1.0 / self.control_hz
 

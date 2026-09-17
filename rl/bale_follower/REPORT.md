@@ -286,12 +286,46 @@ does not complete a full lap: it wedges later in the course, roughly 24 times
 per 200 s.
 
 So the vehicle model was a real and necessary fix, but it was not the only
-problem. The remaining one is in the tracker, and at least part of it is
-visible in the telemetry: the MPC chose `v_cmd=0.59` where the car needs
-about 0.9 m/s to rotate at all, trading speed for tracking error and crawling
-into a wedge — its cost function has no notion that slow means unsteerable. A
-`min_speed` constraint was added to `mpc_tracker.py`, which improved its
-self-test (0.69 -> 0.43 m arc offset) but has not yet produced a full lap.
+problem. The remaining one was in the tracker — see below.
+
+## The tracker, finished
+
+The telemetry named the failure precisely: the MPC commanded `v_cmd=0.59`
+where the car needs about 0.9 m/s to rotate at all, sitting still at full
+lock with 6 cm of cross-track error. Its cost function weights position error
+heavily and has no term expressing "below this speed the vehicle cannot
+turn", so falling behind in a curve made slowing down look optimal — which
+made it less able to turn, which made it fall further behind. A wedge is the
+fixed point of that loop.
+
+A flat `min_speed` floor was not enough (self-test improved, laps did not).
+The fix that worked is a **curvature-dependent floor**: the minimum speed
+rises with how hard the path ahead turns, from 0.9 m/s on a straight to
+1.4 m/s at full lock, evaluated over the whole horizon so it is up *before*
+the hairpin rather than once already in it. Calibration measured a clean
+1.5 m/s at every steering angle, so the turning floor is known-achievable.
+
+Two supporting changes: recovery now hands back deliberately (clears the
+stuck history, drops the MPC warm start — a plan from before the reverse —
+and re-acquires the path index globally instead of from a window centred on
+where the car got stuck); and `course_path.py` gained a `--min-radius` guard
+so the planner cannot draw an apex tighter than the vehicle can hold. The
+guard turned out not to bind on this course: the line's tightest radius is
+1.31 m against a measured capability of 0.97 m, 35% margin. The plan was
+never infeasible — worth knowing, since it rules the planner out as a
+suspect for any future sticking.
+
+**Result: six consecutive laps, zero recoveries, zero stuck events.**
+
+| lap | 1 | 2 | 3 | 4 | 5 | 6 |
+|---|---|---|---|---|---|---|
+| time (s) | 31.22 | 30.15 | 30.25 | 30.30 | **29.95** | 30.95 |
+| avg speed (m/s) | 3.53 | 3.65 | 3.64 | 3.63 | 3.68 | 3.56 |
+
+Best lap **29.95 s against the planner's 28.4 s optimum — within 5.5%** — on
+a 110.1 m loop, with a spread of about a second across six laps. An earlier
+run stuck repeatedly after four clean laps; that did not reproduce, so it is
+logged as unexplained rather than fixed.
 
 ## Sanity-check against the real Traxxas Slash
 
@@ -345,6 +379,133 @@ Note the sim errs the other way on rate: the AckermannSteering plugin has a
 `<steering_limit>` but no steering *rate* limit, so simulated steering snaps
 to angle faster than any servo could. Adding a rate limit matching the servo
 would close a real sim-to-real gap.
+
+## v5: the vehicle fix transforms RL, and exposes a new mismatch
+
+Retrained on the corrected vehicle with the v4 recipe unchanged (reverse
+gear, `max_speed` 2.0, deterministic eval selection), 250k steps over two
+chunks — the sim died at 177k with `teleport failed: Service call timed out`
+and `train_resilient.sh` resumed it automatically, the failure that cost v4
+five hours of manual rescue.
+
+Same algorithm, same reward, same hyperparameters; only the vehicle changed:
+
+| | v4 (broken vehicle) | **v5 (fixed vehicle)** |
+|---|---|---|
+| deterministic distance | 20.5 m | **130.4 m** |
+| collisions (5 episodes) | 3/5 | **0/5** |
+| episode reward | ~130 | ~900 |
+
+130.4 m exceeds the 110.1 m lap, so the policy drives more than a full lap
+without touching a bale. This is the clearest confirmation that the vehicle
+model was the blocker for RL as well: the policies were never failing to
+decide to turn.
+
+**But v5 is not deployable, and the reason is a mistake introduced here.**
+Evaluated through the CasADi smoother it scores 44.3 m and crashes every
+episode; evaluated raw it scores 130.4 m and crashes none. The cause is the
+`max_steering_rate` correction from 8.0 to the servo-realistic 3.5 rad/s:
+`env.py` never rate-limited steering, so the policy learned to flick the
+wheels instantaneously, and the smoother then enforces a limit it has never
+experienced. The same train/deploy mismatch this report has flagged twice
+already — committing un-executable motion — this time introduced by making
+*half* the stack more realistic.
+
+Fixed by applying the servo slew inside `env.py`, with `env.max_steering_rate`
+and `smoother.max_steering_rate` both 3.5 in `config.yaml` and a metadata
+note so the limit travels with the checkpoint.
+
+## v6, and why the smoother should not sit in front of a policy
+
+Retrained with the servo slew enforced during training. It reached v5's peak
+(130.4 m deterministic) in **57k steps rather than 164k**, despite solving the
+harder rate-limited problem, and was stopped at 140k of 250k once the
+evaluations plateaued at the 60 s x 2.0 m/s episode ceiling.
+
+The decisive test — the same checkpoint with and without the smoother:
+
+| | v5 raw | v5 smoothed | **v6 raw** | v6 smoothed |
+|---|---|---|---|---|
+| mean distance | 130.4 m | 44.3 m | **120.5 m** | 71.1 m |
+| collisions | 0/5 | 5/5 | **1/5** | 4/5 |
+| clean-episode distance | 130.4 m | — | **130.2 m** | 137.3 m |
+| steer jerk | 0.329 | 0.194 | **0.320** | 0.195 |
+
+The slew fix narrowed the gap (66% loss -> 41%) but did not close it, and the
+jerk column says why. The raw policy commands 0.320 rad/tick = **3.2 rad/s of
+steering against the servo's 3.5 rad/s limit** — it is already executable.
+The smoother halves that to 1.95 rad/s, because it does not merely clamp: it
+solves a cost-weighted optimal-control problem whose `w_steer_rate` and
+`w_accel` terms lag the reference even *within* the limits. That lag is
+dynamics the policy never trained against.
+
+### Retuning the smoother, and the decision
+
+Before dropping the smoother it was worth asking whether its tuning was the
+problem rather than its presence. Its tracking weights were low relative to
+its change-penalties, so it filtered when it only needed to limit; raising
+tracking ~3 orders of magnitude turns it into a constraint projector that
+reproduces a feasible reference and bends only an infeasible one.
+
+| v6 best_model | raw | old smoother | **retuned smoother** |
+|---|---|---|---|
+| mean distance | 120.5 m | 71.1 m | **91.5 m** |
+| collisions | 1/5 | 4/5 | **2/5** |
+| clean-episode distance | 130.2 m | 137.3 m | **137.7 m** |
+| steering rate | 3.20 rad/s | 1.95 rad/s | **2.48 rad/s** |
+
+Retuning recovered most of the loss: +29% distance and half the collisions.
+Pushing the weights a further 10x (`w_speed` 200, `w_steer` 800) changed
+nothing measurable — 91.06 m against 91.49 m, identical jerk and collision
+rate — which says the weights have **saturated**. The residual gap to raw is
+structural, not a tuning problem: the smoother brakes across its 0.8 s
+horizon where the env's training-time clamp acted greedily on the current
+step. Closing it properly means training with the smoother in the loop so
+the policy adapts to its dynamics (IPOPT costs ~15 ms against a 100 ms step,
+so this is affordable) — deferred, as it needs a retrain.
+
+So the smoother is **not** used in front of the policy. Even retuned as
+tightly as its weights allow, it costs 24% of the distance and doubles the
+collision rate, because it solves a different problem than the one the policy
+was trained against. A v6-or-later policy has the actuator limits baked into
+training — servo slew, traction clamp, friction circle — so its raw commands
+are executable by construction, and the smoother can only subtract.
+
+The smoother keeps its place in front of `path_racer.py`, whose reference is
+a *plan* with no notion of actuator limits and which genuinely needs them
+imposed. The retuned weights are kept for that use, and `--smoother` remains
+available on `run_policy.py` / `evaluate.py` for pre-v6 checkpoints that were
+trained without env-side limits and do need the filtering.
+
+`evaluate.py` now defaults to raw as well, so the measured configuration is
+the one that actually ships.
+
+**Deployable configuration: `checkpoints_v6/best_model.zip`, raw.** Two
+independent 5-episode runs, on a 110.1 m lap:
+
+| run | mean distance | collisions | clean-episode distance |
+|---|---|---|---|
+| 1 | 120.5 m | 1/5 | 130.2 m |
+| 2 | 112.1 m | 2/5 | 129.5 m |
+
+Mean distance and collision count vary run to run — start poses are
+randomized, and five episodes is a small sample — so quote this as roughly
+**112-120 m with 1-2 collisions in 5**. The clean-episode figure is the
+stable one (130.2 / 129.5 m): when the policy completes an episode it
+reliably covers about 130 m, more than a full lap. Anyone reporting a single
+number should use the range, not the better run.
+
+## Planner/tracker vs RL, for a fastest lap
+
+| | best lap | notes |
+|---|---|---|
+| planner + MPC tracker | **29.95 s** | 6 consecutive laps, 0 recoveries, 3.6 m/s avg |
+| v5 RL policy | ~55 s equivalent | capped at `max_speed` 2.0, saturates the 60 s episode |
+
+For a static course with a QuestNav pose, the planned-line racer is the
+faster and more diagnosable option by a wide margin. RL's value is as a
+fallback when the map or pose cannot be trusted — which argues for keeping
+it trained against the ZED-style observation rather than pushing its lap time.
 
 ## Recommended next steps
 

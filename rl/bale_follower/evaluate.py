@@ -98,8 +98,13 @@ def main() -> None:
     parser.add_argument("--stochastic", action="store_true",
                         help="sample the policy like training does instead of taking "
                              "the Gaussian mean; diagnoses train/eval gaps")
-    parser.add_argument("--no-smoother", action="store_true",
-                        help="raw policy commands, no CasADi filtering (A/B baseline)")
+    # Default matches deployment: run_policy.py publishes raw commands for a
+    # policy trained against the env's actuator limits, so evaluating through
+    # the smoother would measure a configuration nobody runs.
+    parser.add_argument("--smoother", action="store_true",
+                        help="route commands through the CasADi smoother (A/B baseline, or "
+                             "for checkpoints trained without env-side actuator limits)")
+    parser.add_argument("--no-smoother", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--max-speed", type=float, default=None,
                         help="override the trained max speed cap")
     parser.add_argument("--traction", type=float, default=None,
@@ -129,7 +134,7 @@ def main() -> None:
         **env_config,
     )
     model = PPO.load(str(checkpoint))
-    smoother = None if args.no_smoother else smoother_from_metadata(
+    smoother = None if (args.no_smoother or not args.smoother) else smoother_from_metadata(
         metadata, env.control_hz, env.traction, env.max_speed, WHEELBASE, MAX_STEERING_ANGLE
     )
 

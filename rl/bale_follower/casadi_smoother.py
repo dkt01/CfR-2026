@@ -54,10 +54,14 @@ class SmootherConfig:
     # at the horn, ~50-75% of that through the linkage -> lock-to-lock ~0.25 s.
     max_steering_rate: float = 3.5
     wheelbase: float = 0.324
-    w_speed: float = 1.0
-    w_steer: float = 4.0
-    w_accel: float = 0.05
-    w_steer_rate: float = 0.02
+    # Tracking dominates the change-penalties so this acts as a constraint
+    # projector, not a filter: it reproduces a feasible reference and only
+    # bends an infeasible one. See config.yaml for the measurement that
+    # motivated these values.
+    w_speed: float = 20.0
+    w_steer: float = 80.0
+    w_accel: float = 0.002
+    w_steer_rate: float = 0.001
 
 
 def smoother_from_metadata(

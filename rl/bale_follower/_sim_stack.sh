@@ -36,7 +36,11 @@ start_sim() {
     fi
 
     echo "starting simulation stack (log: $LAUNCH_LOG)"
-    setsid ros2 launch cfr_arduino_bridge training.launch.py > "$LAUNCH_LOG" 2>&1 &
+    # CFR_SENSORS=1 renders the ZED so the env can build observations from
+    # its point cloud (config.yaml scan_source: cloud). Costs real-time
+    # factor, so it is opt-in.
+    setsid ros2 launch cfr_arduino_bridge training.launch.py \
+        sensors:="$([ -n "${CFR_SENSORS}" ] && echo true || echo false)" > "$LAUNCH_LOG" 2>&1 &
     SIM_PID=$!
     trap stop_sim EXIT INT TERM
 

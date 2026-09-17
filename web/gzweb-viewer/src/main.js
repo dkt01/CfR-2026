@@ -257,8 +257,6 @@ function updateSpeed(message, pose) {
   speedometer.report(filteredSpeed);
 }
 
-function updateSlashPose(message) {
-  const slashPose = message.pose.find((pose) => pose.name === "slash");
 // The start signal's arms are the one other thing in either world that moves,
 // and they move on a joint rather than by being teleported, so Gazebo reports
 // them as a link pose within the model.  Looked up once and kept: the scene is

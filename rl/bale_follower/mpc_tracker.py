@@ -42,11 +42,19 @@ class MpcConfig:
     max_steering_rate: float = 3.5  # servo-limited; see casadi_smoother.py
     traction: float = 0.6
     max_speed: float = 4.0
-    # Below roughly 0.8 m/s the steered wheels cannot overcome tire scrub and
-    # the car stops rotating (measured). Without this floor the optimizer
-    # happily trades speed for tracking error, crawls into a corner, and
-    # wedges -- the cost function has no idea that slow means unsteerable.
+    # Speed floor. Below roughly 0.8 m/s the steered wheels cannot overcome
+    # tire scrub and the car stops rotating, so without this the optimizer
+    # trades speed for tracking error, crawls, and wedges -- its cost function
+    # has no notion that slow means unsteerable.
+    #
+    # A flat floor is not enough: scrub is worst at full lock, which is
+    # exactly where the speed profile asks for the least speed. So the floor
+    # is raised in proportion to how hard the reference is turning, up to
+    # min_speed_turn. Calibration measured a clean 1.5 m/s at every steering
+    # angle including full lock, so the turning floor is known-achievable
+    # rather than assumed.
     min_speed: float = 0.9
+    min_speed_turn: float = 1.4
     w_position: float = 10.0
     w_terminal: float = 30.0
     w_speed: float = 1.0
@@ -77,6 +85,7 @@ class MpcTracker:
         delta0 = opti.parameter()       # last applied steering, for rate limit
         ref_xy = opti.parameter(n, 2)   # reference points, one per step
         ref_v = opti.parameter(n)
+        v_floor = opti.parameter()      # curvature-dependent minimum speed
 
         opti.subject_to(x[0] == state0[0])
         opti.subject_to(y[0] == state0[1])
@@ -105,7 +114,7 @@ class MpcTracker:
             cost += c.w_speed * (v[k + 1] - ref_v[k]) ** 2
             cost += c.w_accel * a[k] ** 2
             cost += c.w_steer_rate * (delta[k] - prev) ** 2
-        opti.subject_to(opti.bounded(c.min_speed, v[1:], c.max_speed))
+        opti.subject_to(opti.bounded(v_floor, v[1:], c.max_speed))
         opti.subject_to(opti.bounded(0.0, v[0], c.max_speed))  # current state may be slower
         opti.minimize(cost)
         opti.solver(
@@ -116,7 +125,7 @@ class MpcTracker:
 
         self._opti = opti
         self._vars = (x, y, yaw, v, a, delta)
-        self._params = (state0, delta0, ref_xy, ref_v)
+        self._params = (state0, delta0, ref_xy, ref_v, v_floor)
 
     def reset(self) -> None:
         self._delta_prev = 0.0
@@ -124,16 +133,27 @@ class MpcTracker:
 
     def solve(
         self, x: float, y: float, yaw: float, v: float,
-        ref_xy: np.ndarray, ref_v: np.ndarray,
+        ref_xy: np.ndarray, ref_v: np.ndarray, ref_curvature: float = 0.0,
     ) -> tuple[float, float] | None:
-        """One tick. Returns (commanded speed, steering angle) or None on failure."""
+        """One tick. Returns (commanded speed, steering angle) or None on failure.
+
+        `ref_curvature` (1/m, unsigned) raises the speed floor where the path
+        turns hard, because that is where tire scrub can stall the car.
+        """
         opti = self._opti
         xs, ys, yaws, vs, a_var, delta_var = self._vars
-        state0, delta0, ref_xy_p, ref_v_p = self._params
+        state0, delta0, ref_xy_p, ref_v_p, v_floor_p = self._params
+        c = self.config
+        # Full lock is the reference point: kappa at the car's tightest radius
+        # maps to the full turning floor, straight-ahead to the base floor.
+        kappa_full = math.tan(c.max_steering_angle) / c.wheelbase
+        blend = min(1.0, abs(ref_curvature) / max(kappa_full, 1e-6))
+        floor = c.min_speed + blend * (c.min_speed_turn - c.min_speed)
         opti.set_value(state0, [x, y, yaw, v])
         opti.set_value(delta0, self._delta_prev)
         opti.set_value(ref_xy_p, ref_xy)
         opti.set_value(ref_v_p, ref_v)
+        opti.set_value(v_floor_p, min(floor, c.max_speed))
         if self._warm is not None:
             for var, val in zip(self._vars, self._warm):
                 opti.set_initial(var, val)

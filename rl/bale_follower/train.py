@@ -151,6 +151,9 @@ def main() -> None:
 
         # run_policy.py validates against this so a checkpoint can never be
         # run with mismatched observation geometry.
+        # The steering slew the policy trained under has to travel with the
+        # checkpoint: a policy trained without it fails the moment a
+        # rate-limited controller is placed in front of it.
         metadata = {
             "env": config["env"],
             "reward": config["reward"],

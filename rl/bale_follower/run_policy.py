@@ -17,6 +17,7 @@ import argparse
 import json
 import math
 import threading
+import os
 import time
 from pathlib import Path
 
@@ -29,6 +30,7 @@ from tf2_msgs.msg import TFMessage
 
 import bale_geometry
 from casadi_smoother import CommandSmoother, smoother_from_metadata
+from speed_boost import BoostConfig, BoostLimiter
 from env import MAX_STEERING_ANGLE, WHEELBASE, _unpause_world, _wrap_to_pi, _yaw_from_quaternion
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -54,6 +56,16 @@ class PolicyRunner(Node):
         self.max_speed = env_config["max_speed"]
         self.reverse_speed = env_config.get("reverse_speed", 0.0)
         self.control_hz = env_config["control_hz"]
+
+        # Straight-line boost, from the same module the env trains with, so
+        # the deployed speed envelope is the one the policy learned inside.
+        self.boost = BoostLimiter(
+            BoostConfig(straight_speed=env_config.get("straight_speed", 0.0)),
+            base_speed=self.max_speed,
+            control_hz=self.control_hz,
+            lidar_fov_deg=self.lidar_fov_deg,
+        )
+        self.obs_speed_scale = max(self.max_speed, env_config.get("straight_speed", 0.0))
 
         self._lock = threading.Lock()
         self._pose = None
@@ -177,7 +189,7 @@ class PolicyRunner(Node):
             [
                 (scan / self.lidar_max_range),
                 [
-                    np.clip(linear_x / self.max_speed, 0.0, 1.0),
+                    np.clip(linear_x / self.obs_speed_scale, 0.0, 1.0),
                     np.clip((angular_z + 1.0) / 2.0, 0.0, 1.0),
                 ],
             ]
@@ -190,6 +202,8 @@ class PolicyRunner(Node):
         speed = -self.reverse_speed + fraction * (self.max_speed + self.reverse_speed)
         steer_fraction = float(np.clip(action[1], -1.0, 1.0))
         delta = steer_fraction * MAX_STEERING_ANGLE
+
+        speed = self.boost.apply(speed, scan, steer_fraction)
 
         if self.smoother is not None:
             speed, delta = self.smoother.smooth(speed, delta)
@@ -206,14 +220,34 @@ def main() -> None:
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--sdf-path", default=str(DEFAULT_SDF))
     parser.add_argument("--world-name", default="cfr_speed_course")
-    parser.add_argument("--no-smoother", action="store_true",
-                        help="publish raw policy commands without CasADi filtering")
+    # Off by default. env.py enforces the servo slew, the traction clamp and
+    # the friction circle during training, so a v6-or-later policy's raw
+    # commands are already executable -- measured 3.2 rad/s of steering
+    # against the servo's 3.5 rad/s limit. The smoother then only adds its
+    # own lag: it brakes predictively across a 0.8 s horizon where training
+    # clamped greedily, and that costs far more than it saves (120.5 m raw
+    # and 1/5 collisions, against 91.5 m and 2/5 through the smoother, even
+    # after retuning it to track as tightly as its weights allow).
+    #
+    # The smoother's place is in front of path_racer.py, whose reference is a
+    # plan with no notion of actuator limits. A policy trained against those
+    # limits does not need it. Use --smoother only for a checkpoint trained
+    # WITHOUT env-side actuator limits (v5 and earlier).
+    parser.add_argument("--smoother", action="store_true",
+                        help="filter commands through the CasADi smoother; needed only "
+                             "for checkpoints trained without env-side actuator limits")
+    parser.add_argument("--no-smoother", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-recovery", action="store_true",
                         help="disable the scripted reverse-out stuck recovery")
     parser.add_argument("--max-speed", type=float, default=None,
                         help="override the trained speed cap (m/s); affects both the "
                              "action decoding and the speed observation scaling, same "
                              "as evaluate.py's override")
+    parser.add_argument("--straight-speed", type=float, default=None,
+                        help="speed ceiling (m/s) on clear, straight sections. The "
+                             "policy keeps its trained cap everywhere else, so curves "
+                             "stay at the speed it was trained to take them. Unset "
+                             "leaves the trained cap everywhere.")
     args = parser.parse_args()
 
     checkpoint = Path(args.checkpoint)
@@ -228,12 +262,14 @@ def main() -> None:
     env_config = metadata["env"]
     if args.max_speed is not None:
         env_config["max_speed"] = args.max_speed
+    if args.straight_speed is not None:
+        env_config["straight_speed"] = args.straight_speed
 
     bales = bale_geometry.parse_bales(args.sdf_path)
     model = PPO.load(str(checkpoint))
 
     smoother = None
-    if not args.no_smoother:
+    if args.smoother and not args.no_smoother:
         # Same construction evaluate.py uses, so "watch it drive" and the
         # metrics run send identical commands.
         smoother = smoother_from_metadata(

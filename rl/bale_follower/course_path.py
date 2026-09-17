@@ -155,6 +155,29 @@ def resample(xy: np.ndarray, spacing: float) -> np.ndarray:
     )
 
 
+def enforce_min_radius(xy: np.ndarray, min_radius: float, iterations: int = 60) -> np.ndarray:
+    """Smooth away curvature the vehicle physically cannot achieve.
+
+    The planner is free to draw an apex tighter than the car's real minimum
+    radius, and did: the first line asked for 1.3 m where the measured
+    full-lock radius is 0.97 m -- feasible, but with no margin for tracking
+    error, which is where the car wedged. Points exceeding the limit are
+    pulled toward their neighbours' midpoint until the whole line is inside
+    the vehicle's capability.
+    """
+    line = xy.copy()
+    limit = 1.0 / min_radius
+    for _ in range(iterations):
+        kappa = np.abs(curvature(line))
+        hot = kappa > limit
+        if not hot.any():
+            break
+        midpoints = (np.roll(line, 1, axis=0) + np.roll(line, -1, axis=0)) / 2.0
+        blend = np.clip((kappa[hot] - limit) / limit, 0.0, 1.0)[:, None] * 0.5
+        line[hot] = line[hot] * (1 - blend) + midpoints[hot] * blend
+    return line
+
+
 def optimize_racing_line(
     centerline: np.ndarray, occupied, origin, safety: float
 ) -> np.ndarray:
@@ -214,42 +237,88 @@ def curvature(xy: np.ndarray) -> np.ndarray:
     return np.where(den > 1e-9, num / den, 0.0)
 
 
-def speed_profile(xy: np.ndarray, traction: float, max_speed: float) -> np.ndarray:
-    """Minimum-time flying-lap profile for a closed loop.
+def speed_profile(xy: np.ndarray, traction: float, max_speed: float,
+                  speed_margin: float = 0.85, turn_speed: float = 0.0,
+                  turn_curvature: float = 0.15) -> np.ndarray:
+    """Minimum-time flying-lap profile for a closed loop, on a traction ellipse.
 
-    Curvature-limited, then cyclic forward (acceleration) and backward
-    (braking) passes -- two loops each so the limits propagate across the
-    wrap point. The standing start is not in the profile; the tracker ramps
-    up to it under the same accel limit.
+    Three limits, applied in order:
+
+      1. cornering -- v <= sqrt(a_plan / kappa)
+      2. corner exit -- cyclic forward pass, accelerating on whatever grip the
+         corner is not already using
+      3. corner entry -- cyclic backward pass, braking under the same
+         combined limit
+
+    Passes run twice so the limits propagate across the wrap point. The
+    standing start is not in the profile; the tracker ramps up to it.
+
+    The combined (2, 3) step is the point of this function. Treating the
+    lateral and longitudinal limits as independent -- accelerating at full
+    a_max while already at the cornering limit -- asks for more grip than
+    exists, and the tracker cannot deliver it: measured corner speeds came in
+    at 0.67 of such a plan. The ellipse plans only what the tires can actually
+    produce, so a corner exit is a speed the car can really carry.
+
+    `speed_margin` scales the whole grip budget down. It is the tracking
+    allowance: the corridor is 0.95 m wide and cross-track error grows with
+    speed, so planning at the true limit leaves nothing for error and the car
+    rubs the bales. This replaces an older flat cap that clamped every corner
+    to one speed regardless of radius, which made 6.7 m sweepers crawl at the
+    same pace as 1.3 m hairpins.
     """
     a_max = traction * GRAVITY
+    a_plan = max(speed_margin, 1e-3) * a_max
     kappa = np.abs(curvature(xy))
     # Smooth curvature a little: single-sample kinks from the grid otherwise
     # punch unnecessary dips into the profile.
     kernel = np.ones(5) / 5.0
     kappa = np.convolve(np.concatenate([kappa[-2:], kappa, kappa[:2]]), kernel, mode="same")[2:-2]
-    v = np.minimum(np.sqrt(a_max / np.maximum(kappa, 1e-6)), max_speed)
+    v = np.minimum(np.sqrt(a_plan / np.maximum(kappa, 1e-6)), max_speed)
+    # Flat cap, retained as an option. It is cruder than the ellipse -- one
+    # speed for every corner regardless of radius -- but it is the only
+    # configuration with a verified single-racer measurement behind it
+    # (31.70 s best, 6 laps, 0 stuck). The ellipse is better physics and
+    # plans a 27.3 s lap, but measured 60-81 s laps when finally timed
+    # against a single racer, so it is not yet the default anyone should
+    # trust. Keep both until the ellipse has a clean measurement.
+    if turn_speed > 0:
+        v = np.where(kappa > turn_curvature, np.minimum(v, turn_speed), v)
     n = len(v)
     ds = np.linalg.norm(np.roll(xy, -1, axis=0) - xy, axis=1)
+
+    def longitudinal(speed: float, k_index: int) -> float:
+        """Grip left over for accelerating or braking at this speed/curvature."""
+        lateral = speed * speed * kappa[k_index]
+        spare = 1.0 - min(lateral / a_plan, 1.0) ** 2
+        return a_plan * math.sqrt(max(spare, 0.0))
+
     for _ in range(2):
-        for k in range(n):  # forward: acceleration limit, wrapping
+        for k in range(n):  # forward: corner exit
             nxt = (k + 1) % n
-            v[nxt] = min(v[nxt], math.sqrt(v[k] ** 2 + 2 * a_max * ds[k]))
-        for k in range(n - 1, -1, -1):  # backward: braking limit, wrapping
+            a_long = longitudinal(v[k], k)
+            v[nxt] = min(v[nxt], math.sqrt(v[k] ** 2 + 2 * a_long * ds[k]))
+        for k in range(n - 1, -1, -1):  # backward: corner entry
             nxt = (k + 1) % n
-            v[k] = min(v[k], math.sqrt(v[nxt] ** 2 + 2 * a_max * ds[k]))
+            a_long = longitudinal(v[nxt], nxt)
+            v[k] = min(v[k], math.sqrt(v[nxt] ** 2 + 2 * a_long * ds[k]))
     return v
 
 
 def plan(sdf_path: str, resolution: float, spacing: float, margin: float,
-         safety: float, traction: float, max_speed: float) -> dict:
+         safety: float, traction: float, max_speed: float,
+         min_radius: float = 0.0, speed_margin: float = 0.85,
+         turn_speed: float = 0.0, turn_curvature: float = 0.15) -> dict:
     bales = bale_geometry.parse_bales(sdf_path)
     spawn = bale_geometry.parse_vehicle_spawn(sdf_path)
     occupied, origin = build_occupancy(bales, resolution, CAR_HALF_WIDTH + margin)
     centerline = resample(extract_centerline(occupied, origin, spawn), spacing)
     line = optimize_racing_line(centerline, occupied, origin, safety)
+    if min_radius > 0:
+        line = enforce_min_radius(line, min_radius)
     line = resample(line, spacing)
-    v = speed_profile(line, traction, max_speed)
+    v = speed_profile(line, traction, max_speed, speed_margin,
+                      turn_speed, turn_curvature)
     ds = np.linalg.norm(np.roll(line, -1, axis=0) - line, axis=1)
     s = np.concatenate([[0.0], np.cumsum(ds[:-1])])
     v_mid = np.maximum((v + np.roll(v, -1)) / 2.0, 0.05)
@@ -258,6 +327,7 @@ def plan(sdf_path: str, resolution: float, spacing: float, margin: float,
         "sdf": str(sdf_path),
         "closed": True,
         "traction": traction,
+        "speed_margin": speed_margin,
         "max_speed": max_speed,
         "length_m": float(s[-1]),
         "estimated_time_s": lap_time,
@@ -281,15 +351,36 @@ def main() -> None:
                         help="clearance the racing line must keep beyond the inflated grid (m)")
     parser.add_argument("--traction", type=float, default=0.6)
     parser.add_argument("--max-speed", type=float, default=4.0)
+    parser.add_argument("--min-radius", type=float, default=1.25,
+                        help="tightest radius the line may ask for (m). The vehicle "
+                             "measures 0.97 m at full lock (vehicle_calibration.py), so "
+                             "this leaves margin for tracking error rather than planning "
+                             "apexes the car can only just make.")
+    parser.add_argument("--speed-margin", type=float, default=0.85,
+                        help="fraction of the grip budget the profile plans for "
+                             "(0-1). The remainder is the allowance for tracking "
+                             "error: cross-track grows with speed and the corridor "
+                             "is only 0.95 m wide, so planning at 1.0 rubs the bales.")
+    parser.add_argument("--turn-speed", type=float, default=0.0,
+                        help="flat speed cap (m/s) wherever curvature exceeds "
+                             "--turn-curvature; 0 uses the ellipse profile alone. "
+                             "Cruder than --speed-margin, but the only setting with "
+                             "a verified single-racer lap time behind it.")
+    parser.add_argument("--turn-curvature", type=float, default=0.15,
+                        help="curvature (1/m) above which --turn-speed applies "
+                             "(0.15 = radius 6.7 m)")
     parser.add_argument("--plot", action="store_true")
     args = parser.parse_args()
 
     result = plan(args.sdf_path, args.resolution, args.spacing, args.margin,
-                  args.safety, args.traction, args.max_speed)
+                  args.safety, args.traction, args.max_speed, args.min_radius,
+                  args.speed_margin, args.turn_speed, args.turn_curvature)
     with open(args.output, "w") as handle:
         json.dump(result, handle)
+    v = np.array(result["v"])
     print(f"path: {result['length_m']:.1f} m, estimated lap {result['estimated_time_s']:.1f} s "
-          f"(traction {args.traction}, max {args.max_speed} m/s)")
+          f"(traction {args.traction}, margin {args.speed_margin}, max {args.max_speed} m/s)")
+    print(f"speed: min {v.min():.2f}  mean {v.mean():.2f}  max {v.max():.2f} m/s")
     print(f"wrote {args.output}")
 
     if args.plot:

@@ -1,8 +1,13 @@
 """Simulation stack for RL training.
 
 Same as simulation.launch.py minus path_follower_node (which publishes zeros
-on /cmd_vel while idle and would fight the policy for control) and minus the
-camera bridges, plus a ground-truth pose bridge the RL environment needs.
+on /cmd_vel while idle and would fight the policy for control), plus a
+ground-truth pose bridge the RL environment needs.
+
+`sensors:=true` adds the rendered ZED and bridges its point cloud, so the
+environment can build observations through the same cloud_scan path the robot
+uses instead of ray-casting known bale geometry. It costs real-time factor
+(measured 1.00 -> 0.63), so it is off by default.
 
 Gazebo runs freely rather than being stepped by the environment: driving it
 through WorldControl `multi_step` triggers heap corruption in the server
@@ -11,12 +16,28 @@ alive but its service threads dead. The environment paces itself against the
 wall clock instead.
 """
 
+import sys
+from pathlib import Path
+
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import (
+    DeclareLaunchArgument,
+    IncludeLaunchDescription,
+    OpaqueFunction,
+    SetEnvironmentVariable,
+)
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.conditions import IfCondition
+from launch.substitutions import (
+    EnvironmentVariable,
+    LaunchConfiguration,
+    PathJoinSubstitution,
+)
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from sensors_world import resolve_world  # noqa: E402
 
 
 def generate_launch_description():
@@ -26,14 +47,49 @@ def generate_launch_description():
 
     params_arg = DeclareLaunchArgument("params_file", default_value=params_file)
     world_arg = DeclareLaunchArgument("world", default_value=world_file)
+    # model:// mesh URIs resolve against this. Without it the world loads
+    # straight out of the package share and finds its meshes by luck; once
+    # sensors:=true rewrites the world into /tmp, that luck runs out and the
+    # world fails to load entirely. Wants the share root, one level up.
+    resource_path = SetEnvironmentVariable(
+        "GZ_SIM_RESOURCE_PATH",
+        [
+            PathJoinSubstitution([package_share, ".."]),
+            ":",
+            EnvironmentVariable("GZ_SIM_RESOURCE_PATH", default_value=""),
+        ],
+    )
 
-    gazebo = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            PathJoinSubstitution(
-                [FindPackageShare("ros_gz_sim"), "launch", "gz_sim.launch.py"]
+    sensors_arg = DeclareLaunchArgument(
+        "sensors", default_value="false",
+        description="render the ZED and bridge its point cloud (costs ~40% RTF)")
+
+    def gazebo_actions(context):
+        world = str(resolve_world(context)[0])
+        return [
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(
+                    PathJoinSubstitution(
+                        [FindPackageShare("ros_gz_sim"), "launch", "gz_sim.launch.py"]
+                    )
+                ),
+                launch_arguments={"gz_args": f"-r -s -v 3 {world}"}.items(),
             )
-        ),
-        launch_arguments={"gz_args": ["-r -s -v 3 ", LaunchConfiguration("world")]}.items(),
+        ]
+
+    gazebo = OpaqueFunction(function=gazebo_actions)
+
+    points_bridge = Node(
+        package="ros_gz_bridge",
+        executable="parameter_bridge",
+        output="screen",
+        condition=IfCondition(LaunchConfiguration("sensors")),
+        arguments=[
+            "/zed/gz/rgbd/points@sensor_msgs/msg/PointCloud2[gz.msgs.PointCloudPacked",
+        ],
+        remappings=[
+            ("/zed/gz/rgbd/points", "/zed/zed_node/point_cloud/cloud_registered"),
+        ],
     )
 
     teleport_api = Node(
@@ -85,7 +141,10 @@ def generate_launch_description():
         [
             params_arg,
             world_arg,
+            sensors_arg,
+            resource_path,
             gazebo,
+            points_bridge,
             teleport_api,
             command_bridge,
             gazebo_bridge,

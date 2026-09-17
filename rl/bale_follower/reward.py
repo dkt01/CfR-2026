@@ -32,6 +32,18 @@ class RewardConfig:
     # corridors are ~0.95 m wide and the car is 0.30 m wide, so this has to
     # stay well under half a corridor width or every pose is penalized.
     safe_clearance: float = 0.35
+    # Brushing a bale without the collision check firing. k_proximity is a
+    # gentle slope from 0.35 m that a fast lap can profitably pay; this is the
+    # steep part close in, so "touched it but kept going" stops being a
+    # winning trade. Separate from collision_penalty because a touch should
+    # not end the episode -- the car should learn to recover from it.
+    k_touch: float = 40.0
+    touch_clearance: float = 0.10
+    # Steering oscillation. k_smooth charges for changing the steering angle;
+    # this charges for REVERSING it, which is what the left-right sawing is.
+    # Penalising magnitude alone does not separate a sustained corner (good)
+    # from bang-bang chatter (bad) -- only the sign change does.
+    k_steer_reversal: float = 0.8
 
 
 @dataclass
@@ -41,7 +53,9 @@ class RewardResult:
     proximity: float
     smoothness: float
     centering: float
+    touch: float
     collided: bool
+    touched: bool
 
 
 def forward_progress(
@@ -59,12 +73,26 @@ def compute_reward(
     prev_angular_z: float,
     collided: bool,
     center_error: float = 0.0,
+    steer_fraction: float = 0.0,
+    prev_steer_fraction: float = 0.0,
 ) -> RewardResult:
     progress = config.k_progress * progress_distance
     proximity = -config.k_proximity * max(0.0, config.safe_clearance - min_clearance)
-    smoothness = -config.k_smooth * abs(angular_z - prev_angular_z)
     centering = -config.k_center * center_error
-    total = progress + proximity + smoothness + centering
+
+    smoothness = -config.k_smooth * abs(angular_z - prev_angular_z)
+    # Sign reversal, charged in proportion to how far the steering swung
+    # through zero. Sustained lock costs nothing here; sawing costs on every
+    # reversal, which is the behaviour to remove.
+    if steer_fraction * prev_steer_fraction < 0.0:
+        smoothness -= config.k_steer_reversal * min(
+            abs(steer_fraction), abs(prev_steer_fraction)
+        )
+
+    touched = min_clearance < config.touch_clearance
+    touch = -config.k_touch * max(0.0, config.touch_clearance - min_clearance)
+
+    total = progress + proximity + smoothness + centering + touch
     if collided:
         total -= config.collision_penalty
     return RewardResult(
@@ -73,7 +101,9 @@ def compute_reward(
         proximity=proximity,
         smoothness=smoothness,
         centering=centering,
+        touch=touch,
         collided=collided,
+        touched=touched,
     )
 
 
@@ -85,7 +115,14 @@ if __name__ == "__main__":
     crashed = compute_reward(cfg, progress_distance=0.05, min_clearance=0.0, angular_z=0.4, prev_angular_z=-0.4, collided=True, center_error=0.5)
     stalled = compute_reward(cfg, progress_distance=0.0, min_clearance=0.5, angular_z=0.0, prev_angular_z=0.0, collided=False, center_error=0.0)
 
+    sawing = compute_reward(cfg, progress_distance=0.4, min_clearance=0.45, angular_z=0.1, prev_angular_z=0.08, collided=False, center_error=0.0, steer_fraction=1.0, prev_steer_fraction=-1.0)
+    touching = compute_reward(cfg, progress_distance=0.4, min_clearance=0.04, angular_z=0.1, prev_angular_z=0.08, collided=False, center_error=0.1)
+    near_miss = compute_reward(cfg, progress_distance=0.4, min_clearance=0.15, angular_z=0.1, prev_angular_z=0.08, collided=False, center_error=0.1)
+
     print(f"clean centered step: {good.total:+.3f}")
+    print(f"same step, sawing:   {sawing.total:+.3f}")
+    print(f"fast but touching:   {touching.total:+.3f}")
+    print(f"same, 0.15 m clear:  {near_miss.total:+.3f}")
     print(f"fast, hugging wall:  {hugging.total:+.3f}")
     print(f"fast but scraping:   {scraping.total:+.3f}")
     print(f"stalled in open:     {stalled.total:+.3f}")
@@ -95,4 +132,8 @@ if __name__ == "__main__":
     assert hugging.total > scraping.total, "clearance should be preferred"
     assert scraping.total > stalled.total, "progress should beat sitting still"
     assert stalled.total > crashed.total, "anything should beat crashing"
+    assert good.total > sawing.total, "steady steering should beat sawing"
+    # Same pose and speed, differing only in whether the car brushes a bale.
+    assert touching.total < near_miss.total, "touching a bale must cost more than clearing it"
     print("\nordering check passed: centered > hugging > scraping > stalled > crashed")
+    print("sawing and bale-touching both rank below the clean step")

@@ -18,10 +18,10 @@ The RL policy remains the fallback for when the geometry is NOT trustworthy;
 on the real car the ZED scan should become a safety layer (emergency slow /
 stop on unexpected obstacles), which is a subscriber away in this node.
 
-    ros2 launch cfr_arduino_bridge training.launch.py    # or demo.sh's stack
+    ros2 launch cfr_arduino_bridge training.launch.py    # or validate.sh's stack
     python path_racer.py                                 # laps + lap times
 
-    DEMO_PROGRAM=path_racer.py ./demo.sh                 # watch in the viewer
+    DEMO_PROGRAM=path_racer.py ./validate.sh                 # watch in the viewer
 """
 
 from __future__ import annotations
@@ -61,12 +61,23 @@ class PathRacer(Node):
         # all -- below roughly 0.8 m/s the steering cannot overcome tire
         # scrub, so crawling into a hairpin is what wedges the car. The
         # friction-circle profile stays the upper bound; this is the lower one.
-        kappa = np.abs(np.array(plan["curvature"]))
+        self.curvature = np.array(plan["curvature"])
+        kappa = np.abs(self.curvature)
         self.turn_speed_floor = np.where(kappa > 0.25, 1.3, 0.0)
         self.n = len(self.xy)
         self.lap_length = plan["length_m"]
         self.a_max = plan["traction"] * GRAVITY
-        self.control_hz = 20.0
+        # 20 Hz, because that is what the loop actually sustains. A warm
+        # MPC solve is ~11.5 ms, which looks like it fits a 50 Hz budget, but
+        # a full tick (reference generation, solve, publish) costs ~34 ms, so
+        # requesting 50 Hz yields a jittery ~29 Hz and measurably WORSE
+        # driving than a steady 20 Hz: at 4 m/s, 6 clean laps at 20 Hz became
+        # 1 lap and 19 stuck events at 50. Regular beats fast.
+        #
+        # Raising this only helps once the tick itself is cheaper -- a
+        # code-generated QP solver in place of IPOPT is the lever, not a
+        # bigger number here.
+        self.control_hz = float(getattr(args, "control_hz", 20.0))
         self.min_lookahead = 0.6
         self.max_lookahead = 1.8
         self.lookahead_gain = 0.4  # seconds of travel
@@ -105,6 +116,7 @@ class PathRacer(Node):
         self._recovery_until = 0.0
         self._recovery_delta = 0.0
         self._no_trigger_until = time.monotonic() + 3.0
+        self._rejoining = False
 
         if args.pose_msg == "tf":
             self.create_subscription(TFMessage, args.pose_topic, self._on_tf, 10)
@@ -155,6 +167,13 @@ class PathRacer(Node):
         if math.cos(yaw) * tangent[0] + math.sin(yaw) * tangent[1] < 0.0:
             self.xy = self.xy[::-1].copy()
             self.v_profile = self.v_profile[::-1].copy()
+            # curvature and the floor derived from it are indexed by the same
+            # samples, so they have to be reversed with them. Left unflipped,
+            # every curvature lookup returned the mirror-image point of the
+            # loop: the speed floor was relaxed in the hairpins (where it is
+            # what keeps the car steerable) and raised on the straights.
+            self.curvature = self.curvature[::-1].copy()
+            self.turn_speed_floor = self.turn_speed_floor[::-1].copy()
             self._index = self.n - 1 - index
             self.get_logger().info("path direction flipped to match initial heading")
         self._direction_set = True
@@ -184,6 +203,21 @@ class PathRacer(Node):
             self._cmd_pub.publish(twist)
             return
 
+        if self._recovery_until and not self._rejoining:
+            # Recovery just ended. Hand back deliberately: clear the stuck
+            # history, drop the MPC's warm start (it is a plan from before the
+            # reverse), and re-acquire the path index globally rather than
+            # from a window centred on where we were when we got stuck.
+            self._rejoining = True
+            self._index = None
+            self._measured_speed = 0.0
+            self._prev_pose_speed = None
+            if self.mpc is not None:
+                self.mpc.reset()
+            if self.debug:
+                print(f"DBG recovery ended at ({x:.2f},{y:.2f}), re-acquiring path",
+                      flush=True)
+
         index = self._nearest_index(x, y)
         if not self._direction_set:
             self._set_direction(index, yaw)
@@ -197,6 +231,15 @@ class PathRacer(Node):
             bearing = math.atan2(math.sin(bearing), math.cos(bearing))
             # Half lock: full lock in a 0.95 m corridor pivots the tail into
             # the opposite wall instead of backing clear.
+            #
+            # NOTE: the sign here looks wrong against the bicycle model --
+            # reversing (v < 0) makes yaw rate (v/L)*tan(delta) swing the nose
+            # opposite to forward travel, so this steers the nose AWAY from
+            # the path. Inverting it measured worse (150 s lap, 21 stuck vs
+            # 31.85 s clean), because turning the nose toward the line throws
+            # the tail into the opposite wall of a 0.95 m corridor. Backing
+            # out along the way we came in beats aiming the nose. Do not
+            # "fix" this sign without a lap-time measurement.
             self._recovery_delta = math.copysign(0.5 * MAX_STEERING_ANGLE, bearing)
             if now - getattr(self, "_last_recovery_end", 0.0) < 5.0:
                 self._escalation = min(getattr(self, "_escalation", 1.0) * 1.6, 4.0)
@@ -209,6 +252,7 @@ class PathRacer(Node):
             self._recovery_until = now + self.recovery_duration_s * self._escalation
             self._last_recovery_end = self._recovery_until
             self._no_trigger_until = self._recovery_until + 2.0
+            self._rejoining = False
             self._pose_history.clear()
             self._cmd_speed = 0.0
             self._lap_recoveries += 1
@@ -265,7 +309,16 @@ class PathRacer(Node):
                 point_index = (index + int(travelled / step_len)) % self.n
                 ref_xy[k] = self.xy[point_index]
                 ref_v[k] = speed_k
-            result = self.mpc.solve(x, y, yaw, self._measured_speed, ref_xy, ref_v)
+            # Worst curvature over the horizon, not at the car: the floor has
+            # to be up before the hairpin, not once already in it.
+            horizon_end = (index + max(1, int(travelled / step_len))) % self.n
+            if horizon_end > index:
+                kappa_ahead = float(np.abs(self.curvature[index:horizon_end + 1]).max())
+            else:
+                kappa_ahead = float(max(np.abs(self.curvature[index:]).max(),
+                                        np.abs(self.curvature[:horizon_end + 1]).max()))
+            result = self.mpc.solve(x, y, yaw, self._measured_speed,
+                                    ref_xy, ref_v, kappa_ahead)
             if result is not None:
                 speed_cmd, delta_cmd = result
                 self._cmd_speed = speed_cmd
@@ -310,7 +363,15 @@ class PathRacer(Node):
 
         # Accel-limited ramp toward the profile -- the profile is a flying
         # lap; this handles the standing start and post-recovery pickup.
-        dt = 1.0 / self.control_hz
+        # Measured tick interval, not the nominal period. The timer only
+        # achieves ~29 Hz when asked for 50 (the MPC solve plus reference
+        # generation costs ~34 ms), so a nominal dt makes the acceleration
+        # ramp run at a fraction of real time -- the car accelerates far
+        # slower than planned and falls behind its own reference. Clamped
+        # because a late tick after a recovery must not produce a huge step.
+        dt = min(max(now - getattr(self, "_last_tick", now - 1.0 / self.control_hz),
+                     1e-3), 0.2)
+        self._last_tick = now
         self._cmd_speed += float(np.clip(speed_target - self._cmd_speed,
                                          -self.a_max * dt, self.a_max * dt))
         # Grip check against the commanded steering angle, same friction
@@ -344,6 +405,10 @@ def main() -> None:
                         help="tf: tf2_msgs/TFMessage (sim bridge); odom: nav_msgs/Odometry (QuestNav)")
     parser.add_argument("--speed-scale", type=float, default=1.0,
                         help="scale the planned speed profile (e.g. 0.7 to shake down)")
+    parser.add_argument("--control-hz", type=float, default=20.0,
+                        help="command publish / MPC re-solve rate. 20 Hz is what a full "
+                             "tick (~34 ms) actually sustains; asking for more yields "
+                             "jitter and drives worse, not faster.")
     parser.add_argument("--debug", action="store_true", help="0.5 s telemetry prints")
     parser.add_argument("--no-mpc", action="store_true",
                         help="pure pursuit only (MPC is the default tracker)")

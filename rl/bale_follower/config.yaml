@@ -1,85 +1,51 @@
-# Bale-following RL configuration.
-# Mirrors the flat, per-section style of
-# jetson/cfr_arduino_bridge/config/arduino_bridge.yaml.
-
 env:
   world_name: cfr_speed_course
   num_lidar_bins: 36
   lidar_fov_deg: 180.0
   lidar_max_range: 6.0
   control_hz: 10.0
-  # Well under the 8.0 m/s ceiling in arduino_bridge.yaml; high speeds make
-  # early training unstable before the policy can steer at all.
-  # 2.0 (down from 4.0) is deliberate: the v3 run showed PPO leaning on its
-  # exploration noise as a brake, leaving a near-floored deterministic mean
-  # throttle (REPORT.md). At 2.0 the mean policy has to learn workable speed
-  # control; raise as a curriculum with --resume-from once deterministic
-  # evals run clean.
   max_speed: 2.0
-  # Slow reverse so the policy can unstick itself when nosed against a bale
-  # in a hairpin; forward-only made that pose terminal. Reward still pays
-  # forward progress only, so reversing is a recovery move, not a strategy.
+  # Ceiling on clear straights; curves stay at max_speed.
+  straight_speed: 4.5
   reverse_speed: 0.5
   episode_time_limit_s: 60.0
-  # End the episode early if the car covers less than stuck_distance metres
-  # over stuck_window_s seconds -- wedged against a bale or sitting still.
   stuck_window_s: 5.0
   stuck_distance: 0.5
   randomize_start: true
   odom_timeout_s: 2.0
-  # Tire/floor friction coefficient. Caps longitudinal accel at traction*g and
-  # lateral accel (v^2 tan(delta) / wheelbase) at the same limit -- both in
-  # training (greedy clamp in env.py) and at deployment (predictively, in the
-  # CasADi smoother). Lower it for slick floors; no retrain needed for small
-  # changes, but a policy trained at one traction drives best at that traction.
+  # Observation through the same point-cloud path the robot uses.
+  scan_source: analytic
   traction: 0.6
-
-# Simulated ZED 2i depth statistics applied to the analytic scan (zed_sim.py).
-# The ZED SDK is not installed and the Gazebo world has no rendering sensors,
-# so this models the camera's FOV, range noise, and dropout instead of its
-# actual point cloud. Enabling it also clamps lidar_fov_deg to hfov_deg.
+  max_steering_rate: 3.5
 zed_sim:
   enabled: true
   hfov_deg: 110.0
   noise_a: 0.01
   noise_b: 0.008
   dropout_prob: 0.03
-
-# CasADi command smoother (casadi_smoother.py), used at evaluation/deployment.
-# horizon/dt/traction/max_speed/wheelbase/max_steering_angle are filled in
-# from the env section at load time; these are the remaining knobs.
 smoother:
   enabled: true
-  # Bounded by the real steering servo, not by what the controller would like.
-  # The Traxxas 2075 does 0.17 s/60 deg at 6V = 6.16 rad/s at the servo horn;
-  # an RC steering linkage delivers roughly half to three-quarters of that at
-  # the wheel, so 3.1-4.6 rad/s, i.e. lock-to-lock in ~0.22-0.26 s. 3.5 sits
-  # in that band. (This was briefly set to 8.0 to stop the smoother lagging
-  # the policy; that is about twice what the servo can physically do, and
-  # commanding un-executable steering is the exact class of bug that cost
-  # this project a week -- see REPORT.md.)
   max_steering_rate: 3.5
-  w_speed: 1.0
-  w_steer: 4.0
-  w_accel: 0.05
-  w_steer_rate: 0.02
-
+  w_speed: 20.0
+  w_steer: 80.0
+  w_accel: 0.002
+  w_steer_rate: 0.001
 reward:
   k_progress: 10.0
   k_proximity: 1.0
   k_smooth: 0.05
-  # Uses both walls: penalty per metre of imbalance between the nearest bale
-  # left and right of the car, so the optimum line is the corridor center.
-  k_center: 2.0
-  collision_penalty: 50.0
-  # Corridors are ~0.95 m wide and the car is 0.30 m wide, so this must stay
-  # well under half a corridor width or every pose gets penalized.
+  # Raised from 2.0: staying centred is now a first-class objective rather
+  # than a tiebreak, which is what buys clearance at the boosted speeds.
+  k_center: 6.0
+  collision_penalty: 100.0
   safe_clearance: 0.35
-
+  # Brushing a bale, short of a logged collision.
+  k_touch: 40.0
+  touch_clearance: 0.10
+  # Charges for reversing the steering, which is the left-right sawing.
+  k_steer_reversal: 0.8
 training:
-  total_timesteps: 20000
-  # Smaller than the SB3 default (2048) because a single Gazebo instance makes
-  # each step slow; this keeps checkpoints and logging frequent in wall-clock terms.
+  total_timesteps: 120000
   n_steps: 512
   batch_size: 64
   gamma: 0.99

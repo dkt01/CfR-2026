@@ -71,7 +71,7 @@ SERVO_RATE = math.radians(60) / 0.17
 LINKAGE_RATIO = 0.6
 WHEEL_STEER_RATE = SERVO_RATE * LINKAGE_RATIO
 
-DEFAULT_FULL_LOCK_DEG = 22.9   # the SDF's existing 0.40 rad
+DEFAULT_FULL_LOCK_DEG = 35   # the SDF's existing 0.61 rad
 DEFAULT_UNDERSTEER = 1.3       # midpoint of the 1.2-1.4 band
 
 

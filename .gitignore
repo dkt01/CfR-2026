@@ -76,3 +76,4 @@ core.*
 rl/bale_follower/checkpoints/
 rl/bale_follower/rl_model/
 rl/bale_follower/checkpoints*
+rl/bale_follower/*.log

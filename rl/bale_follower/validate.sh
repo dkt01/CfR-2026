@@ -8,9 +8,10 @@
 #      stops fighting the policy for /cmd_vel
 #   3. the policy itself, at the demo speed cap
 #
-#   ./demo.sh                       # checkpoints_v3, max speed 1.5 m/s
-#   ./demo.sh --max-speed 2.0       # extra args pass through to run_policy.py
-#   DEMO_CHECKPOINT=checkpoints_v2/final_model.zip ./demo.sh
+#   ./validate.sh                                   # RL policy, models/rl_straight_boost
+#   DEMO_PROGRAM=path_racer.py ./validate.sh        # planned-line MPC tracker instead
+#   ./validate.sh --straight-speed 5.0              # extra args pass to the chosen driver
+#   DEMO_CHECKPOINT=checkpoints_v6/best_model.zip ./validate.sh
 #
 # 1.5 m/s is the measured best deterministic configuration for the v3
 # checkpoint (see REPORT.md) -- the policy's raw mean action floors the
@@ -26,7 +27,18 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 WORLD=cfr_speed_course
 POSE_TOPIC="/world/$WORLD/dynamic_pose/info"
-CHECKPOINT="${DEMO_CHECKPOINT:-$SCRIPT_DIR/checkpoints_v3/final_model.zip}"
+# models/ rather than checkpoints_v7/: checkpoint directories are training
+# scratch and get overwritten by the next run into the same name. This is the
+# kept copy.
+CHECKPOINT="${DEMO_CHECKPOINT:-$SCRIPT_DIR/models/rl_straight_boost/best_model.zip}"
+# The RL policy is the default. It is slower round a lap than path_racer.py
+# (~40 s vs ~32 s) but measurably better driving: 0.092 m mean cross-track
+# against the tracker's 0.127-0.147, never outside the 0.325 m corridor
+# margin, and it does it on a 6 m forward scan with no prior map. It also
+# carries its own speed envelope -- 3.9 m/s on the straights, 2.0 through the
+# hairpins -- so the "RL is the slow fallback" tradeoff no longer holds.
+# Set DEMO_PROGRAM=path_racer.py for the planned-line tracker.
+PROGRAM="${DEMO_PROGRAM:-run_policy.py}"
 
 die() { echo "error: $*" >&2; exit 1; }
 
@@ -84,12 +96,16 @@ _policy)
     # shellcheck disable=SC1091
     source "$SCRIPT_DIR/.venv/bin/activate"
     wait_for_pose_topic
-    if [ "${DEMO_PROGRAM:-run_policy.py}" = "path_racer.py" ]; then
+    if [ "$PROGRAM" = "path_racer.py" ]; then
         echo "starting path racer (planned line from course_path.json)"
         exec python "$SCRIPT_DIR/path_racer.py" "$@"
     fi
+    # No --max-speed override: v6 carries its trained cap (2.0 m/s) in its
+    # metadata. The old 1.5 override existed because v3's deterministic mean
+    # action floored the throttle -- a symptom of the broken vehicle model,
+    # fixed at the source.
     echo "starting policy: $CHECKPOINT"
-    exec python "$SCRIPT_DIR/run_policy.py" --checkpoint "$CHECKPOINT" --max-speed 1.5 "$@"
+    exec python "$SCRIPT_DIR/run_policy.py" --checkpoint "$CHECKPOINT" "$@"
     ;;
 ""|-*)
     [ -f "$REPO_ROOT/install/setup.bash" ] || die "workspace not built: run 'colcon build' in $REPO_ROOT"
@@ -116,7 +132,7 @@ _policy)
         # gnome-terminal with a GLIBC symbol lookup error. The child shells
         # rebuild what they need by sourcing ROS themselves.
         local clean_env=(env -u GTK_PATH -u GDK_PIXBUF_MODULE_FILE -u LD_LIBRARY_PATH)
-        local inner="DEMO_CHECKPOINT=\"$CHECKPOINT\" DEMO_PROGRAM=\"${DEMO_PROGRAM:-}\" \"$SCRIPT_DIR/demo.sh\" $*"
+        local inner="DEMO_CHECKPOINT=\"$CHECKPOINT\" DEMO_PROGRAM=\"$PROGRAM\" \"$SCRIPT_DIR/validate.sh\" $*"
         case "$TERM_CMD" in
         gnome-terminal)
             "${clean_env[@]}" gnome-terminal --title="$title" -- bash -c "$inner; echo; echo '[exited -- press enter to close]'; read" ;;
@@ -137,6 +153,6 @@ _policy)
     echo "stop everything by closing window 1 (it owns the Gazebo server)"
     ;;
 *)
-    die "unknown argument '$1' (internal roles are _sim/_glue/_policy; extra run_policy.py args only work after './demo.sh')"
+    die "unknown argument '$1' (internal roles are _sim/_glue/_policy; extra run_policy.py args only work after './validate.sh')"
     ;;
 esac

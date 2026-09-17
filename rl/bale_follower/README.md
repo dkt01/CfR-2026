@@ -79,7 +79,7 @@ CPU one.
 cd rl/bale_follower
 ./launch_training.sh --total-timesteps 100000   # sim up -> PPO -> sim down
 ./test_policy.sh --episodes 5                   # sim up -> metrics -> sim down
-./test_policy.sh --no-smoother                  # raw-policy A/B baseline
+./test_policy.sh --smoother                     # A/B: route through the CasADi smoother
 ```
 
 Both wrappers start `training.launch.py` themselves, wait for the teleport
@@ -88,15 +88,17 @@ API and pose bridge to be ready, and tear the stack down on exit. Set
 Extra arguments pass through to `train.py` / `evaluate.py`; `--max-speed`
 and `--traction` on `test_policy.sh` override the trained caps.
 
-`evaluate.py` routes the policy through the CasADi command smoother
-(`casadi_smoother.py`): a short-horizon optimizer that tracks the policy's
-(speed, steering) target subject to a friction-circle traction model, so the
-car brakes before corners it cannot carry at speed instead of understeering
-through them. Training applies the same limits greedily in `env.py`
-(`traction` in `config.yaml`), so the policy never learns commands the
-drivetrain won't deliver. The observation passes through a simulated ZED 2i
-model (`zed_sim.py`): 110 degree FOV, range-squared stereo noise, dropout --
-see "Observations" below for why the underlying ranges are still analytic.
+`evaluate.py` publishes the policy's commands directly, matching what
+`run_policy.py` deploys. `env.py` enforces the vehicle's real limits during
+training -- servo steering slew, traction clamp and friction circle, all from
+`config.yaml` -- so a v6-or-later policy cannot learn commands the drivetrain
+will not deliver, and needs no filtering downstream. `--smoother` routes
+through `casadi_smoother.py` instead, which is what pre-v6 checkpoints
+require and what `path_racer.py` uses for its planned reference.
+
+The observation passes through a simulated ZED 2i model (`zed_sim.py`): 110
+degree FOV, range-squared stereo noise, dropout -- see "Observations" below
+for why the underlying ranges are still analytic.
 
 ## Train (manual, two terminals)
 
@@ -123,11 +125,48 @@ python train.py --total-timesteps 20000
 Start small. Confirm the loop runs end to end and writes checkpoints before
 committing to a long run.
 
-## Watch it drive: demo.sh
+## Current models
+
+Two independent drivers share this directory. They solve different problems
+and the right one depends on whether the course geometry can be trusted.
+
+**`path_racer.py` — planned-line racer. Use this for a fast lap.**
+`course_path.py` plans a racing line and minimum-time speed profile offline
+from the SDF; a CasADi MPC tracks it from a pose estimate. Measured **29.95 s
+best lap, six consecutive laps, zero recoveries**. Needs the map and a pose
+(sim ground truth today, QuestNav on the Orin via `--pose-msg odom`).
+
+```bash
+python course_path.py --plot          # regenerate the line (only after a course change)
+python path_racer.py                  # race it
+```
+
+**`checkpoints_v6/best_model.zip` — RL policy. Use this as the fallback.**
+Drives from a simulated ZED forward scan with no map and no global pose, so
+it still works when the geometry or localization cannot be trusted. Measured
+**112-120 m mean over two runs, ~130 m on clean episodes, 1-2 collisions in
+5** (the lap is 110.1 m); roughly half the racer's speed, capped at 2.0 m/s.
+
+Run it raw — no CasADi smoother. v6 trains against the actuator limits, so
+its commands are already executable, and the smoother only adds lag the
+policy never saw (91.5 m and 2/5 collisions with it, versus 120.5 m and 1/5
+without). `--smoother` exists for pre-v6 checkpoints, which do need it.
+
+```bash
+python run_policy.py --checkpoint checkpoints_v6/best_model.zip
+```
+
+v6 is trained against the real actuator limits — servo steering slew
+(3.5 rad/s), traction clamp and friction circle — so its commands are
+executable on hardware. Earlier checkpoints are not: v1-v4 were trained
+against a mis-modelled vehicle, and v5 additionally assumed instantaneous
+steering. **Do not deploy anything before v6.**
+
+## Watch it drive: validate.sh
 
 ```bash
 cd rl/bale_follower
-./demo.sh
+./validate.sh
 ```
 
 Opens three terminal windows that together replace the manual setup from
@@ -152,9 +191,9 @@ Then open the viewer: `cd web/gzweb-viewer && npm run dev` and browse to
 Options:
 
 ```bash
-./demo.sh --max-speed 2.0        # extra args pass through to run_policy.py
-./demo.sh --no-smoother          # raw policy commands, no CasADi filtering
-DEMO_CHECKPOINT=checkpoints_v2/final_model.zip ./demo.sh
+./validate.sh --max-speed 2.0        # extra args pass through to run_policy.py
+./validate.sh --no-smoother          # raw policy commands, no CasADi filtering
+DEMO_CHECKPOINT=checkpoints_v2/final_model.zip ./validate.sh
 ```
 
 Stopping: close window 1 (it owns the Gazebo server) or Ctrl-C in it; the
@@ -169,7 +208,7 @@ Prerequisites and refusals:
   sim"`): duplicate servers publish to the same topics and corrupt each
   other. Stop the old one (`pkill -f "gz sim"`) and rerun. To demo against a
   sim you started yourself, skip window 1 and run the roles directly:
-  `./demo.sh _glue` and `./demo.sh _policy` in two terminals.
+  `./validate.sh _glue` and `./validate.sh _policy` in two terminals.
 - needs a graphical session; it picks the first of gnome-terminal,
   x-terminal-emulator, konsole, xterm. (Snap-leaked `GTK_PATH` /
   `LD_LIBRARY_PATH` from VS Code terminals are scrubbed automatically --
