@@ -93,6 +93,9 @@ Status as of 2026-09-14. Values are in `config/vehicle.yaml`.
 - [ ] A5 spur 28.5 turns → wheels ______ turns (expect 10) — deferred, 2.85 accepted from manual
 - [ ] A6 overhead steering photos, −1 to +1 by 0.1, **both sweep directions**
 - [ ] A7 lock-to-lock slow-mo: ______ frames at 240 fps
+- [ ] A8 suspension — confirm all 4 collars at **max preload**, sag ______ mm,
+      bump ______ mm, droop ______ mm, added-mass spring-rate check, bounce
+      decay on one corner at 240 fps
 
 ---
 

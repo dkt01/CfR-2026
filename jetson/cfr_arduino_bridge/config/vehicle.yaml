@@ -7,7 +7,8 @@
 #
 # It is NOT a ROS parameter file.  It is read by:
 #   * scripts/generate_vehicle_model.py, which writes the <model name="slash">
-#     block of worlds/speed_course.sdf from it, and
+#     block of worlds/speed_course.sdf AND worlds/obstacle_course.sdf from it
+#     (same vehicle, spawned at each course's own start line), and
 #   * scripts/characterize/*, which write measured values back into it.
 # Nodes get their values through config/arduino_bridge.yaml; a test asserts the
 # two agree, so a value changed here and not there is a build failure, not a
@@ -135,6 +136,16 @@ mass:
     provenance: guess
     experiment: A4
     note: Accepted as-is for now (2026-09-14).
+  upright_mass:
+    value: 0.03
+    units: kg
+    provenance: guess
+    experiment: A4
+    note: >
+      Per corner, all four - the wheel-carrier link the suspension joint
+      hangs off (the steering knuckle above sits on top of this at the front).
+      Traxxas publishes no mass for it either; accepted as-is for now
+      (2026-09-17).
 
 # Estimated from a parts-list breakdown (A3), deliberately not measured: a
 # bifilar pendulum was ruled out as too fiddly for the value it adds.  izz is
@@ -157,6 +168,66 @@ inertia:
     provenance: guess
     experiment: A3
     note: Validate against B3 step-steer rise time rather than trusting it.
+
+suspension:
+  # Stock Traxxas 4X4 Ultimate (GTX aluminum) shocks and springs, all four
+  # corners.  The collars are run to maximum preload on every shock to hold
+  # ride height under the Jetson/ZED/Arduino payload, which is well above
+  # what the springs were valved for - the alternative was a stiffer
+  # aftermarket spring, which nobody has bought.  None of this has been
+  # measured; A8 replaces every guess here with a sag, droop/bump and
+  # bounce-decay test.  Until then the rigid-wheel model (no suspension DOF
+  # at all) is what the simulator actually runs, so this is a bigger gap
+  # than any single `guess` tag elsewhere in this file - it is the difference
+  # between a wheel that follows the ground and one that doesn't.
+  spring_rate:
+    value: 3500.0
+    units: N/m
+    provenance: guess
+    experiment: A8
+    note: >
+      Per corner, wheel-rate (not shock-rate through the rocker/shock-tower
+      leverage, which is not modelled). Traxxas does not publish a spring
+      rate for the GTX assembly; this is a plausible number for a short-course
+      truck spring of this size, not a derived one.
+  damping:
+    value: 150.0
+    units: N s/m
+    provenance: guess
+    experiment: A8
+    note: >
+      Per corner, wheel-rate. Stock GTX shocks ship with 30wt oil; this is a
+      round-number placeholder for that weight in a shock this size, not a
+      measurement.
+  travel_bump:
+    value: 0.035
+    units: m
+    provenance: guess
+    experiment: A8
+    note: >
+      Upward wheel travel from the race-weight ride height (geometry.ride_height)
+      to the top-out limit. Maximum preload holds the loaded ride height close
+      to the unloaded (fully-drooped) position, which is why most of the
+      shock's ~50 mm of total travel is budgeted here rather than to droop.
+  travel_droop:
+    value: 0.015
+    units: m
+    provenance: guess
+    experiment: A8
+    note: >
+      Downward wheel travel from ride height to the droop limiter. Small
+      because maximum preload leaves little sag to recover on the way down -
+      confirm with the A8 droop measurement rather than trusting this split.
+  preload:
+    value: max
+    units: qualitative (collar position)
+    provenance: measured
+    experiment: A8
+    note: >
+      All four collars threaded to their topmost (stiffest) stop, chosen to
+      compensate for the added electronics mass over catalog race weight.
+      This is the one entry in this section that is not a guess: it is a
+      switch we set, not a property we measured.
 
 tire:
   # Effective ROLLING diameter at race weight, not the catalog figure.  This and

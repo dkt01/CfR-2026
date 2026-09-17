@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
-"""Write the <model name="slash"> block of the Gazebo world from vehicle.yaml.
+"""Write the <model name="slash"> block of every Gazebo world from vehicle.yaml.
 
-    ./scripts/generate_vehicle_model.py            # rewrite the world in place
-    ./scripts/generate_vehicle_model.py --check    # fail if it is out of date
+    ./scripts/generate_vehicle_model.py            # rewrite every world in place
+    ./scripts/generate_vehicle_model.py --check    # fail if any world is out of date
+    ./scripts/generate_vehicle_model.py --world worlds/obstacle_course.sdf  # just one
 
 Before this existed the vehicle model was hand-maintained, and it had drifted:
 the wheel radius was 0.055 m while the drivetrain tire diameter was 0.1143 m
 (0.05715), a silent 3.6% disagreement between the simulator's odometry and the
 car's.  The wheelbase was a bare literal in five places and the steering limit in
 five more.  Generating the block makes that class of divergence impossible - a
-number lives in vehicle.yaml or it does not exist.
+number lives in vehicle.yaml or it does not exist.  obstacle_course.sdf carried
+its own hand-copied version of the same drift (mass 3.5 kg, wheel radius 0.055 m)
+until it was folded into this same generator, keyed off WORLD_SPAWN_POSES.
 
 --check runs in CI, so a vehicle.yaml edit that nobody regenerated fails the
 build instead of quietly leaving the twin describing a different car.
@@ -29,7 +32,15 @@ import yaml
 SCRIPT_DIR = Path(__file__).resolve().parent
 PACKAGE_DIR = SCRIPT_DIR.parent / "cfr_arduino_bridge"
 VEHICLE_FILE = PACKAGE_DIR / "config" / "vehicle.yaml"
-WORLD_FILE = PACKAGE_DIR / "worlds" / "speed_course.sdf"
+
+# Every world the vehicle gets spawned into, and where - a course layout fact,
+# not a vehicle one, so it lives here rather than in vehicle.yaml.  (x, y, yaw).
+WORLD_SPAWN_POSES = {
+    "speed_course.sdf": (20.15, 4.76, 3.14),
+    "obstacle_course.sdf": (-0.7, 0.0, 0.0),
+}
+
+GRAVITY = 9.81
 
 # The block this tool owns, start marker to end marker inclusive.
 # Settling margin above the ground at spawn, shared with teleport_api.py.
@@ -57,7 +68,7 @@ def provenance_of(vehicle, dotted):
     return entry.get("provenance", "unknown") if isinstance(entry, dict) else "unknown"
 
 
-def build_model(vehicle):
+def build_model(vehicle, spawn_pose):
     wheelbase = float(value_of(vehicle, "geometry.wheelbase"))
     track_front = float(value_of(vehicle, "geometry.track_front"))
     track_rear = float(value_of(vehicle, "geometry.track_rear"))
@@ -68,6 +79,7 @@ def build_model(vehicle):
     total_mass = float(value_of(vehicle, "mass.total"))
     wheel_mass = float(value_of(vehicle, "mass.wheel_mass"))
     knuckle_mass = float(value_of(vehicle, "mass.steering_knuckle_mass"))
+    upright_mass = float(value_of(vehicle, "mass.upright_mass"))
     cg_x = float(value_of(vehicle, "mass.cg_x"))
     cg_y = float(value_of(vehicle, "mass.cg_y"))
     cg_z = float(value_of(vehicle, "mass.cg_z"))
@@ -88,14 +100,20 @@ def build_model(vehicle):
     joint_limit = max(left, right)
     steering_limit = min(left, right)
 
-    # The chassis link carries what is left once the wheels and knuckles are
-    # accounted for, so the model's TOTAL mass is the measured one rather than
-    # the measured one plus eight unsprung parts.
-    chassis_mass = total_mass - 4.0 * wheel_mass - 2.0 * knuckle_mass
+    spring_rate = float(value_of(vehicle, "suspension.spring_rate"))
+    damping = float(value_of(vehicle, "suspension.damping"))
+    travel_bump = float(value_of(vehicle, "suspension.travel_bump"))
+    travel_droop = float(value_of(vehicle, "suspension.travel_droop"))
+
+    # The chassis link carries what is left once the wheels, uprights and
+    # knuckles are accounted for, so the model's TOTAL mass is the measured
+    # one rather than the measured one plus twelve unsprung parts.
+    unsprung_mass = 4.0 * wheel_mass + 4.0 * upright_mass + 2.0 * knuckle_mass
+    chassis_mass = total_mass - unsprung_mass
     if chassis_mass <= 0.0:
         raise ValueError(
-            f"mass.total ({total_mass} kg) is not greater than the wheels and knuckles "
-            f"({4 * wheel_mass + 2 * knuckle_mass} kg); check mass.total in vehicle.yaml"
+            f"mass.total ({total_mass} kg) is not greater than the wheels, uprights "
+            f"and knuckles ({unsprung_mass} kg); check mass.total in vehicle.yaml"
         )
 
     half_front = track_front / 2.0
@@ -104,6 +122,19 @@ def build_model(vehicle):
     # Wheel centres sit at one radius, which puts the model origin at ground
     # level and makes every z in vehicle.yaml a height above the ground.
     wheel_inertia = 0.5 * wheel_mass * radius * radius
+
+    # geometry.ride_height was measured "shocks free" (Session A2), i.e. it IS
+    # the static-sag position - so that position is the suspension joint's
+    # zero, and spring_reference is offset from it by exactly the sag needed
+    # to hold the corner's static weight (mg = k * spring_reference), the same
+    # relationship a real spring satisfies at rest.  Front/rear split comes
+    # from the same axle weight fractions A1 measured (see mass.cg_x).
+    front_weight_fraction = 0.5 + cg_x / wheelbase
+    rear_weight_fraction = 1.0 - front_weight_fraction
+    front_corner_load_n = total_mass * front_weight_fraction / 2.0 * GRAVITY
+    rear_corner_load_n = total_mass * rear_weight_fraction / 2.0 * GRAVITY
+    front_spring_reference = front_corner_load_n / spring_rate
+    rear_spring_reference = rear_corner_load_n / spring_rate
 
     def wheel(name, x, y):
         return (
@@ -128,6 +159,28 @@ def build_model(vehicle):
             f"<ixx>0.001</ixx><iyy>0.001</iyy><izz>0.001</izz></inertia></inertial></link>"
         )
 
+    def upright(name, x, y):
+        return (
+            f'      <link name="{name}_upright"><pose>{x:.4f} {y:.4f} {radius:.5f} 0 0 0</pose>'
+            f"<inertial><mass>{upright_mass:.4f}</mass><inertia>"
+            f"<ixx>0.001</ixx><iyy>0.001</iyy><izz>0.001</izz></inertia></inertial></link>"
+        )
+
+    def suspension_joint(name, spring_reference):
+        # Parent is always chassis: the wheel end of the joint is the upright,
+        # front or rear, so this is the one joint every corner has whether or
+        # not it steers.  +z is compression (toward the chassis), matching the
+        # bump/droop split above.
+        return (
+            f'      <joint name="{name}_suspension_joint" type="prismatic"><parent>chassis</parent>'
+            f"<child>{name}_upright</child><axis><xyz>0 0 1</xyz>"
+            f"<dynamics><damping>{damping:.3f}</damping>"
+            f"<spring_stiffness>{spring_rate:.3f}</spring_stiffness>"
+            f"<spring_reference>{spring_reference:.5f}</spring_reference></dynamics>"
+            f"<limit><lower>{-travel_droop:.5f}</lower><upper>{travel_bump:.5f}</upper>"
+            f"<effort>1000000</effort></limit></axis></joint>"
+        )
+
     tags = ", ".join(
         f"{name} {provenance_of(vehicle, name)}"
         for name in (
@@ -137,19 +190,27 @@ def build_model(vehicle):
             "tire.diameter",
             "steering.max_angle_left",
             "lateral.mu_lateral",
+            "suspension.spring_rate",
+            "suspension.damping",
         )
     )
 
+    spawn_x, spawn_y, spawn_yaw = spawn_pose
     lines = [
         BEGIN,
         f"    <!-- Provenance: {tags}. -->",
         "    <!-- Anything tagged `guess` is a placeholder; see docs/characterization.md. -->",
+        "    <!-- Suspension is a prismatic joint per corner with SDF joint",
+        "         dynamics (spring_stiffness/spring_reference/damping). Confirm the",
+        "         loaded physics engine actually implements joint springs: some",
+        "         gz-sim physics plugins only honour damping, not spring_stiffness,",
+        "         in which case a corner sags to its limit instead of settling. -->",
         '    <model name="slash">',
         # Wheel centres sit at exactly one radius, so model-frame z = 0 IS ground
         # level and this is only a settling margin.  The hand-written model used
         # 0.12, dropping the car 12 cm onto its wheels on every spawn - and
         # teleport_api.py copied the number, so it did it again on every teleport.
-        f"      <pose>20.15 4.76 {SPAWN_HEIGHT_M:.4f} 0 0 3.14</pose>",
+        f"      <pose>{spawn_x:.4f} {spawn_y:.4f} {SPAWN_HEIGHT_M:.4f} 0 0 {spawn_yaw:.4f}</pose>",
         '      <link name="chassis">',
         # The inertial pose is the fix that matters most here: without it the
         # centre of mass sits at the link origin, which is GROUND level.
@@ -189,17 +250,29 @@ def build_model(vehicle):
         # block has to carry it, not just the hand written part of the world.
         "          <!-- cfr:sensors-camera -->",
         "      </link>",
+        # Suspension sits between chassis and upright at all four corners;
+        # steering (front only) and wheel spin sit below the upright, so
+        # vertical travel carries the whole corner assembly with it rather
+        # than fighting either of the other two joints.
+        upright("front_left", axle, half_front),
+        upright("front_right", axle, -half_front),
+        upright("rear_left", -axle, half_rear),
+        upright("rear_right", -axle, -half_rear),
         knuckle("front_left", axle, half_front),
         knuckle("front_right", axle, -half_front),
         wheel("front_left", axle, half_front),
         wheel("front_right", axle, -half_front),
         wheel("rear_left", -axle, half_rear),
         wheel("rear_right", -axle, -half_rear),
-        f'      <joint name="front_left_steering_joint" type="revolute"><parent>chassis</parent>'
+        suspension_joint("front_left", front_spring_reference),
+        suspension_joint("front_right", front_spring_reference),
+        suspension_joint("rear_left", rear_spring_reference),
+        suspension_joint("rear_right", rear_spring_reference),
+        f'      <joint name="front_left_steering_joint" type="revolute"><parent>front_left_upright</parent>'
         f"<child>front_left_steering</child><axis><xyz>0 0 1</xyz><limit>"
         f"<lower>{-joint_limit:.5f}</lower><upper>{joint_limit:.5f}</upper>"
         f"<effort>1000000</effort></limit></axis></joint>",
-        f'      <joint name="front_right_steering_joint" type="revolute"><parent>chassis</parent>'
+        f'      <joint name="front_right_steering_joint" type="revolute"><parent>front_right_upright</parent>'
         f"<child>front_right_steering</child><axis><xyz>0 0 1</xyz><limit>"
         f"<lower>{-joint_limit:.5f}</lower><upper>{joint_limit:.5f}</upper>"
         f"<effort>1000000</effort></limit></axis></joint>",
@@ -207,8 +280,8 @@ def build_model(vehicle):
     for name, parent in (
         ("front_left", "front_left_steering"),
         ("front_right", "front_right_steering"),
-        ("rear_left", "chassis"),
-        ("rear_right", "chassis"),
+        ("rear_left", "rear_left_upright"),
+        ("rear_right", "rear_right_upright"),
     ):
         lines.append(
             f'      <joint name="{name}_wheel_joint" type="revolute"><parent>{parent}</parent>'
@@ -247,7 +320,7 @@ def build_model(vehicle):
     return "\n".join(lines)
 
 
-def splice(world_text, model_text):
+def splice(world_text, model_text, world_name):
     if BEGIN in world_text:
         pattern = re.compile(re.escape(BEGIN) + r".*?" + re.escape(END), re.DOTALL)
         updated, count = pattern.subn(lambda _: model_text, world_text)
@@ -258,9 +331,35 @@ def splice(world_text, model_text):
     if count != 1:
         raise RuntimeError(
             "could not find exactly one vehicle block in the world file "
-            f"(found {count}); has speed_course.sdf been edited by hand?"
+            f"(found {count}); has {world_name} been edited by hand?"
         )
     return updated
+
+
+def regenerate(vehicle, world_path, check):
+    spawn_pose = WORLD_SPAWN_POSES.get(world_path.name)
+    if spawn_pose is None:
+        raise KeyError(
+            f"{world_path.name} has no entry in WORLD_SPAWN_POSES; add its spawn "
+            "(x, y, yaw) there"
+        )
+    world_text = world_path.read_text(encoding="utf-8")
+    updated = splice(world_text, build_model(vehicle, spawn_pose), world_path.name)
+
+    if check:
+        if updated != world_text:
+            print(
+                f"{world_path} is out of date with vehicle.yaml.\n"
+                f"Run scripts/generate_vehicle_model.py and commit the result.",
+                file=sys.stderr,
+            )
+            return False
+        print(f"{world_path.name} is up to date with vehicle.yaml")
+        return True
+
+    world_path.write_text(updated, encoding="utf-8")
+    print(f"wrote the vehicle model into {world_path}")
+    return True
 
 
 def main(argv=None):
@@ -268,7 +367,13 @@ def main(argv=None):
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("--vehicle", type=Path, default=VEHICLE_FILE)
-    parser.add_argument("--world", type=Path, default=WORLD_FILE)
+    parser.add_argument(
+        "--world",
+        type=Path,
+        default=None,
+        help="regenerate only this world file (default: every world in "
+        "WORLD_SPAWN_POSES)",
+    )
     parser.add_argument(
         "--check",
         action="store_true",
@@ -278,21 +383,22 @@ def main(argv=None):
 
     with open(args.vehicle, "r", encoding="utf-8") as handle:
         vehicle = yaml.safe_load(handle)
-    world_text = args.world.read_text(encoding="utf-8")
-    updated = splice(world_text, build_model(vehicle))
+
+    worlds = (
+        [args.world]
+        if args.world is not None
+        else [PACKAGE_DIR / "worlds" / name for name in WORLD_SPAWN_POSES]
+    )
 
     if args.check:
-        if updated != world_text:
-            print(
-                f"{args.world} is out of date with {args.vehicle}.\n"
-                f"Run scripts/generate_vehicle_model.py and commit the result.",
-                file=sys.stderr,
-            )
-            return 1
-        print(f"{args.world.name} is up to date with {args.vehicle.name}")
-        return 0
+        # A list, not a generator, so every world gets checked (and printed)
+        # even once one has already failed.
+        results = [regenerate(vehicle, world, check=True) for world in worlds]
+        return 0 if all(results) else 1
 
-    args.world.write_text(updated, encoding="utf-8")
+    for world in worlds:
+        regenerate(vehicle, world, check=False)
+
     guesses = [
         f"{section}.{key}"
         for section, entries in vehicle.items()
@@ -300,7 +406,6 @@ def main(argv=None):
         for key, entry in entries.items()
         if isinstance(entry, dict) and entry.get("provenance") == "guess"
     ]
-    print(f"wrote the vehicle model into {args.world}")
     if guesses:
         print(
             f"\n{len(guesses)} value(s) are still tagged `guess`, so the twin is still "

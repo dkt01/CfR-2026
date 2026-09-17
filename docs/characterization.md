@@ -22,6 +22,7 @@ runs the real autonomy stack, but the car it simulates is largely invented:
 | full lock is 0.40 rad | **never measured, and it scales every curve the car drives** |
 | coast decelerates at 0.1 m/s² forward, 0.3 reverse | a fudge for a Gazebo contact artifact, per the config's own comment |
 | speed reaches its target in one tick | no ESC deadband, no lag, no controller dynamics |
+| wheels are rigidly bolted to the chassis | no suspension DOF at all - a wheel follows the ground exactly, which matters everywhere but is a lie on the obstacle course's potholes, gravel and ramps |
 
 `config/vehicle.yaml` now holds all of it in one place, and every entry carries a
 `provenance` tag: `measured`, `estimated`, or `guess`. The campaign's job is to
@@ -179,6 +180,57 @@ Film one full-lock-to-full-lock step at 240 fps and count frames. Once is enough
 the servo runs on regulated 5 V, so this does not vary with pack state.
 
 Also film a small step for the time constant.
+
+### A8 — Suspension
+
+**Do this after A1** (needs corner weight) and with the car at full race weight,
+tires on. Every shock is stock, collars run to **maximum preload** to hold ride
+height under the electronics payload - confirm that is still true before
+measuring anything (a collar can walk loose).
+
+1. **Confirm preload.** Photograph all four collars at their topmost
+   (stiffest) thread position. This is `suspension.preload`, and it is the one
+   entry in that section that gets `measured` for free - it is a setting, not
+   something inferred from a reading.
+2. **Static sag.** With the car resting normally, mark the shock shaft at the
+   collar (a rubber O-ring works). Lift the corner until the wheel just clears
+   the ground (unloaded) and mark the shaft again. The gap between marks is
+   the sag that `geometry.ride_height` already bakes in - it should be small,
+   because that is what maximum preload is for. Repeat all four corners.
+3. **Bump and droop travel.** From the unloaded mark in step 2, compress the
+   suspension by hand to full bump (shock bottoms or the arm hits its stop)
+   and measure wheel travel; then extend to full droop (shock reaches max
+   length or the droop limiter engages) and measure that too. These are
+   `suspension.travel_bump` and `suspension.travel_droop`, measured from
+   **ride height**, not from the unloaded mark - subtract the step 2 sag from
+   the bump number and add it to the droop number.
+4. **Spring rate.** Add a known mass (a bag of hardware on the scale from A1
+   works) centred over one corner and re-measure the shaft position from step
+   2's marks. `spring_rate = added_mass * 9.81 / compression`. Repeat on a
+   second corner as a check; front and rear should agree if the shocks really
+   are identical, which is the whole premise of treating this as one value
+   rather than four.
+5. **Damping, by bounce decay.** Push one corner down by hand about 20-30 mm
+   and release cleanly (no residual push or hold). Film at 240 fps, as in A7.
+   Read the peak-to-peak amplitude of at least three successive oscillations
+   and compute the logarithmic decrement `delta = ln(x1 / x2)` between
+   consecutive peaks; damping ratio `zeta = delta / sqrt(4*pi^2 + delta^2)`,
+   and `damping = 2 * zeta * sqrt(spring_rate * corner_mass)` where
+   `corner_mass` is the sprung mass over that corner (roughly
+   `mass.total * axle_weight_fraction / 2`, from A1's axle weighing). If the
+   corner does not oscillate at all (overdamped), say so instead of forcing a
+   number - that is itself useful information about the stock shock oil.
+
+Update `suspension.*` in `vehicle.yaml` and set each `provenance` to
+`measured`, same as everywhere else in Session A. Until this is done the
+simulator has no suspension travel that means anything - it will still move,
+because a `guess` is a real number, but every one of `spring_rate`, `damping`,
+`travel_bump` and `travel_droop` is a placeholder chosen for plausibility, not
+because anyone rolled the car over a bump and measured what it did. The
+obstacle course's potholes and gravel section are exactly where this shows up:
+`generate_vehicle_model.py` puts the same suspension model into
+`worlds/obstacle_course.sdf` as `worlds/speed_course.sdf`, so a bad guess here
+is wrong everywhere the car meets an uneven surface, not just there.
 
 ---
 

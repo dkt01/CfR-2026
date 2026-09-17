@@ -120,19 +120,20 @@ if(BUILD_TESTING)
   # on a laptop with no test runner installed - which is where runs get analysed.
   ament_add_pytest_test(test_characterize test/test_characterize.py)
 
-  # The Gazebo vehicle model is generated from config/vehicle.yaml.  This fails
-  # the build if someone edited one without regenerating the other, rather than
-  # letting the simulator quietly describe a different car.
+  # The Gazebo vehicle model is generated from config/vehicle.yaml into EVERY
+  # world in WORLD_SPAWN_POSES (speed_course.sdf and obstacle_course.sdf).
+  # This fails the build if someone edited one without regenerating the
+  # other, rather than letting a simulator quietly describe a different car.
   find_package(ament_cmake_test REQUIRED)
   # --check reports through its exit code and prints a human readable reason;
   # it does not write a JUnit file, which ament_add_test otherwise insists on
-  # and fails the test for missing however the check itself came out.
+  # and fails the test for missing however the check itself came out.  No
+  # --world: omitting it checks every world the generator knows about.
   ament_add_test(test_vehicle_model_up_to_date
     GENERATE_RESULT_FOR_RETURN_CODE_ZERO
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/generate_vehicle_model.py"
             --check
             --vehicle "${CMAKE_CURRENT_SOURCE_DIR}/config/vehicle.yaml"
-            --world "${CMAKE_CURRENT_SOURCE_DIR}/worlds/speed_course.sdf"
     OUTPUT_FILE "${CMAKE_BINARY_DIR}/test_results/${PROJECT_NAME}/test_vehicle_model_up_to_date.txt"
   )
 

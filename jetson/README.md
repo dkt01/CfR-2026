@@ -916,9 +916,18 @@ stamps each value it updates with the run that justifies it and the date; a
 number in that file should always be able to answer "says who?".
 
 `scripts/generate_vehicle_model.py` writes the `<model name="slash">` block of
-`worlds/speed_course.sdf` from it, and `--check` runs in the test suite, so a
-`vehicle.yaml` edit that nobody regenerated fails the build instead of quietly
-leaving the simulator describing a different car.
+`worlds/speed_course.sdf` **and** `worlds/obstacle_course.sdf` from it (each
+world keeps its own spawn point; everything else about the car is shared), and
+`--check` runs in the test suite, so a `vehicle.yaml` edit that nobody
+regenerated fails the build instead of quietly leaving the simulator
+describing a different car.
+
+The vehicle now includes a suspension DOF per corner (a damped, sprung
+prismatic joint between the chassis and each wheel's upright) so the obstacle
+course's potholes, gravel and ramps actually excite the chassis instead of
+being transmitted straight through rigidly-mounted wheels. Every
+`suspension.*` value in `vehicle.yaml` is still tagged `guess` pending
+characterization's A8 - see [docs/characterization.md](../docs/characterization.md).
 
 ## Deploy from a development host
 
