@@ -47,6 +47,7 @@ def generate_launch_description():
             "sensors": LaunchConfiguration("sensors"),
             "world_name": "cfr_obstacle_course",
             "randomizer": "true",
+            "laps": "2",
             "layout_file": PathJoinSubstitution(
                 [package_share, "config", "obstacle_course_layout.yaml"]
             ),

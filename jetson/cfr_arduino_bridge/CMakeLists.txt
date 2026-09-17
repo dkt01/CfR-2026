@@ -74,14 +74,14 @@ install(TARGETS arduino_bridge_node cmd_vel_to_drive_node sim_vehicle_node path_
 )
 
 install(PROGRAMS src/teleport_api.py src/obstacle_randomizer_node.py
-  src/start_signal_detector_node.py
+  src/start_signal_detector_node.py src/lap_counter_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
-# start_signal_detector_node.py imports this from beside itself, so it is
-# installed into the same directory -- but as a module rather than a program,
-# since it has no shebang and is not meant to be run.
-install(FILES src/start_signal_detector.py
+# These are imported from beside their nodes, so they are installed into the
+# same directory -- but as modules rather than programs, since they have no
+# shebang and are not meant to be run.
+install(FILES src/start_signal_detector.py src/lap_counter.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -117,6 +117,10 @@ if(BUILD_TESTING)
   # start_signal_detector_node's color decision, which the test imports
   # straight out of src/ -- it is free of ROS, so it needs no workspace.
   ament_add_pytest_test(test_start_signal_detector test/test_start_signal_detector.py)
+
+  # lap_counter_node's crossing logic, imported straight out of src/ the same
+  # way -- also free of ROS, so it also needs no workspace.
+  ament_add_pytest_test(test_lap_counter test/test_lap_counter.py)
 endif()
 
 ament_export_include_directories(include)

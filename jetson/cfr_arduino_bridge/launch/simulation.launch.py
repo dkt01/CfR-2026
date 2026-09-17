@@ -24,6 +24,7 @@ from launch.substitutions import (
     PathJoinSubstitution,
 )
 from launch_ros.actions import Node
+from launch_ros.descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 # Both worlds carry these two markers, one at world level and one inside the
@@ -137,6 +138,11 @@ def generate_launch_description():
         ),
         description="Bounds for the course's variable elements",
     )
+    laps_arg = DeclareLaunchArgument(
+        "laps",
+        default_value="3",
+        description="Laps before lap_counter latches ~/done; 3 speed, 2 obstacle",
+    )
 
     # Mesh URIs in the worlds are model://cfr_arduino_bridge/meshes/..., which
     # Gazebo resolves by looking for a directory called cfr_arduino_bridge on
@@ -235,6 +241,10 @@ def generate_launch_description():
         arguments=[
             "/sim/cmd_vel@geometry_msgs/msg/Twist]gz.msgs.Twist",
             "/model/slash/odometry@nav_msgs/msg/Odometry[gz.msgs.Odometry",
+            # Ground truth, standing in for the ZED's map-frame pose: the
+            # ackermann plugin's odometry above drifts and is never
+            # corrected, exactly as the real camera's ~/odom is not.
+            "/model/slash/pose@geometry_msgs/msg/PoseStamped[gz.msgs.Pose",
             "/zed/gz/rgbd/image@sensor_msgs/msg/Image[gz.msgs.Image",
             "/zed/gz/rgbd/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo",
             "/zed/gz/rgbd/depth_image@sensor_msgs/msg/Image[gz.msgs.Image",
@@ -247,6 +257,7 @@ def generate_launch_description():
         ],
         remappings=[
             ("/model/slash/odometry", "/zed/zed_node/odom"),
+            ("/model/slash/pose", "/zed/zed_node/pose"),
             ("/zed/gz/rgbd/image", "/zed/zed_node/left/image_rect_color"),
             (
                 "/zed/gz/rgbd/camera_info",
@@ -288,6 +299,29 @@ def generate_launch_description():
         remappings=[("~/odom", "/zed/zed_node/odom"), ("cmd_vel", "/cmd_vel")],
     )
 
+    lap_counter = Node(
+        package="cfr_arduino_bridge",
+        executable="lap_counter_node.py",
+        name="lap_counter",
+        output="screen",
+        parameters=[
+            LaunchConfiguration("params_file"),
+            {"use_sim_time": True},
+            # Typed, because a launch argument arrives as the string "3" and
+            # the node declares this one as an int.
+            {
+                "target_laps": ParameterValue(
+                    LaunchConfiguration("laps"), value_type=int
+                )
+            },
+        ],
+        remappings=[
+            ("pose", "/zed/zed_node/pose"),
+            ("status", "/arduino_bridge/status"),
+            ("go", "/start_signal_detector/go"),
+        ],
+    )
+
     return LaunchDescription(
         [
             params_arg,
@@ -298,6 +332,7 @@ def generate_launch_description():
             world_name_arg,
             randomizer_arg,
             layout_arg,
+            laps_arg,
             resource_path,
             gazebo,
             websocket_server,
@@ -308,5 +343,6 @@ def generate_launch_description():
             start_signal_detector,
             cmd_vel_to_drive,
             path_follower,
+            lap_counter,
         ]
     )

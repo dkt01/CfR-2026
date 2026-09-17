@@ -49,6 +49,7 @@ def generate_launch_description():
             "sensors": LaunchConfiguration("sensors"),
             "world_name": "cfr_speed_course",
             "randomizer": "true",
+            "laps": "3",
             "layout_file": PathJoinSubstitution(
                 [package_share, "config", "speed_course_layout.yaml"]
             ),
