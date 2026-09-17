@@ -286,9 +286,9 @@
     </link></model>
     <!-- Tunnel: closed on top and sides, and it carries the bridge deck. -->
     <model name="tunnel"><static>true</static><link name="link">
-      <visual name="tunnel_visual"><pose>7.0976 -0.3537 0.0000 0.0000 0.0000 1.5708</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/tunnel.stl</uri></mesh></geometry><material><diffuse>0.74 0.76 0.78 1</diffuse></material></visual>
-      <collision name="wall_-1_collision"><pose>6.6662 -0.3537 0.3111 0.0000 0.0000 0.0000</pose><geometry><box><size>0.0500 1.5240 0.6223</size></box></geometry></collision>
-      <collision name="wall_1_collision"><pose>7.5290 -0.3537 0.3111 0.0000 0.0000 0.0000</pose><geometry><box><size>0.0500 1.5240 0.6223</size></box></geometry></collision>
+      <visual name="tunnel_visual"><pose>7.0976 0.4424 0.0000 0.0000 0.0000 1.5708</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/tunnel.stl</uri></mesh></geometry><material><diffuse>0.74 0.76 0.78 1</diffuse></material></visual>
+      <collision name="wall_-1_collision"><pose>6.6662 0.4424 0.3111 0.0000 0.0000 0.0000</pose><geometry><box><size>0.0500 1.5240 0.6223</size></box></geometry></collision>
+      <collision name="wall_1_collision"><pose>7.5290 0.4424 0.3111 0.0000 0.0000 0.0000</pose><geometry><box><size>0.0500 1.5240 0.6223</size></box></geometry></collision>
     </link></model>
     <!-- Helical ramp down: 4 ft centreline radius, 41.5 in wide, 11% grade. -->
     <model name="helix"><static>true</static><link name="link">
@@ -741,7 +741,7 @@
     <!-- 8.5 degree banked turn, 48 in by 128 in. -->
     <model name="bank"><static>true</static><link name="link">
       <visual name="bank_visual"><pose>-4.0276 -9.3717 0.0000 0.0000 0.0000 3.1416</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/bank.stl</uri></mesh></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
-      <collision name="surface_collision"><pose>-4.0276 -9.3717 0.0711 0.0000 0.0000 0.0000</pose><geometry><box><size>1.2192 3.2513 0.0400</size></box></geometry></collision>
+      <collision name="surface_collision"><pose>-4.0276 -9.3717 0.0711 0.0000 0.1484 0.0000</pose><geometry><box><size>1.2327 3.2513 0.0400</size></box></geometry></collision>
     </link></model>
 
     <!-- Buckets: moved at runtime by obstacle_randomizer_node. -->

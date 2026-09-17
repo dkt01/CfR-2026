@@ -67,7 +67,12 @@ GRAVEL = (85.897, 139.614, 93.897, 143.614)
 GRAVEL_ENTRY_RAMP = (83.230, 140.281, 85.897, 142.947)
 GRAVEL_EXIT_RAMP = (93.897, 139.614, 96.564, 143.614)
 BANK = (108.729, 134.518, 112.729, 145.185)
-TUNNEL = (72.896, 107.765, 75.562, 112.765)
+# The DXF's own TUNNEL rectangle (107.765, 112.765 on y) left a 0.80 m gap
+# between the helix's exit point and the tunnel mouth, visible as open air in
+# the render; slid 2.612 ft towards the helix so the near wall meets it, which
+# lands the near wall exactly on HELIX_CENTRE's y -- the ramp's 270 degree
+# sweep ends back on the helix center's y by construction (sin(180 deg) = 0).
+TUNNEL = (72.896, 105.153, 75.562, 110.153)
 RAMP_UP = (75.557, 107.770, 86.432, 110.436)
 BRIDGE_DECK = (70.286, 107.770, 75.557, 110.436)
 
@@ -726,12 +731,18 @@ def build_bank() -> str:
     body = mesh_visual(
         "bank", (x, y, 0, 0, 0, math.pi), f"{MESH_URI}/bank.stl", PLYWOOD
     )
-    # 8.5 degrees, high side outboard of the turn.
+    # 8.5 degrees, high side outboard of the turn.  Pitched rather than flat:
+    # a flat box at the section's average height stood proud of the ground on
+    # its low edge by half that height -- a step in from the surrounding
+    # floor the car could not climb, rather than a ramp it could drive up.
+    # The mesh's yaw puts its low edge on +x, and a positive pitch here
+    # raises -x the same way, so the box's low edge lands back at grade.
     tilt = math.radians(8.5)
+    rise = width * math.tan(tilt)
     body += box(
         "surface",
-        (x, y, width * math.tan(tilt) / 2 - 0.02, 0, 0, 0),
-        (width, length, 0.04),
+        (x, y, rise / 2 - 0.02, 0, tilt, 0),
+        (width / math.cos(tilt), length, 0.04),
         PLYWOOD,
         visual=False,
     )
