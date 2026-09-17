@@ -343,9 +343,6 @@ def static_model(name: str, body: str) -> str:
 
 
 PLYWOOD = "0.62 0.48 0.31 1"
-# The start signal's frame is painted sky blue on the course; only its two
-# arms are the red and green the car is looking for.
-SKY_BLUE = "0.53 0.81 0.92 1"
 STRAW = "0.72 0.48 0.12 1"
 PVC = "0.88 0.88 0.90 1"
 GRAVEL_GREY = "0.44 0.43 0.40 1"

@@ -7,7 +7,7 @@ in one generator with a copy in the other.
 
 The signal is a fixed frame and an arm pair on a revolute joint.  The two arms
 are 90 degrees apart about that joint, so whichever lies horizontal stands out
-past the sky blue board and is the one the car sees; a quarter turn swaps
+past the oasis blue board and is the one the car sees; a quarter turn swaps
 them.  It starts at 0, which is the angle the red arm is modeled at, so a
 freshly loaded world always shows red.
 
@@ -63,7 +63,7 @@ INCH = 0.0254
 # Height of the pivot the arms turn about, from the CAD.
 PIVOT_HEIGHT = 0.813
 
-# The sky blue board, from the CAD: 32 in wide, 4 in deep, 48 in tall.  Its
+# The oasis blue board, from the CAD: 32 in wide, 4 in deep, 48 in tall.  Its
 # width is the reason the signal stands off the lane edge rather than on it --
 # see the module docstring -- and check_signal_sightline.py measures its
 # footprint against the bales.
@@ -94,11 +94,12 @@ GREEN_ANGLE = math.pi / 2
 # as an ordinary ROS topic.
 COMMAND_TOPIC = "/start_signal/arm"
 
-# The frame is painted sky blue on the course; only the arms carry the red and
-# green the car is looking for.
-SKY_BLUE = "0.53 0.81 0.92 1"
-RED = "0.85 0.09 0.07 1"
-GREEN = "0.10 0.70 0.20 1"
+# The frame is painted Rust-Oleum Satin Oasis Blue on the course; the arms
+# carry Rust-Oleum 2X Satin Poppy Red and Leafy Green, which are the colors
+# the car is looking for.
+OASIS_BLUE = "0.00 0.64 0.92 1"
+RED = "0.89 0.21 0.15 1"
+GREEN = "0.35 0.60 0.31 1"
 
 
 def yaw_across(heading: float) -> float:
@@ -237,7 +238,7 @@ def models(position: tuple[float, float], heading: float) -> str:
     yaw = yaw_across(heading)
 
     frame = mesh_visual(
-        "frame", (0, 0, 0, 0, 0, 0), "start_signal_frame.stl", SKY_BLUE, " " * 8
+        "frame", (0, 0, 0, 0, 0, 0), "start_signal_frame.stl", OASIS_BLUE, " " * 8
     )
     # Collision only: drawing this box as well would put it in front of the
     # mesh and hide the arms completely.
