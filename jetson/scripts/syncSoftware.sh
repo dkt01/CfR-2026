@@ -36,6 +36,21 @@ readonly EXCLUDES=(
   '.DS_Store'
 )
 
+# The scp fallback below has no rsync-style --exclude, so it has to prune the
+# same list itself. Derive its find(1) predicate from EXCLUDES rather than
+# hand-maintaining a second copy: rsync's directory patterns match at any
+# depth, so a lone top-level "! -path SOURCE_DIR/build/*" would miss a build/
+# nested under a package and silently sync it, unlike the rsync path.
+FIND_PRUNE_ARGS=()
+for pattern in "${EXCLUDES[@]}"; do
+  if [[ "${pattern}" == */ ]]; then
+    FIND_PRUNE_ARGS+=(! -path "*/${pattern%/}/*")
+  else
+    FIND_PRUNE_ARGS+=(! -name "${pattern}")
+  fi
+done
+readonly FIND_PRUNE_ARGS
+
 usage() {
   cat <<EOF
 Usage: $(basename "$0") [options]
@@ -102,6 +117,36 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# ssh, scp, and rsync each open their own connection, so a host that only
+# accepts a password (no key in ssh-agent) would otherwise ask for it once
+# per remote command below. ControlMaster connection sharing would fix that
+# on Linux/macOS, but it does not work over Git for Windows' bundled OpenSSH
+# (session multiplexing fails there), which this script must also support.
+# So instead: probe whether public-key auth alone gets in, and if not, read
+# the password once here and hand it to every remote command via sshpass.
+SSH_CMD=(ssh)
+SCP_CMD=(scp)
+RSYNC_RSH="ssh"
+if ! ssh -o BatchMode=yes -o ConnectTimeout=5 "${REMOTE_HOST}" true >/dev/null 2>&1; then
+  # The `&&` chain keeps this compatible with `set -e`: if sshpass is missing,
+  # or there is no controlling terminal to prompt on (e.g. run from cron), the
+  # read is skipped rather than aborting the script on a failed redirect.
+  if command -v sshpass >/dev/null && read -rs -p "Password for ${REMOTE_HOST}: " SSH_PASSWORD </dev/tty 2>/dev/null; then
+    echo
+    export SSHPASS="${SSH_PASSWORD}"
+    unset SSH_PASSWORD
+    SSH_CMD=(sshpass -e ssh)
+    SCP_CMD=(sshpass -e scp)
+    RSYNC_RSH="sshpass -e ssh"
+  else
+    echo "note: public-key login to ${REMOTE_HOST} isn't set up (or no" >&2
+    echo "      terminal is available to ask for the password once), so" >&2
+    echo "      ssh/scp/rsync will each prompt separately. Install sshpass" >&2
+    echo "      and run this interactively, or run ssh-copy-id" >&2
+    echo "      ${REMOTE_HOST}, to be asked only once." >&2
+  fi
+fi
+
 HAS_RSYNC=false
 if command -v rsync >/dev/null; then
   HAS_RSYNC=true
@@ -120,7 +165,7 @@ if [[ ! -d "${SOURCE_DIR}/cfr_arduino_bridge" ]]; then
   exit 1
 fi
 
-rsync_args=(--archive --compress --human-readable --itemize-changes)
+rsync_args=(--archive --compress --human-readable --itemize-changes -e "${RSYNC_RSH}")
 for pattern in "${EXCLUDES[@]}"; do
   rsync_args+=(--exclude "${pattern}")
 done
@@ -138,7 +183,9 @@ fi
 echo "syncing ${SOURCE_DIR}/ -> ${REMOTE_HOST}:${REMOTE_DIR}/"
 
 # Trailing slashes matter: copy the contents of jetson/, not the directory.
-ssh "${REMOTE_HOST}" "mkdir -p ${REMOTE_DIR}"
+if [[ "${DRY_RUN}" != true ]]; then
+  "${SSH_CMD[@]}" "${REMOTE_HOST}" "mkdir -p ${REMOTE_DIR}"
+fi
 if [[ "${HAS_RSYNC}" == true ]]; then
   rsync "${rsync_args[@]}" "${SOURCE_DIR}/" "${REMOTE_HOST}:${REMOTE_DIR}/"
 else
@@ -150,23 +197,12 @@ else
       printf 'would copy %s -> %s:%s\n' "${source_file}" "${REMOTE_HOST}" "${remote_file}"
     else
       remote_directory="${REMOTE_DIR}/$(dirname "${relative_file}")"
-      ssh "${REMOTE_HOST}" "mkdir -p ${remote_directory}"
-      scp "${source_file}" "${REMOTE_HOST}:${remote_file}"
+      # </dev/null: ssh/scp otherwise inherit this loop's stdin (the find
+      # pipe below) and drain it, so only the first file would ever transfer.
+      "${SSH_CMD[@]}" "${REMOTE_HOST}" "mkdir -p ${remote_directory}" </dev/null
+      "${SCP_CMD[@]}" "${source_file}" "${REMOTE_HOST}:${remote_file}" </dev/null
     fi
-  done < <(find "${SOURCE_DIR}" -type f \
-    ! -path "${SOURCE_DIR}/.git/*" \
-    ! -path "${SOURCE_DIR}/build/*" \
-    ! -path "${SOURCE_DIR}/install/*" \
-    ! -path "${SOURCE_DIR}/log/*" \
-    ! -path "${SOURCE_DIR}/logs/*" \
-    ! -path "${SOURCE_DIR}/bin/*" \
-    ! -path "${SOURCE_DIR}/lib/*" \
-    ! -path '*/__pycache__/*' \
-    ! -name '*.pyc' \
-    ! -name '*.swp' \
-    ! -name '*~' \
-    ! -name '.DS_Store' \
-    -print)
+  done < <(find "${SOURCE_DIR}" -type f "${FIND_PRUNE_ARGS[@]}" -print)
 fi
 
 if [[ "${DRY_RUN}" == true ]]; then
@@ -186,7 +222,7 @@ fi
 
 echo
 echo "building on ${REMOTE_HOST} in ${REMOTE_WS}"
-ssh "${REMOTE_HOST}" "bash -lc '
+"${SSH_CMD[@]}" "${REMOTE_HOST}" "bash -lc '
   set -eo pipefail
   source /opt/ros/${ROS_DISTRO_NAME}/setup.bash
   set -u
@@ -203,7 +239,7 @@ echo "build complete"
 if [[ "${DO_TEST}" == true ]]; then
   echo
   echo "testing on ${REMOTE_HOST}"
-  ssh "${REMOTE_HOST}" "bash -lc '
+  "${SSH_CMD[@]}" "${REMOTE_HOST}" "bash -lc '
     set -eo pipefail
     source /opt/ros/${ROS_DISTRO_NAME}/setup.bash
     set -u
