@@ -165,10 +165,26 @@ if [[ ! -d "${SOURCE_DIR}/cfr_arduino_bridge" ]]; then
   exit 1
 fi
 
-rsync_args=(--archive --compress --human-readable --itemize-changes -e "${RSYNC_RSH}")
-for pattern in "${EXCLUDES[@]}"; do
-  rsync_args+=(--exclude "${pattern}")
-done
+# What gets synced is exactly one NUL-delimited list of paths relative to
+# SOURCE_DIR, consumed identically by both the rsync and scp-fallback paths
+# below, so they can never again disagree on what to exclude (see the git
+# history of this file for the bug that caused). git already knows how to
+# apply .gitignore, including nested ignore files like a tool's own
+# .pytest_cache/.gitignore, so prefer asking it over re-deriving that logic;
+# fall back to the hardcoded EXCLUDES list only when git isn't available.
+FILE_LIST="$(mktemp)"
+trap 'rm -f "${FILE_LIST}"' EXIT
+if command -v git >/dev/null && git -C "${SOURCE_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  git -C "${SOURCE_DIR}" ls-files -z --cached --others --exclude-standard >"${FILE_LIST}"
+else
+  echo "note: ${SOURCE_DIR} isn't a git checkout (or git isn't installed), so" >&2
+  echo "      .gitignore can't be consulted; falling back to this script's" >&2
+  echo "      own hardcoded ignore list, which may sync extra cache/build" >&2
+  echo "      files that .gitignore would otherwise catch." >&2
+  find "${SOURCE_DIR}" -type f "${FIND_PRUNE_ARGS[@]}" -printf '%P\0' >"${FILE_LIST}"
+fi
+
+rsync_args=(--archive --compress --human-readable --itemize-changes -e "${RSYNC_RSH}" --files-from="${FILE_LIST}" --from0)
 
 if [[ "${DRY_RUN}" == true ]]; then
   rsync_args+=(--dry-run)
@@ -190,19 +206,19 @@ if [[ "${HAS_RSYNC}" == true ]]; then
   rsync "${rsync_args[@]}" "${SOURCE_DIR}/" "${REMOTE_HOST}:${REMOTE_DIR}/"
 else
   echo "rsync unavailable; using scp fallback"
-  while IFS= read -r source_file; do
-    relative_file="${source_file#"${SOURCE_DIR}/"}"
+  while IFS= read -r -d '' relative_file; do
+    source_file="${SOURCE_DIR}/${relative_file}"
     remote_file="${REMOTE_DIR}/${relative_file}"
     if [[ "${DRY_RUN}" == true ]]; then
       printf 'would copy %s -> %s:%s\n' "${source_file}" "${REMOTE_HOST}" "${remote_file}"
     else
       remote_directory="${REMOTE_DIR}/$(dirname "${relative_file}")"
-      # </dev/null: ssh/scp otherwise inherit this loop's stdin (the find
-      # pipe below) and drain it, so only the first file would ever transfer.
+      # </dev/null: ssh/scp otherwise inherit this loop's stdin (FILE_LIST
+      # below) and drain it, so only the first file would ever transfer.
       "${SSH_CMD[@]}" "${REMOTE_HOST}" "mkdir -p ${remote_directory}" </dev/null
       "${SCP_CMD[@]}" "${source_file}" "${REMOTE_HOST}:${remote_file}" </dev/null
     fi
-  done < <(find "${SOURCE_DIR}" -type f "${FIND_PRUNE_ARGS[@]}" -print)
+  done < "${FILE_LIST}"
 fi
 
 if [[ "${DRY_RUN}" == true ]]; then
