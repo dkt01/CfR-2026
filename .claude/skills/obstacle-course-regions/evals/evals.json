@@ -1,0 +1,28 @@
+{
+  "skill_name": "obstacle-course-regions",
+  "evals": [
+    {
+      "id": 0,
+      "name": "telemetry-region-labeling",
+      "prompt": "I've got a CSV of the car's (x, y) position from an obstacle-course RL episode, sampled every 100ms, at .claude/skills/obstacle-course-regions-workspace/iteration-1/telemetry_sample.csv (columns: t_ms, x, y, world meters -- same frame as /zed/zed_node/pose). Can you tell me which obstacle region each row falls into, and give me a quick summary of how much time it spent in each region?",
+      "expected_output": "A per-row region label using the skill's actual region names/bounds (not fabricated), plus a time-in-region summary (100ms per row). Two of the twelve rows (t=300ms and t=700ms) don't land inside any named region's box and should be reported as such (ordinary lane / no match) rather than forced into the nearest region.",
+      "files": [
+        ".claude/skills/obstacle-course-regions-workspace/iteration-1/telemetry_sample.csv"
+      ]
+    },
+    {
+      "id": 1,
+      "name": "obstacle-order-and-gravel-bounds",
+      "prompt": "Quick one: what order do the obstacles come in on the CfR-2026 obstacle course, and what are the coordinate bounds of the gravel pit in world meters?",
+      "expected_output": "The 11 regions in driving order (overpass_ramp, helical_ramp, tunnel, narrow_region, gravel_pit, banked_turn, potholes, wide_open_region, buckets, hoops, car_wash) and gravel_pit's bounds, x [1.103, 3.541], y [-10.518, -9.299] in world meters, sourced from the GRAVEL constant.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "crash-point-lookup",
+      "prompt": "The car's ZED pose was (x=-3.0, y=-9.1) right before it flipped in sim -- what part of the obstacle course is that near?",
+      "expected_output": "This point falls outside every named region's bounds (just east of banked_turn's box). A good answer says so and names banked_turn as the nearest/likely region rather than silently asserting the point is inside it.",
+      "files": []
+    }
+  ]
+}
