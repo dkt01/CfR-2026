@@ -123,7 +123,13 @@ class ObstacleRandomizer(Node):
         self.command_arm(self.arm_angle)
         self.publish_signal(False)
         movable = f"{len(self.hoop_names())} hoops, up to {self.bucket_limit()} buckets"
-        if not self.hoop_names() and not self.has_buckets():
+        if self.has_gap_bales():
+            movable += f", 1 of {len(self.gap_bale_names())} wall bales parked"
+        if (
+            not self.hoop_names()
+            and not self.has_buckets()
+            and not self.has_gap_bales()
+        ):
             movable = "start signal only"
         self.get_logger().info(f"Ready on world '{self.world}': {movable}")
 
@@ -158,6 +164,22 @@ class ObstacleRandomizer(Node):
 
     def signal_param(self, name: str):
         return self.get_parameter(f"start_signal.{name}").value
+
+    def has_gap_bales(self) -> bool:
+        """Whether this course has the four-bale wall gap to randomize.
+
+        The Speed Course shares this node too and carries neither block, so
+        this comes back empty there the same way ``has_buckets`` does.
+        """
+        return self.has_parameter("gap_bales.names")
+
+    def gap_bale_names(self) -> list[str]:
+        if not self.has_gap_bales():
+            return []
+        return list(self.get_parameter("gap_bales.names").value)
+
+    def gap_bale_param(self, bale: str, name: str):
+        return self.get_parameter(f"gap_bales.{bale}.{name}").value
 
     # ------------------------------------------------------------ gz set_pose
 
@@ -338,6 +360,26 @@ class ObstacleRandomizer(Node):
             )
         return positions
 
+    def draw_gap_bale(self) -> str:
+        """Which of the four wall bales stands off-course this draw.
+
+        Exactly one is always parked -- the wall is four bale-widths tall and
+        the gap it leaves is what the vehicle drives through -- so this picks
+        one name rather than a count or a set.
+        """
+        return self.random.choice(self.gap_bale_names())
+
+    def apply_gap_bale(self, parked: str) -> None:
+        parking = list(self.get_parameter("gap_bales.parking").value)
+        for bale in self.gap_bale_names():
+            if bale == parked:
+                x, y = parking
+                yaw = 0.0
+            else:
+                x, y = self.gap_bale_param(bale, "position")
+                yaw = float(self.gap_bale_param(bale, "yaw"))
+            self.set_pose(bale, x, y, 0.0, yaw=yaw)
+
     def apply(self, buckets, hoops) -> None:
         # Guarded rather than relying on bucket_limit() being 0: the parking
         # parameters are read before the loop, and on a course with no bucket
@@ -386,11 +428,14 @@ class ObstacleRandomizer(Node):
             seed = self.reseed()
             buckets = self.draw_buckets()
             hoops = self.draw_hoops()
+            gap_bale = self.draw_gap_bale() if self.has_gap_bales() else None
             self.apply(buckets, hoops)
+            if gap_bale is not None:
+                self.apply_gap_bale(gap_bale)
         except Exception as error:  # noqa: BLE001 - a service has to answer
             return self.failed(response, error)
         response.success = True
-        if not buckets and not hoops:
+        if not buckets and not hoops and gap_bale is None:
             response.message = "this course varies nothing but the start signal"
         else:
             parts = []
@@ -407,6 +452,8 @@ class ObstacleRandomizer(Node):
                 )
             if hoops:
                 parts.append(f"{len(hoops)} hoops repositioned")
+            if gap_bale is not None:
+                parts.append(f"wall gap at {gap_bale}")
             response.message = f"seed {seed}: " + "; ".join(parts)
         self.get_logger().info(response.message)
         return response
@@ -424,6 +471,8 @@ class ObstacleRandomizer(Node):
                 for hoop in self.hoop_names()
             }
             self.apply(nominal, hoops)
+            if self.has_gap_bales():
+                self.apply_gap_bale(self.get_parameter("gap_bales.default_gap").value)
             self.show_signal(False)
         except Exception as error:  # noqa: BLE001 - a service has to answer
             return self.failed(response, error)
