@@ -314,37 +314,59 @@ steering:
   # Effective bicycle-model steering angle against normalized command, from the
   # B1 constant-radius arcs.  This table, not max_angle_*, is what the simulator
   # should interpolate once it exists.  Rows are [command, angle_rad].
+  #   +/-0.5 rows are MEASURED (B2 skidpad, three runs in agreement).  The
+  #   +/-1.0 rows are still a GUESS: steer_authority ran at ~0.6 m/s, the one
+  #   regime where both speed sensors fail, and returned a non-monotonic map
+  #   (full right lock reading less angle than half right).  Left and right
+  #   differ by ~34% at matched command, consistent with the 1504 us auto-mode
+  #   centre in center_offset.  Re-run steer_authority at 1.5-2.0 m/s to pin the
+  #   ends.  Interpolated by sim_vehicle_node, which is why the asymmetry now
+  #   reaches the simulator at all.
   effective_angle_table:
-    provenance: guess
-    experiment: B1
+    provenance: mixed
+    experiment: B1/B2
+    run: 'Session B/C 2026-09-18'
     units: [normalized, rad]
     rows:
-      - [-1.0, -0.40]
-      - [-0.5, -0.20]
+      - [-1.0, -0.512]
+      - [-0.5, -0.256]
       - [0.0, 0.0]
-      - [0.5, 0.20]
-      - [1.0, 0.40]
+      - [0.5, 0.191]
+      - [1.0, 0.382]
 
 longitudinal:
   # Coastdown fit: m dv/dt = -(f0 + f1 v + f2 v^2).  These replace the
   # forward/reverse coast deceleration pair in arduino_bridge.yaml, which the
   # file itself admits is a fudge compensating for a Gazebo contact asymmetry
   # rather than anything the car does.
+  # Pooled over all six coastdown legs, binned by speed and MAD-filtered, from
+  # the TACHOMETER - the ZED's velocity output is unusable in motion (see the
+  # sensors section).  decel = 0.606 + 0.130 v  m/s^2, i.e. 0.74 / 0.87 / 1.00
+  # m/s^2 at 1 / 2 / 3 m/s.  Forward and reverse agree to 3.3%, so the
+  # direction-dependent coast fudge in arduino_bridge.yaml is not needed.
   f0_rolling:
-    value: 2.0
+    value: 2.18
     units: N
-    provenance: guess
+    provenance: measured
     experiment: C2
+    run: 'Session B/C 2026-09-18'
   f1_viscous:
-    value: 0.0
+    value: 0.47
     units: N/(m/s)
-    provenance: guess
+    provenance: measured
     experiment: C2
+    run: 'Session B/C 2026-09-18'
   f2_aero:
-    value: 0.05
+    value: 0.0
     units: N/(m/s)^2
-    provenance: guess
+    provenance: measured
     experiment: C2
+    run: 'Session B/C 2026-09-18'
+    note: >
+      Fixed at zero, not fitted.  At 3 m/s a 3.6 kg car sees ~0.08 N of aero
+      drag against ~4 N total, which is below the resolution of this test.  Left
+      free it merely absorbs curvature and goes negative, which is what the
+      per-leg fits did before they were pooled.
   tau_accel:
     value: 0.55
     units: s
@@ -360,19 +382,43 @@ longitudinal:
     provenance: guess
     experiment: C1
   esc_deadband:
-    value: 50.0
+    value: 35.0
     units: us
     provenance: measured
-    experiment: bench
-    note: VXL-3S ignores +/-50 us around the 1500 us neutral pulse.
-  voltage_sensitivity:
-    value: 0.0
-    units: (m/s)/V
-    provenance: guess
     experiment: C1
+    run: 'Session B/C 2026-09-18'
+    note: >
+      On the ground, not the bench: pulse_staircase produced no motion at +30 us
+      and motion at +40 us, and the steady-cruise feedforward fit extrapolates to
+      a +28.8 us intercept.  The bench figure of +/-50 us was measured with the
+      car on blocks, where there is no load to overcome.
+  # Steady-cruise feedforward, from 109 windows pooled across the whole campaign
+  # rather than from pulse_staircase, whose holds were too short to settle (no
+  # forward step ever reached steady state).  Symmetric to within 3%:
+  # reverse is kS -27.9 us, kV 11.48 us per m/s.
+  ks:
+    value: 28.8
+    units: us
+    provenance: measured
+    experiment: C1
+    run: 'Session B/C 2026-09-18'
+  kv:
+    value: 11.13
+    units: us per m/s
+    provenance: measured
+    experiment: C1
+    run: 'Session B/C 2026-09-18'
+  voltage_sensitivity:
+    value: 1.28
+    units: (m/s)/V
+    provenance: estimated
+    experiment: C1
+    run: 'Session B/C 2026-09-18'
     note: >
       Regressed across the whole campaign as the pack drains, not from a
-      dedicated sweep - pack millivolts are already in every D, line.
+      dedicated sweep.  -14.2 us per volt at fixed speed, divided by kV.
+      ESTIMATED, not measured: the session spanned only 11.65-12.38 V, so this
+      extrapolates a 0.73 V window across the whole discharge curve.
 
 lateral:
   min_turn_radius:
@@ -384,48 +430,75 @@ lateral:
       wheelbase / tan(max_angle), i.e. entirely derived from the unmeasured
       steering limit.  Appears nowhere in the codebase today.
   understeer_gradient:
-    value: 0.0
+    value: 0.007
     units: rad/(m/s^2)
-    provenance: guess
+    provenance: measured
     experiment: B2
+    run: 'Session B/C 2026-09-18'
     note: >
-      Zero means the kinematic radius is achieved at any speed, which is what
-      the simulator does today with mu=50.  The real car runs wider.
+      Standard form delta = L/R + K a_y, from three skidpad runs that agree
+      closely (left side, r2 0.71).  At fixed steering the turn radius grows
+      ~14% between 0.7 and 2.9 m/s.  sim_vehicle_node applies this directly as
+      yaw_rate = v delta / (L + K v^2); at 3.2 m/s on a 2 m radius it is worth
+      about 2 degrees of extra steering against the kinematic model.
   mu_lateral:
     value: 1.0
     units: dimensionless
     provenance: guess
     experiment: B2
     note: >
-      Lower bound from where the B2 skidpad sweep goes non-linear.  No slide
-      test was run.  Replaces the mu=50 in the SDF, which makes tire slip
-      physically impossible.
+      DELIBERATELY NOT SET TO THE B2 RESULT.  The skidpad reached 5.39 m/s2
+      (0.55 g) without sliding, so 0.55 is a LOWER BOUND, not a measurement -
+      the sweep stayed below the limit by design.  Setting mu to 0.55 would make
+      the simulator slide at an acceleration the real car demonstrably held,
+      which is worse than the present guess, not better.  1.0 is consistent with
+      the bound and with foam tires on asphalt.  To measure it properly the
+      skidpad has to be pushed until the car actually breaks away.
+      See 'Session B/C 2026-09-18' and docs/characterization-results.md.
 
 sensors:
+  # B0 zed_static, 305 s parked.  READ THE CAVEAT: these describe the ZED AT
+  # REST and are the best case, not the typical case.  In motion on low-texture
+  # asphalt the same camera produced pose jumps of up to 25.2 m in a single
+  # 20 ms sample and ~4.6% grossly wrong velocity samples, all while still
+  # reporting odom_valid = 1.  A simulator configured only from the numbers
+  # below has odometry far better than the real car's, which is its own kind of
+  # wrong.  See docs/characterization-results.md section 0.
   odom_rate:
-    value: 30.0
+    value: 50.0
     units: Hz
-    provenance: guess
+    provenance: measured
     experiment: B0
+    run: 'Session B/C 2026-09-18'
   odom_yaw_noise:
-    value: 0.01
+    value: 0.00034
     units: rad
-    provenance: guess
+    provenance: measured
     experiment: B0
+    run: 'Session B/C 2026-09-18'
     note: >
-      Standard deviation at rest.  path_follower's heading_deadband of 0.01 rad
-      was chosen to reject exactly this, so B0 is what makes that parameter
-      tunable in simulation instead of only on the car.
+      Standard deviation at rest, 0.019 deg.  path_follower's heading_deadband
+      of 0.01 rad was sized to reject this and is ~30x larger than it needs to
+      be for the STATIONARY case - but yaw is the one ZED channel that stayed
+      trustworthy in motion (cumulative yaw and integrated odom_wz agree within
+      5% on every segment, zero jumps), so the headroom is buying less than it
+      looks.
   odom_position_noise:
-    value: 0.01
+    value: 0.0177
     units: m
-    provenance: guess
+    provenance: measured
     experiment: B0
+    run: 'Session B/C 2026-09-18'
+    note: >
+      At rest.  Also the reason steer_authority is unusable: at its 0.6 m/s
+      crawl the car moves 2 mm between 50 Hz samples against 17.7 mm of noise.
   odom_yaw_drift:
-    value: 0.0
+    value: -0.00000053
     units: rad/s
-    provenance: guess
+    provenance: measured
     experiment: B0
+    run: 'Session B/C 2026-09-18'
+    note: -0.00 deg/min over 305 s; negligible, but measured rather than assumed.
   odom_scale_error:
     value: 0.0
     units: fraction
@@ -439,9 +512,14 @@ sensors:
   odom_dropout_rate:
     value: 0.0
     units: fraction of expected messages
-    provenance: guess
+    provenance: measured
     experiment: B0
-    note: Paved surfaces are low-texture and a known stressor for visual odometry.
+    run: 'Session B/C 2026-09-18'
+    note: >
+      Zero dropped intervals in 305 s at rest.  This is NOT the reassurance it
+      looks like: the in-motion failure is not a dropout.  The ZED went on
+      publishing valid-flagged poses while they jumped tens of metres, so a
+      dropout-rate model reproduces none of what actually goes wrong.
   command_latency:
     value: 0.03
     units: s

@@ -37,18 +37,62 @@ def _mass(run, mass):
     )
 
 
-def _speed_column(segment):
-    """Ground speed for a segment, preferring odometry over wheel RPM.
+# No wheel on this car turns fast enough to exceed this; the profiles cap at
+# 4.5 m/s and the ESC cannot push it far past that.  Anything beyond is the
+# VIO relocalising, not the vehicle.
+_ODOM_SANITY_MPS = 6.0
 
-    Odometry is the better reference: the RPM-derived speed assumes no wheel
-    slip and a tire diameter that is itself a guess until A5 is done.  Falling
-    back to it keeps an analysis working when odometry dropped out.
+# Above this fraction of impossible samples the whole segment's odometry is
+# treated as untrustworthy rather than cleaned - a channel producing this many
+# fabricated values has no credibility left at the ones that look plausible.
+_ODOM_MAX_WILD_FRACTION = 0.005
+
+
+def _speed_column(segment, options=None):
+    """Ground speed for a segment, from whichever source `options` selects.
+
+    `speed_source` is one of:
+
+    ``odometry``
+        ZED visual-inertial ``odom_vx``.  The better reference *in principle* -
+        it does not assume no wheel slip - but see ``auto`` below.
+    ``wheel_rpm``
+        Tachometer-derived ``speed``.  Assumes no wheel slip and a correct tire
+        diameter, which A5 has now measured (0.1132 m), so this is no longer
+        the guess it was when this module was written.
+    ``auto`` (default)
+        Odometry when it is trustworthy, wheel RPM when it is not.
+
+    The ``auto`` rule is not "did odometry drop out".  On the 2026-09-18 asphalt
+    sessions the ZED reported ``odom_valid`` throughout while its pose jumped up
+    to 25 m between consecutive 20 ms samples, so a dropout check saw nothing
+    wrong and every longitudinal fit silently ran on a channel with ~4% gross
+    outliers.  Low-texture pavement is a known VIO stressor and the failure is
+    one-sided: it fabricates speed, it never withholds it.  So the test is
+    whether the segment's odometry is *physically possible* - samples beyond
+    ``_ODOM_SANITY_MPS`` cannot be the car, whatever the valid flag says.
     """
-    times, speeds = segment.pair("t_ros", "odom_vx")
-    if len(speeds) >= 8:
-        return times, speeds, "odometry"
-    times, speeds = segment.pair("t_ros", "speed")
-    return times, speeds, "wheel rpm"
+    source = (options or {}).get("speed_source") or "auto"
+
+    if source == "wheel_rpm":
+        times, speeds = segment.pair("t_ros", "speed")
+        return times, speeds, "wheel rpm"
+
+    odom_times, odom_speeds = segment.pair("t_ros", "odom_vx")
+    if source == "odometry":
+        return odom_times, odom_speeds, "odometry"
+    if source != "auto":
+        raise ValueError(f"unknown speed_source {source!r}")
+
+    rpm_times, rpm_speeds = segment.pair("t_ros", "speed")
+    if len(odom_speeds) >= 8:
+        wild = sum(1 for speed in odom_speeds if abs(speed) > _ODOM_SANITY_MPS)
+        if wild / len(odom_speeds) <= _ODOM_MAX_WILD_FRACTION:
+            return odom_times, odom_speeds, "odometry"
+        if len(rpm_speeds) >= 8:
+            return rpm_times, rpm_speeds, "wheel rpm (odometry rejected)"
+        return odom_times, odom_speeds, "odometry (degraded)"
+    return rpm_times, rpm_speeds, "wheel rpm"
 
 
 # --------------------------------------------------------------------- B0
@@ -343,7 +387,7 @@ def analyze_pulse_staircase(run, options):
         label = segment.label or ""
         if not (label.startswith("fwd_ks") or label.startswith("rev_ks")):
             continue
-        times, speeds, source = _speed_column(segment)
+        times, speeds, source = _speed_column(segment, options)
         if len(speeds) < 8:
             continue
         settled = fits.steady_state(times, speeds)
@@ -432,7 +476,7 @@ def analyze_coastdown(run, options):
     mass = _mass(run, options.get("mass"))
     summary, results, series = [], [], []
     for segment in run.matching("coast_"):
-        times, speeds, source = _speed_column(segment)
+        times, speeds, source = _speed_column(segment, options)
         if len(speeds) < 20:
             summary.append(f"{segment.label}: too few samples")
             continue
@@ -512,7 +556,7 @@ def analyze_coastdown(run, options):
 def analyze_brake_sweep(run, options):
     summary, points = [], []
     for segment in run.matching("stop_brake"):
-        times, speeds, _ = _speed_column(segment)
+        times, speeds, _ = _speed_column(segment, options)
         if len(speeds) < 10:
             continue
         limit = float(segment.label.replace("stop_brake", ""))
@@ -612,7 +656,19 @@ def analyze_tune_profile(run, options):
             settled_errors
         )
         rise = sum(rise_times) / len(rise_times) if rise_times else float("nan")
-        gains = run.metadata.get("profile_gains") or {}
+        # Precedence matters and is easy to get backwards: bridge_parameters is
+        # the node's *static* config, which a gains: override deliberately
+        # replaces for the run.  Reading it first labels every row of a gain
+        # sweep with the same numbers and makes the table useless.
+        overrides = run.metadata.get("gain_overrides") or {}
+        profile_gains = run.metadata.get("profile_gains") or {}
+
+        def applied_gain(name):
+            for source in (overrides, profile_gains):
+                if source.get(name) is not None:
+                    return source[name]
+            return run.parameter(name, "?")
+
         summary.append("")
         summary.append(
             'Comparable with the "Bench Tuning" table in the top level README:'
@@ -625,8 +681,8 @@ def analyze_tune_profile(run, options):
             "| -- | -- | --------------- | ----------------------- | ----------------- | ----------- |"
         )
         summary.append(
-            f"| {run.parameter('speed_kp', gains.get('speed_kp', '?'))} "
-            f"| {run.parameter('speed_ki', gains.get('speed_ki', '?'))} "
+            f"| {applied_gain('speed_kp')} "
+            f"| {applied_gain('speed_ki')} "
             f"| {mean:.0f} | {settled_mean:.0f} | {variance**0.5:.0f} | {rise:.2f} s |"
         )
         vehicle["longitudinal.tune_mean_abs_error_rpm"] = mean

@@ -29,6 +29,42 @@ def wrap_to_pi(angle):
     return wrapped - math.pi
 
 
+def _mad_filter(values, threshold=3.0):
+    """Indices of `values` within `threshold` scaled MADs of the median.
+
+    Both measurement channels in this campaign carry gross outliers that a mean
+    cannot survive: the ZED fabricates multi-metre pose jumps on low-texture
+    asphalt, and the tachometer briefly reports the wrong sign through a
+    direction reversal because it measures magnitude and takes its sign from the
+    command.  Both are rare and enormous, which is exactly the case median
+    absolute deviation handles and a standard deviation does not - the outliers
+    inflate the very scale you would use to detect them.
+
+    Returns every index when the sample is too small or the MAD is degenerate,
+    so a legitimately constant signal is never trimmed to nothing.
+    """
+    if len(values) < 8:
+        return list(range(len(values)))
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    median = (
+        ordered[middle]
+        if len(ordered) % 2
+        else 0.5 * (ordered[middle - 1] + ordered[middle])
+    )
+    deviations = sorted(abs(value - median) for value in values)
+    mad = (
+        deviations[middle]
+        if len(deviations) % 2
+        else 0.5 * (deviations[middle - 1] + deviations[middle])
+    )
+    if mad <= 0.0:
+        return list(range(len(values)))
+    limit = threshold * 1.4826 * mad
+    keep = [i for i, value in enumerate(values) if abs(value - median) <= limit]
+    return keep if len(keep) >= 8 else list(range(len(values)))
+
+
 def steady_state(times, values, tail_fraction=0.4):
     """Mean and standard deviation over the last `tail_fraction` of a hold.
 
@@ -45,9 +81,17 @@ def steady_state(times, values, tail_fraction=0.4):
     tail = [value for time, value in zip(times, values) if time >= cutoff]
     if not tail:
         tail = [values[-1]]
+    keep = _mad_filter(tail)
+    rejected = len(tail) - len(keep)
+    tail = [tail[i] for i in keep]
     mean = sum(tail) / len(tail)
     variance = sum((value - mean) ** 2 for value in tail) / len(tail)
-    return {"mean": mean, "std": variance**0.5, "samples": len(tail)}
+    return {
+        "mean": mean,
+        "std": variance**0.5,
+        "samples": len(tail),
+        "rejected": rejected,
+    }
 
 
 def fit_resistance(times, speeds, mass, min_speed=0.25):
@@ -92,8 +136,39 @@ def fit_resistance(times, speeds, mass, min_speed=0.25):
     if len(design) < 8:
         raise ValueError("coastdown has too few usable difference points")
 
-    (f0, f1, f2), rms = least_squares(design, targets)
-    return {"f0": f0, "f1": f1, "f2": f2, "rms_newtons": rms, "points": len(design)}
+    # A first pass locates the outliers, a second fits without them.  Central
+    # differencing spreads every bad sample across three difference points, so
+    # trimming the raw speeds first would not be enough - the rejection has to
+    # happen on the residuals of the fit itself.
+    coefficients, rms = least_squares(design, targets)
+    residuals = [
+        target - sum(c * v for c, v in zip(coefficients, row))
+        for row, target in zip(design, targets)
+    ]
+    # A fit that already explains the data to machine precision has no outliers
+    # to find, and running the rejection pass anyway would refit a subset chosen
+    # from pure floating-point noise - which perturbs an exact answer instead of
+    # cleaning a dirty one.  Synthetic data hits this; real coastdowns never do.
+    scale = max((abs(target) for target in targets), default=0.0)
+    if rms <= 1e-9 * max(scale, 1.0):
+        keep = list(range(len(design)))
+    else:
+        keep = _mad_filter(residuals)
+    rejected = len(design) - len(keep)
+    if rejected and len(keep) >= 8:
+        design = [design[i] for i in keep]
+        targets = [targets[i] for i in keep]
+        coefficients, rms = least_squares(design, targets)
+
+    f0, f1, f2 = coefficients
+    return {
+        "f0": f0,
+        "f1": f1,
+        "f2": f2,
+        "rms_newtons": rms,
+        "points": len(design),
+        "rejected": rejected,
+    }
 
 
 def fit_first_order(times, values, initial=None, final=None):

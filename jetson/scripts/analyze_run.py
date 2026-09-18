@@ -124,6 +124,16 @@ def main(argv=None):
         help="vehicle mass in kg, required by the coastdown fit (A1)",
     )
     parser.add_argument(
+        "--speed-source",
+        choices=("auto", "odometry", "wheel_rpm"),
+        default="auto",
+        help=(
+            "ground-speed channel for the longitudinal fits. auto (default) "
+            "uses ZED odometry unless the segment contains physically "
+            "impossible speeds, in which case it falls back to the tachometer"
+        ),
+    )
+    parser.add_argument(
         "--quiet", action="store_true", help="write files without printing"
     )
     args = parser.parse_args(argv)
@@ -135,7 +145,9 @@ def main(argv=None):
         return 1
 
     try:
-        result = analysis.analyze(run, {"mass": args.mass})
+        result = analysis.analyze(
+            run, {"mass": args.mass, "speed_source": args.speed_source}
+        )
     except KeyError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

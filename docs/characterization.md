@@ -93,13 +93,27 @@ Two things it cannot do, on purpose:
   so the normal arming sequence would hang forever waiting for it -
   `require_estop_cycle:=false` is required, not optional, with `use_sim:=true`.
   Never pass it on the real car.
-- **No plant.** `sim_vehicle_node` is an ideal, instant-response model with no
-  ESC deadband, lag, or PID loop - it accepts every `speed_*` gain a profile
-  sends (so a gains-setting profile does not abort) but ignores all of them.
-  Longitudinal profiles (`coastdown`, `pulse_staircase`, `brake_sweep`,
-  `tune_profile`) will run to completion and produce a `report.md`, but the
-  numbers in it describe the ideal model, not the car, and none of them belong
-  in `vehicle.yaml`. Steering profiles (`steer_authority`, `skidpad`,
+- **No closed loop.** `sim_vehicle_node` accepts every `speed_*` gain a profile
+  sends (so a gains-setting profile does not abort) but ignores all of them -
+  there is no PID loop in it to tune, so `tune_profile` scores nothing in
+  simulation.
+
+  It is no longer an ideal plant, though. Since the Session B/C runs it carries
+  the car's measured response envelope: coast drag, coast-limited deceleration
+  (the car has no usable brakes), an acceleration limit, command dead time, the
+  asymmetric steering map, an understeer gradient, and a transcription of the
+  firmware's tachometer - including its ~0.3 m/s blind spot. A simulated
+  `coastdown` now returns f0 within 6% of the car's and drops its speed channel
+  to zero at the same point in the leg. See
+  [characterization-results.md](characterization-results.md) section 7 for the
+  measured-vs-simulated table.
+
+  What that does **not** mean is that a sim run can replace a car run. The
+  numbers it produces are the ones that were fed into it, so fitting them back
+  out is a self-consistency check, not a measurement, and none of them belong in
+  `vehicle.yaml`. The parts still missing are named in section 7's caveats: full
+  lock is extrapolated, high-speed thrust taper is unresolved, and the simulated
+  ZED is far cleaner than the real one in motion. Steering profiles (`steer_authority`, `skidpad`,
   `step_steer`) at least exercise real Gazebo kinematics and collision, for
   whatever that is worth pending A6/A8.
 
@@ -143,6 +157,11 @@ Car race-ready: pack, Jetson, ZED, Arduino, all wiring.
 3. Left and right sides for `cg_y = track * (W_left / W_total - 0.5)`.
 
 ### A2 — Centre of mass height
+
+**Space:** clear headroom behind the car, at least the lift height `H`
+(~0.15 m) plus the wheelbase (0.324 m) as a lever — enough that the rear can
+tilt up on blocks without the front rising off the scale or the rear hitting a
+shelf.
 
 **Block the shocks solid first** (zip-ties or spacers). Suspension travel during
 the tilt biases the answer, and this is the whole reason the measurement is
@@ -194,6 +213,10 @@ confirm the wheels turn 10 times.
 Diagnostic for backlash and Ackermann error; **B1 is the authority** on the angle
 the car actually achieves.
 
+**Space:** car does not drive here. About 1 m x 1 m of flat, level floor under
+the front wheels, plus room above it for an overhead camera or phone on a
+stand — the whole point is a straight-down shot of the wheels against a grid.
+
 Bench only, wheels clear or on a smooth floor:
 
 ```bash
@@ -225,6 +248,10 @@ Also film a small step for the time constant.
 tires on. Every shock is stock, collars run to **maximum preload** to hold ride
 height under the electronics payload - confirm that is still true before
 measuring anything (a collar can walk loose).
+
+**Space:** clear access to all four corners, about 0.3 m to each side of the
+car — enough to crouch beside a wheel, compress it by hand, and get a camera on
+it for the bounce-decay film. The car does not move under its own power.
 
 1. **Confirm preload.** Photograph all four collars at their topmost
    (stiffest) thread position. This is `suspension.preload`, and it is the one
@@ -277,6 +304,20 @@ is wrong everywhere the car meets an uneven surface, not just there.
 Everything here stays in one place. Radius is computed from telemetry
 (`R = v / yaw_rate`), so nothing needs marking on the ground.
 
+### Space needed
+
+`max_distance` is straight-line distance from the arm point, not path length
+travelled — it is the radius of a clear bubble the car must not leave, not how
+far it typically goes. Every profile but `zed_static` steers **both left and
+right**, so the bubble has to be clear on both sides, not just ahead.
+
+| Profile | Clear bubble around the start point | Note |
+| --- | --- | --- |
+| `zed_static` | none — never arms, car does not move | leave E-Stop asserted |
+| `steer_authority` | 15 m radius, both sides | crawl speed, arcs are tight; 15 m is abort margin, not typical excursion |
+| `skidpad` | 20 m radius, both sides — **at least 6 m clear left and right specifically** | a strongly understeering car at 3.0 m/s can run out to a 6 m radius arc, either direction |
+| `step_steer` | 32 m radius, both sides | alternating left/right slalom, returns to start; 32 m is abort margin |
+
 | Order | Command | Why |
 | --- | --- | --- |
 | 1 | `profile:=zed_static` | Free — run it while the cones go out |
@@ -301,6 +342,21 @@ visual-inertial odometry, so do not skip it assuming the answer is fine.
 
 Every profile here is out-and-back. That is not only about walking less:
 averaging the two directions cancels the path's grade, which it certainly has.
+
+### Space needed
+
+All straight-line — clear space **ahead** of the start point only, none to
+either side.
+
+| Profile | Clear ahead | Note |
+| --- | --- | --- |
+| `pulse_staircase speed_slew_rate:=50.0` | ~40 m | the kS=105 top leg plus its coast is the greedy one; drop the last two steps if the path is shorter |
+| `coastdown speed_slew_rate:=50.0` | ~40 m | the 4.5 m/s leg plus coast is the longest single leg in the campaign |
+| `brake_sweep` | ~40 m (`max_distance`) | includes the reverse legs between brake steps |
+| `tune_profile` | ~38 m | two passes of the fixed bench-tuning sequence |
+
+60 m covers the worst case with margin for all four; that is why the session
+needs one 60 m clear straight rather than four different lengths measured out.
 
 | Order | Command | Why |
 | --- | --- | --- |
