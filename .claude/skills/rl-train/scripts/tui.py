@@ -81,7 +81,8 @@ def docker_state(container):
                     container,
                     "bash",
                     "-c",
-                    "pgrep -f '[t]rain_resilient.sh|[t]rain.py|[t]rain_curriculum.sh' "
+                    "pgrep -f '[t]rain_resilient.sh|[t]rain_resilient_obstacle.sh"
+                    "|[t]rain.py|[t]rain_obstacle.py|[t]rain_curriculum.sh' "
                     ">/dev/null 2>&1",
                 ],
                 timeout=5,
@@ -110,7 +111,7 @@ def docker_state(container):
 def step_rate(checkpoint_dir):
     """Steps/second inferred from the two most recent step checkpoints on disk."""
     files = sorted(
-        checkpoint_dir.glob("bale_follower_*_steps.zip"),
+        checkpoint_dir.glob("*_steps.zip"),
         key=lambda p: p.stat().st_mtime,
     )
     if len(files) < 2:
@@ -128,14 +129,15 @@ def step_rate(checkpoint_dir):
     return (int(match_b.group(1)) - int(match_a.group(1))) / dt
 
 
-def run_target_steps(log_dir):
+def run_target_steps(log_dir, checkpoint_dir):
     """The cumulative step count train_resilient.sh is running toward.
 
     Logged once at start ("target N steps into DIR"); unlike CHUNK_RE's
     per-chunk "/target" it exists from the first second, before any chunk
     has finished or died.
     """
-    resilient_log = log_dir / "train_resilient.log"
+    resilient_log_name, _, _ = progress.log_names(checkpoint_dir)
+    resilient_log = log_dir / resilient_log_name
     if not resilient_log.exists():
         return None
     for line in resilient_log.read_text(errors="replace").splitlines():
@@ -147,7 +149,7 @@ def run_target_steps(log_dir):
     return None
 
 
-def current_cumulative_steps(log_dir, state):
+def current_cumulative_steps(log_dir, state, checkpoint_dir):
     """Best current estimate of total steps taken, on the same scale as the target.
 
     Checkpoints save far more often than deterministic evals (every ~1000
@@ -155,9 +157,10 @@ def current_cumulative_steps(log_dir, state):
     plus that chunk's starting offset tracks closer to "right now" than the
     last eval line does.
     """
-    offsets, _ = progress.chunk_offsets(log_dir / "train_resilient.log")
+    resilient_log_name, chunk_glob, _ = progress.log_names(checkpoint_dir)
+    offsets, _ = progress.chunk_offsets(log_dir / resilient_log_name)
     chunk_logs = sorted(
-        log_dir.glob("train_chunk_*.log"),
+        log_dir.glob(chunk_glob),
         key=lambda p: int(progress.re.search(r"(\d+)", p.name).group(1)),
     )
     current_chunk = 1
@@ -238,10 +241,10 @@ def render(checkpoint_dir, log_dir, root, container, patience, min_evals, thresh
     lines.append(status_line)
     lines.append("")
 
-    evals, notes = progress.collect_evals(log_dir)
+    evals, notes = progress.collect_evals(log_dir, checkpoint_dir)
     state = progress.checkpoint_state(checkpoint_dir)
-    target = run_target_steps(log_dir)
-    current = current_cumulative_steps(log_dir, state)
+    target = run_target_steps(log_dir, checkpoint_dir)
+    current = current_cumulative_steps(log_dir, state, checkpoint_dir)
     rate = step_rate(checkpoint_dir)
 
     if target:

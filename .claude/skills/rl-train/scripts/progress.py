@@ -33,7 +33,26 @@ CHUNK_RE = re.compile(
     r"\(\+(\d+) steps, (\d+)/(\d+)\)"
 )
 REW_RE = re.compile(r"\|\s+ep_rew_mean\s+\|\s+([-\d.e+]+)\s+\|")
-STEPS_RE = re.compile(r"bale_follower_(\d+)_steps\.zip")
+STEPS_RE = re.compile(r"_(\d+)_steps\.zip$")
+
+
+def log_names(checkpoint_dir):
+    """(resilient_log, chunk_glob, run_log) filenames for this run's course.
+
+    rl/bale_follower holds every course's logs together, so the checkpoint
+    dir -- not a --course flag -- is what tells us whether train_resilient.sh
+    or train_resilient_obstacle.sh wrote them.
+    """
+    is_obstacle = "obstacle" in checkpoint_dir.name.lower() or any(
+        checkpoint_dir.glob("obstacle_course_*_steps.zip")
+    )
+    if is_obstacle:
+        return (
+            "train_resilient_obstacle.log",
+            "train_obstacle_chunk_*.log",
+            "rl_run_obstacle.log",
+        )
+    return "train_resilient.log", "train_chunk_*.log", "rl_run.log"
 
 
 def chunk_offsets(resilient_log):
@@ -60,17 +79,18 @@ def chunk_offsets(resilient_log):
     return offsets, notes
 
 
-def collect_evals(log_dir):
-    offsets, notes = chunk_offsets(log_dir / "train_resilient.log")
+def collect_evals(log_dir, checkpoint_dir):
+    resilient_log, chunk_glob, run_log = log_names(checkpoint_dir)
+    offsets, notes = chunk_offsets(log_dir / resilient_log)
     evals = []
     chunk_logs = sorted(
-        log_dir.glob("train_chunk_*.log"),
+        log_dir.glob(chunk_glob),
         key=lambda p: int(re.search(r"(\d+)", p.name).group(1)),
     )
     if not chunk_logs:
-        chunk_logs = [p for p in (log_dir / "rl_run.log",) if p.exists()]
+        chunk_logs = [p for p in (log_dir / run_log,) if p.exists()]
     for path in chunk_logs:
-        match = re.search(r"train_chunk_(\d+)", path.name)
+        match = re.search(r"chunk_(\d+)", path.name)
         chunk = int(match.group(1)) if match else 1
         offset = offsets.get(chunk, 0)
         for line in path.read_text(errors="replace").splitlines():
@@ -88,9 +108,10 @@ def collect_evals(log_dir):
     return evals, notes
 
 
-def recent_rewards(log_dir, count=3):
+def recent_rewards(log_dir, checkpoint_dir, count=3):
+    _, chunk_glob, run_log = log_names(checkpoint_dir)
     values = []
-    logs = sorted(log_dir.glob("train_chunk_*.log")) or list(log_dir.glob("rl_run.log"))
+    logs = sorted(log_dir.glob(chunk_glob)) or list(log_dir.glob(run_log))
     for path in logs:
         values.extend(
             float(value) for value in REW_RE.findall(path.read_text(errors="replace"))
@@ -165,7 +186,7 @@ def checkpoint_state(checkpoint_dir):
     if not state["exists"]:
         return state
     steps_files = sorted(
-        checkpoint_dir.glob("bale_follower_*_steps.zip"),
+        checkpoint_dir.glob("*_steps.zip"),
         key=lambda p: p.stat().st_mtime,
     )
     if steps_files:
@@ -216,13 +237,13 @@ def main():
     checkpoint_dir = Path(args.dir).resolve()
     log_dir = Path(args.logs).resolve() if args.logs else checkpoint_dir.parent
 
-    evals, notes = collect_evals(log_dir)
+    evals, notes = collect_evals(log_dir, checkpoint_dir)
     state = checkpoint_state(checkpoint_dir)
     result = {
         "checkpoints": state,
         "evals": evals,
         "restarts": notes,
-        "recent_ep_rew_mean": recent_rewards(log_dir),
+        "recent_ep_rew_mean": recent_rewards(log_dir, checkpoint_dir),
         "slope_m_per_10k_steps": slope_per_10k(evals),
     }
     result.update(verdict(evals, args.patience, args.min_evals, args.threshold))
