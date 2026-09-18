@@ -19,7 +19,7 @@
     </light>
 
     <model name="ground"><static>true</static><pose>20.5 0 0 0 0 0</pose><link name="link">
-      <collision name="collision"><geometry><plane><normal>0 0 1</normal><size>60 45</size></plane></geometry><surface><friction><ode><mu>50</mu></ode><bullet><friction>1</friction><rolling_friction>0.001</rolling_friction></bullet></friction></surface></collision>
+      <collision name="collision"><geometry><plane><normal>0 0 1</normal><size>60 45</size></plane></geometry><surface><friction><ode><mu>1.2</mu></ode><bullet><friction>1</friction><rolling_friction>0.001</rolling_friction></bullet></friction></surface></collision>
       <visual name="visual"><geometry><plane><normal>0 0 1</normal><size>60 45</size></plane></geometry><material><diffuse>0.16 0.25 0.13 1</diffuse></material></visual>
     </link></model>
 

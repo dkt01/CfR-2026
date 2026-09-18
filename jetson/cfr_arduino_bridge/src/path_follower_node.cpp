@@ -51,6 +51,20 @@ namespace cfr_arduino_bridge {
       max_segment_duration_ = declare_parameter("max_segment_duration", 20.0);
       keep_auto_active_when_idle_ = declare_parameter("keep_auto_active_when_idle", false);
 
+      // Without this callback `ros2 param set` only updates the parameter
+      // server; the cached member kept its startup value and the node went on
+      // publishing idle zeros that fight any other /cmd_vel publisher.
+      parameter_callback_ = add_on_set_parameters_callback([this](const std::vector<rclcpp::Parameter>& parameters) {
+        for (const auto& parameter : parameters) {
+          if (parameter.get_name() == "keep_auto_active_when_idle") {
+            keep_auto_active_when_idle_ = parameter.as_bool();
+          }
+        }
+        rcl_interfaces::msg::SetParametersResult result;
+        result.successful = true;
+        return result;
+      });
+
       cmd_vel_publisher_ = create_publisher<geometry_msgs::msg::Twist>("cmd_vel", rclcpp::SensorDataQoS());
       odom_subscription_ = create_subscription<nav_msgs::msg::Odometry>(
           "~/odom", rclcpp::SensorDataQoS(), [this](const nav_msgs::msg::Odometry::SharedPtr msg) { OnOdom(*msg); });
@@ -298,6 +312,7 @@ namespace cfr_arduino_bridge {
     rclcpp_action::Server<DrivePath>::SharedPtr action_server_;
     rclcpp::Service<ResetOdometry>::SharedPtr reset_odometry_service_;
     rclcpp::TimerBase::SharedPtr timer_;
+    rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr parameter_callback_;
   };
 
 }  // namespace cfr_arduino_bridge
