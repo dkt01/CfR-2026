@@ -170,54 +170,103 @@ inertia:
     note: Validate against B3 step-steer rise time rather than trusting it.
 
 suspension:
-  # Stock Traxxas 4X4 Ultimate (GTX aluminum) shocks and springs, all four
-  # corners.  The collars are run to maximum preload on every shock to hold
-  # ride height under the Jetson/ZED/Arduino payload, which is well above
-  # what the springs were valved for - the alternative was a stiffer
-  # aftermarket spring, which nobody has bought.  None of this has been
-  # measured; A8 replaces every guess here with a sag, droop/bump and
-  # bounce-decay test.  Until then the rigid-wheel model (no suspension DOF
-  # at all) is what the simulator actually runs, so this is a bigger gap
-  # than any single `guess` tag elsewhere in this file - it is the difference
-  # between a wheel that follows the ground and one that doesn't.
-  spring_rate:
-    value: 3500.0
+  # STOCK HARDWARE, as the Slash 4X4 VXL Ultimate ships: GTR threaded aluminum
+  # big-bore shocks, LONG (#7461X) front and XX-LONG (#7462X) rear, on
+  # progressive springs #7444 ("0.767 rate") front and #7446 ("0.874 rate")
+  # rear.  The earlier note in this section said GTX; GTX is the X-truck shock
+  # and never came on this car.  All four collars are run to their topmost
+  # thread - MAXIMUM PRELOAD - to hold ride height under the Jetson/ZED/Arduino
+  # payload, which puts the car 58% over its 2.28 kg catalog weight.
+  #
+  # FRONT AND REAR ARE NOT THE SAME CORNER, which is why this section now
+  # carries a front and a rear rate and damping instead of one of each.  The
+  # catalog rate ratio 0.874 / 0.767 = 1.139 lands within 2% of the 1.157
+  # rear/front axle load ratio A1 weighed, i.e. Traxxas sized the pair for
+  # equal front and rear ride frequency.  That agreement is the reason the
+  # ratio is trusted below even though the absolute rates are not.
+  #
+  # WHAT MAXIMUM PRELOAD DOES, AND DOES NOT DO.  A collar compresses the
+  # spring; it does not change the spring.  The RATE IS UNCHANGED.  What it
+  # changes is where in its travel the car sits, so exactly two things reach
+  # the simulator: the static ride height, which geometry.ride_height already
+  # measures at max preload and is therefore already right, and the bump/droop
+  # split below.  Anyone tempted to raise spring_rate_* because "the collars
+  # are maxed" is modelling the wrong thing.
+  #
+  # Traxxas publishes no spring rate.  The "rate" numbers are its own scale and
+  # do not convert: they are not even comparable between shock families (a 1/16
+  # GTR "2.06" spring is far softer than this 1/10 "0.767"), so they pin the
+  # front/rear ratio here and nothing else.  The absolute level is derived from
+  # the car's own measured mass and ride height; A8 replaces it with a
+  # three-minute bench measurement, and until it does every rate and damping
+  # here is `estimated`, not `measured`.
+  spring_rate_front:
+    value: 239.0
     units: N/m
-    provenance: guess
+    provenance: estimated
     experiment: A8
     note: >
-      Per corner, wheel-rate (not shock-rate through the rocker/shock-tower
-      leverage, which is not modelled). Traxxas does not publish a spring
-      rate for the GTX assembly; this is a plausible number for a short-course
-      truck spring of this size, not a derived one.
-  damping:
-    value: 150.0
+      Wheel rate per corner, not shock rate - the rocker/shock-tower leverage
+      is not modelled, so everything in this section is referred to the wheel.
+      Sprung mass is 3.599 total minus 0.70 unsprung (4 wheels, 4 uprights, 2
+      knuckles) = 2.899 kg, so a front corner carries 2.899 * 0.4636 / 2 =
+      0.672 kg.  Set for a 3.0 Hz sprung natural frequency:
+      k = (2 pi f)^2 m = 355.3 * 0.672 = 239 N/m.  3.0 Hz is the assumption -
+      see the preload cross-check under preload_wheel_compression, which is
+      what makes it more than a round number.  The old 3500 N/m placeholder was
+      a 9.9 Hz corner, i.e. effectively the rigid wheel it was meant to replace.
+  spring_rate_rear:
+    value: 272.0
+    units: N/m
+    provenance: estimated
+    experiment: A8
+    note: >
+      spring_rate_front * 0.874 / 0.767, the catalog ratio between the #7446
+      rear and #7444 front springs.  Over the rear corner's 0.778 kg that is
+      2.98 Hz, flat front to rear, which is what the ratio was chosen for.
+  damping_front:
+    value: 12.7
     units: N s/m
-    provenance: guess
+    provenance: estimated
     experiment: A8
     note: >
-      Per corner, wheel-rate. Stock GTX shocks ship with 30wt oil; this is a
-      round-number placeholder for that weight in a shock this size, not a
-      measurement.
+      Wheel rate per corner.  c = 2 zeta sqrt(k m) with zeta = 0.5:
+      2 * 0.5 * sqrt(239 * 0.672) = 12.7.  Stock GTR shocks ship with 30 wt oil
+      in a 13 mm big bore, which puts them mid-band for an off-road 1/10 (zeta
+      roughly 0.4 to 0.7); zeta is the assumption, and A8 step 5 measures it
+      directly by bounce decay.  The old 150 N s/m placeholder was zeta = 1.3,
+      overdamped - a corner that crept back rather than bouncing.
+  damping_rear:
+    value: 14.5
+    units: N s/m
+    provenance: estimated
+    experiment: A8
+    note: 2 * 0.5 * sqrt(272 * 0.778) = 14.5, the same zeta = 0.5 as the front.
   travel_bump:
-    value: 0.035
+    value: 0.036
     units: m
-    provenance: guess
+    provenance: estimated
     experiment: A8
     note: >
-      Upward wheel travel from the race-weight ride height (geometry.ride_height)
-      to the top-out limit. Maximum preload holds the loaded ride height close
-      to the unloaded (fully-drooped) position, which is why most of the
-      shock's ~50 mm of total travel is budgeted here rather than to droop.
+      Upward wheel travel from ride height to the top-out limit, both ends.
+      Total travel is still taken as ~50 mm (unmeasured, and the largest
+      remaining guess in this section).  A stock RTR sits at roughly 1/3 sag,
+      so catalog would be 33 mm bump / 17 mm droop; maximum preload holds this
+      car 3 mm HIGHER than catalog despite the payload, so 3 mm moves from
+      droop to bump.  Front and rear share one pair of limits because the
+      difference between the long and XX-long shock strokes is not published -
+      A8 step 3 measures all four corners and should split these too.
   travel_droop:
-    value: 0.015
+    value: 0.014
     units: m
-    provenance: guess
+    provenance: estimated
     experiment: A8
     note: >
-      Downward wheel travel from ride height to the droop limiter. Small
-      because maximum preload leaves little sag to recover on the way down -
-      confirm with the A8 droop measurement rather than trusting this split.
+      Downward wheel travel from ride height to the droop limiter: 17 mm less
+      the 3 mm the collars lifted the car.  At maximum preload the spring is
+      still pushing hard at full droop, so an unloaded corner tops out against
+      this limit rather than easing onto it - which is what the generated joint
+      <limit> reproduces.
   preload:
     value: max
     units: qualitative (collar position)
@@ -226,8 +275,42 @@ suspension:
     note: >
       All four collars threaded to their topmost (stiffest) stop, chosen to
       compensate for the added electronics mass over catalog race weight.
-      This is the one entry in this section that is not a guess: it is a
+      This is the one entry in this section that is not inferred: it is a
       switch we set, not a property we measured.
+  preload_wheel_compression:
+    value: 0.0157
+    units: m
+    provenance: estimated
+    experiment: A8
+    note: >
+      How much spring compression the maxed collars add, referred to the wheel.
+      Documentation and a cross-check only - nothing generates from it, because
+      preload does not change the rate and the ride height it produces is
+      already measured.  Traxxas lists the stock truck at 2.28 kg with 47 mm of
+      ground clearance; this one weighs 3.599 kg and measures 50 mm (A4).  The
+      extra 1.319 kg alone would have sunk a front corner by 3.00 / 239 =
+      12.6 mm (rear 3.47 / 272 = 12.8 mm), and the car instead sits 3 mm
+      HIGHER, so the collars are worth about 15.7 mm of wheel lift - ~3.7 N
+      front, ~4.3 N rear.  THIS IS THE CROSS-CHECK ON THE 3.0 Hz ASSUMPTION:
+      through a motion ratio near 0.65 that is ~10 mm of collar travel, about
+      all the thread a GTR body has.  A softer spring needs more collar than
+      the shock physically offers - 130 N/m, which is 3.0 Hz at CATALOG weight,
+      would need ~17 mm - so the preload setting bounds the rate from below and
+      239 N/m sits just inside that bound.
+  chassis_clearance_limit:
+    value: 0.034
+    units: m
+    provenance: estimated
+    experiment: A8
+    note: >
+      KNOWN MODEL LIMITATION, recorded so it is not rediscovered: the generated
+      chassis collision box hangs to 34 mm above ground (it is a gross
+      body-shell proxy, not the chassis pan), 2 mm less than travel_bump, so a
+      corner driven to full compression would put the box through the floor.
+      Both courses are flat and the car never comes close, so the box is left
+      where it is rather than raised - moving it would bury the ZED visuals
+      that sit on top of it.  This matters first on the obstacle course's
+      potholes and ramps.
 
 tire:
   # Effective ROLLING diameter at race weight, not the catalog figure.  This and

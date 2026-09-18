@@ -249,6 +249,22 @@ tires on. Every shock is stock, collars run to **maximum preload** to hold ride
 height under the electronics payload - confirm that is still true before
 measuring anything (a collar can walk loose).
 
+**Front and rear are different corners.** The Slash 4X4 Ultimate ships GTR
+threaded aluminum shocks, LONG (#7461X) at the front on the #7444 spring and
+XX-LONG (#7462X) at the rear on the stiffer #7446 - so measure and record all
+four corners separately, not one number for the car. `vehicle.yaml` carries
+`spring_rate_front`/`spring_rate_rear` and `damping_front`/`damping_rear`
+accordingly.
+
+**These entries are no longer placeholders, so this experiment now has
+something to disagree with.** They are derived from the stock hardware and the
+car's own A1/A4 numbers: a 3.0 Hz sprung ride frequency, the catalog
+front/rear spring ratio, zeta = 0.5, and the collar travel implied by sitting
+3 mm above catalog ride height at 58% over catalog weight. The derivation and
+its assumptions are written out in `vehicle.yaml`. A8's job is now to confirm
+or overturn them, and the two that would matter most are the ride frequency
+(step 5) and the total travel (step 3).
+
 **Space:** clear access to all four corners, about 0.3 m to each side of the
 car — enough to crouch beside a wheel, compress it by hand, and get a camera on
 it for the bounce-decay film. The car does not move under its own power.
@@ -271,10 +287,14 @@ it for the bounce-decay film. The car does not move under its own power.
    the bump number and add it to the droop number.
 4. **Spring rate.** Add a known mass (a bag of hardware on the scale from A1
    works) centred over one corner and re-measure the shaft position from step
-   2's marks. `spring_rate = added_mass * 9.81 / compression`. Repeat on a
-   second corner as a check; front and rear should agree if the shocks really
-   are identical, which is the whole premise of treating this as one value
-   rather than four.
+   2's marks. `spring_rate = added_mass * 9.81 / compression`. **Do one front
+   corner and one rear corner**: they are different springs on different-length
+   shocks and are expected to differ by roughly the catalog ratio
+   0.874 / 0.767 = 1.14, so a front/rear disagreement of that size confirms the
+   model rather than breaking it. Left and right on the same axle SHOULD agree;
+   if they do not, a collar has walked. Note this measures the WHEEL rate,
+   which is what `vehicle.yaml` and the simulator want - push on the wheel, not
+   on the shock.
 5. **Damping, by bounce decay.** Push one corner down by hand about 20-30 mm
    and release cleanly (no residual push or hold). Film at 240 fps, as in A7.
    Read the peak-to-peak amplitude of at least three successive oscillations
@@ -286,16 +306,21 @@ it for the bounce-decay film. The car does not move under its own power.
    corner does not oscillate at all (overdamped), say so instead of forcing a
    number - that is itself useful information about the stock shock oil.
 
-Update `suspension.*` in `vehicle.yaml` and set each `provenance` to
-`measured`, same as everywhere else in Session A. Until this is done the
-simulator has no suspension travel that means anything - it will still move,
-because a `guess` is a real number, but every one of `spring_rate`, `damping`,
-`travel_bump` and `travel_droop` is a placeholder chosen for plausibility, not
-because anyone rolled the car over a bump and measured what it did. The
-obstacle course's potholes and gravel section are exactly where this shows up:
+Update `suspension.*` in `vehicle.yaml` and promote each `provenance` from
+`estimated` to `measured`, same as everywhere else in Session A. The values
+there now describe the stock GTR hardware rather than round numbers, but
+nobody has yet rolled the car over a bump and watched what it did - a
+derivation that hangs together is not a measurement. The obstacle course's
+potholes and gravel section are where the difference shows up:
 `generate_vehicle_model.py` puts the same suspension model into
-`worlds/obstacle_course.sdf` as `worlds/speed_course.sdf`, so a bad guess here
-is wrong everywhere the car meets an uneven surface, not just there.
+`worlds/obstacle_course.sdf` as `worlds/speed_course.sdf`, so an error here is
+wrong everywhere the car meets an uneven surface, not just there.
+
+One number to check first, because everything else scales with it: the sprung
+ride frequency. Step 5's bounce film gives it for free alongside the damping -
+count the peaks, `f = 1 / period`. The model assumes 3.0 Hz. If the car comes
+back at 2 Hz the springs are half as stiff as assumed and the preload
+cross-check in `vehicle.yaml` is wrong about how much thread a GTR collar has.
 
 ---
 

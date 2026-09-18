@@ -100,8 +100,14 @@ def build_model(vehicle, spawn_pose):
     joint_limit = max(left, right)
     steering_limit = min(left, right)
 
-    spring_rate = float(value_of(vehicle, "suspension.spring_rate"))
-    damping = float(value_of(vehicle, "suspension.damping"))
+    # Front and rear are different shocks on different springs (GTR long on
+    # #7444 at the front, XX-long on #7446 at the rear), so they are two
+    # numbers here, not one.  Both are wheel rates: the rocker leverage is not
+    # modelled, so the prismatic joint IS the wheel.
+    spring_rate_front = float(value_of(vehicle, "suspension.spring_rate_front"))
+    spring_rate_rear = float(value_of(vehicle, "suspension.spring_rate_rear"))
+    damping_front = float(value_of(vehicle, "suspension.damping_front"))
+    damping_rear = float(value_of(vehicle, "suspension.damping_rear"))
     travel_bump = float(value_of(vehicle, "suspension.travel_bump"))
     travel_droop = float(value_of(vehicle, "suspension.travel_droop"))
 
@@ -119,22 +125,70 @@ def build_model(vehicle, spawn_pose):
     half_front = track_front / 2.0
     half_rear = track_rear / 2.0
     axle = wheelbase / 2.0
+
+    # mass.cg_x and mass.cg_z describe the WHOLE car, but the chassis link is
+    # the car minus the twelve unsprung links this model breaks out, and those
+    # sit at the axles and at wheel-centre height rather than at the CG.
+    # Hanging the whole-car CG on the chassis link therefore puts the ASSEMBLED
+    # model's CG somewhere the car's has never been: 5 mm behind the wheelbase
+    # midpoint where A1 weighed 11.8 mm, because the front axle carries two
+    # knuckles the rear does not.  Back the unsprung links out so the CG that
+    # comes out of the assembly is the one that was measured.
+    front_unsprung = 2.0 * (wheel_mass + upright_mass + knuckle_mass)
+    rear_unsprung = 2.0 * (wheel_mass + upright_mass)
+    unsprung_moment_x = (front_unsprung - rear_unsprung) * axle
+    unsprung_moment_z = unsprung_mass * radius
+    chassis_cg_x = (total_mass * cg_x - unsprung_moment_x) / chassis_mass
+    chassis_cg_z = (total_mass * cg_z - unsprung_moment_z) / chassis_mass
+    # Nothing to back out sideways: the unsprung links are symmetric about y.
+    chassis_cg_y = cg_y
+    # The same argument applies to inertia.izz (the unsprung links are worth
+    # about 0.04 kg m^2 of it through the parallel-axis term), but izz is a
+    # `guess` that B3's step-steer response validates end to end, so netting a
+    # computed term out of an uncomputed number would buy nothing.  Leave it,
+    # and fix it when A3/B3 makes izz real.
     # Wheel centres sit at one radius, which puts the model origin at ground
     # level and makes every z in vehicle.yaml a height above the ground.
     wheel_inertia = 0.5 * wheel_mass * radius * radius
 
-    # geometry.ride_height was measured "shocks free" (Session A2), i.e. it IS
-    # the static-sag position - so that position is the suspension joint's
-    # zero, and spring_reference is offset from it by exactly the sag needed
-    # to hold the corner's static weight (mg = k * spring_reference), the same
-    # relationship a real spring satisfies at rest.  Front/rear split comes
-    # from the same axle weight fractions A1 measured (see mass.cg_x).
-    front_weight_fraction = 0.5 + cg_x / wheelbase
+    # geometry.ride_height was measured at race weight with the collars at
+    # maximum preload, so THAT ride height is the suspension joint's zero and
+    # spring_reference is the position the spring would rest at with the car
+    # lifted off it - one static sag away.
+    #
+    # The sign is the part that is easy to get wrong, and it was wrong here.
+    # The joint's child is the upright, whose height the ground pins, so a
+    # positive joint position means the CHASSIS has come down: gravity drives q
+    # positive, the spring contributes -k (q - reference), and equilibrium sits
+    # at q = reference + load / k.  Holding the car at q = 0 therefore needs a
+    # NEGATIVE reference.  A positive one settles at twice the sag - with the
+    # old 3500 N/m placeholder that was 5 mm and nobody noticed, at the real
+    # rate it is 68 mm, which is the chassis on its bump stops.
+    #
+    # The load is the SPRUNG corner load.  Wheels, uprights and knuckles hang
+    # below the joint and are carried by the ground, not by the spring; using
+    # total_mass here (as this did) overstates every corner by 19%.  The
+    # front/rear split is therefore the SPRUNG one, taken off the chassis CG
+    # rather than off the whole car's (see mass.cg_x and chassis_cg_x above).
+    #
+    # KNOWN RESIDUAL, so it is not rediscovered as a bug: with these references
+    # the car settles about 2.8 mm below the ride height they aim at (47.8 mm
+    # front, 46.6 mm rear against the 50 mm A4 measured), because gz-sim's
+    # dartsim resolves the static equilibrium with roughly 10% more load on the
+    # springs than rigid-body statics puts there -- 31.6 N against the 28.4 N
+    # the chassis weighs.  It is a genuine settled equilibrium, not a transient
+    # (joint velocities reach 1e-12), and it holds across a 10x sweep of
+    # spring_stiffness, so it is not an integration artifact either.  The cause
+    # is not understood.  It is left uncompensated on purpose: biasing the
+    # reference to hit 50 mm would trade a derived number for a fudge fitted to
+    # one engine's behaviour, which is exactly what the coast-deceleration pair
+    # in arduino_bridge.yaml used to be.
+    front_weight_fraction = 0.5 + chassis_cg_x / wheelbase
     rear_weight_fraction = 1.0 - front_weight_fraction
-    front_corner_load_n = total_mass * front_weight_fraction / 2.0 * GRAVITY
-    rear_corner_load_n = total_mass * rear_weight_fraction / 2.0 * GRAVITY
-    front_spring_reference = front_corner_load_n / spring_rate
-    rear_spring_reference = rear_corner_load_n / spring_rate
+    front_corner_load_n = chassis_mass * front_weight_fraction / 2.0 * GRAVITY
+    rear_corner_load_n = chassis_mass * rear_weight_fraction / 2.0 * GRAVITY
+    front_spring_reference = -front_corner_load_n / spring_rate_front
+    rear_spring_reference = -rear_corner_load_n / spring_rate_rear
 
     def wheel(name, x, y):
         return (
@@ -166,7 +220,7 @@ def build_model(vehicle, spawn_pose):
             f"<ixx>0.001</ixx><iyy>0.001</iyy><izz>0.001</izz></inertia></inertial></link>"
         )
 
-    def suspension_joint(name, spring_reference):
+    def suspension_joint(name, spring_rate, damping, spring_reference):
         # Parent is always chassis: the wheel end of the joint is the upright,
         # front or rear, so this is the one joint every corner has whether or
         # not it steers.  +z is compression (toward the chassis), matching the
@@ -190,8 +244,8 @@ def build_model(vehicle, spawn_pose):
             "tire.diameter",
             "steering.max_angle_left",
             "lateral.mu_lateral",
-            "suspension.spring_rate",
-            "suspension.damping",
+            "suspension.spring_rate_front",
+            "suspension.damping_front",
         )
     )
 
@@ -201,10 +255,12 @@ def build_model(vehicle, spawn_pose):
         f"    <!-- Provenance: {tags}. -->",
         "    <!-- Anything tagged `guess` is a placeholder; see docs/characterization.md. -->",
         "    <!-- Suspension is a prismatic joint per corner with SDF joint",
-        "         dynamics (spring_stiffness/spring_reference/damping). Confirm the",
-        "         loaded physics engine actually implements joint springs: some",
-        "         gz-sim physics plugins only honour damping, not spring_stiffness,",
-        "         in which case a corner sags to its limit instead of settling. -->",
+        "         dynamics (spring_stiffness/spring_reference/damping), front and",
+        "         rear carrying the different rates of the stock GTR long and",
+        "         XX-long shocks.  gz-sim 8 / dartsim does honour spring_stiffness",
+        "         (checked on a one-joint world: 1 kg on 100 N/m settles at",
+        "         -98 mm), and spring_reference is NEGATIVE here on purpose --",
+        "         see the derivation in generate_vehicle_model.py. -->",
         '    <model name="slash">',
         # Wheel centres sit at exactly one radius, so model-frame z = 0 IS ground
         # level and this is only a settling margin.  The hand-written model used
@@ -214,7 +270,8 @@ def build_model(vehicle, spawn_pose):
         '      <link name="chassis">',
         # The inertial pose is the fix that matters most here: without it the
         # centre of mass sits at the link origin, which is GROUND level.
-        f"        <inertial><pose>{cg_x:.4f} {cg_y:.4f} {cg_z:.4f} 0 0 0</pose>"
+        f"        <inertial><pose>{chassis_cg_x:.4f} {chassis_cg_y:.4f} "
+        f"{chassis_cg_z:.4f} 0 0 0</pose>"
         f"<mass>{chassis_mass:.4f}</mass><inertia>"
         f"<ixx>{ixx:.5f}</ixx><iyy>{iyy:.5f}</iyy><izz>{izz:.5f}</izz></inertia></inertial>",
         f'        <collision name="collision"><pose>0 0 {body_h / 2 + radius * 0.6:.4f} 0 0 0</pose>'
@@ -264,10 +321,18 @@ def build_model(vehicle, spawn_pose):
         wheel("front_right", axle, -half_front),
         wheel("rear_left", -axle, half_rear),
         wheel("rear_right", -axle, -half_rear),
-        suspension_joint("front_left", front_spring_reference),
-        suspension_joint("front_right", front_spring_reference),
-        suspension_joint("rear_left", rear_spring_reference),
-        suspension_joint("rear_right", rear_spring_reference),
+        suspension_joint(
+            "front_left", spring_rate_front, damping_front, front_spring_reference
+        ),
+        suspension_joint(
+            "front_right", spring_rate_front, damping_front, front_spring_reference
+        ),
+        suspension_joint(
+            "rear_left", spring_rate_rear, damping_rear, rear_spring_reference
+        ),
+        suspension_joint(
+            "rear_right", spring_rate_rear, damping_rear, rear_spring_reference
+        ),
         f'      <joint name="front_left_steering_joint" type="revolute"><parent>front_left_upright</parent>'
         f"<child>front_left_steering</child><axis><xyz>0 0 1</xyz><limit>"
         f"<lower>{-joint_limit:.5f}</lower><upper>{joint_limit:.5f}</upper>"
@@ -357,7 +422,11 @@ def regenerate(vehicle, world_path, check):
         print(f"{world_path.name} is up to date with vehicle.yaml")
         return True
 
-    world_path.write_text(updated, encoding="utf-8")
+    # newline="" so the LF this builds is the LF that lands on disk.  Without
+    # it, Python on Windows translates every line ending and the regenerated
+    # world is a whole-file CRLF diff against a byte-identical original.
+    with open(world_path, "w", encoding="utf-8", newline="") as handle:
+        handle.write(updated)
     print(f"wrote the vehicle model into {world_path}")
     return True
 

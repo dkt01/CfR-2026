@@ -934,12 +934,17 @@ world keeps its own spawn point; everything else about the car is shared), and
 regenerated fails the build instead of quietly leaving the simulator
 describing a different car.
 
-The vehicle now includes a suspension DOF per corner (a damped, sprung
-prismatic joint between the chassis and each wheel's upright) so the obstacle
-course's potholes, gravel and ramps actually excite the chassis instead of
-being transmitted straight through rigidly-mounted wheels. Every
-`suspension.*` value in `vehicle.yaml` is still tagged `guess` pending
-characterization's A8 - see [docs/characterization.md](../docs/characterization.md).
+The vehicle includes a suspension DOF per corner (a damped, sprung prismatic
+joint between the chassis and each wheel's upright) so the obstacle course's
+potholes, gravel and ramps actually excite the chassis instead of being
+transmitted straight through rigidly-mounted wheels. The rates describe the
+stock Slash 4X4 Ultimate hardware - GTR long shocks on #7444 springs at the
+front, XX-long on the stiffer #7446 at the rear, all four collars at maximum
+preload - derived from the car's own measured mass and ride height rather than
+from a catalog rate Traxxas does not publish. They are tagged `estimated`;
+characterization's A8 measures them directly, and `vehicle.yaml` writes out
+every assumption A8 has to check. See
+[docs/characterization.md](../docs/characterization.md).
 
 ## Deploy from a development host
 

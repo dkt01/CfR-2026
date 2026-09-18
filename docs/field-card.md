@@ -110,8 +110,12 @@ Status as of 2026-09-14. Values are in `config/vehicle.yaml`.
       Space: 1 m x 1 m level floor + overhead camera mount, car does not drive.
 - [ ] A7 lock-to-lock slow-mo: ______ frames at 240 fps
 - [ ] A8 suspension — confirm all 4 collars at **max preload**, sag ______ mm,
-      bump ______ mm, droop ______ mm, added-mass spring-rate check, bounce
-      decay on one corner at 240 fps. Space: clear access all 4 corners, ~0.3 m each side.
+      bump ______ mm, droop ______ mm. Spring rate front ______ N/m rear ______ N/m
+      (added-mass check, **push the wheel, not the shock** — front and rear are
+      different springs, expect rear ≈ 1.14 × front; model says 239 / 272).
+      Bounce decay one corner at 240 fps: period ______ s (model says 3.0 Hz),
+      peaks ______ / ______ / ______ mm.
+      Space: clear access all 4 corners, ~0.3 m each side.
 
 ---
 
