@@ -24,6 +24,11 @@
   <exec_depend>ros_gz_sim</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>
+  <!-- maneuver_runner_node.py, and the characterization tooling under
+       scripts/, which is deliberately standard library only so it runs on a
+       laptop with no network. -->
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>rosbag2_transport</exec_depend>
   <!-- start_signal_detector_node's image handling; no OpenCV, no cv_bridge. -->
   <exec_depend>python3-numpy</exec_depend>
 

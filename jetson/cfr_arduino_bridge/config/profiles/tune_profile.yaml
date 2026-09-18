@@ -1,0 +1,56 @@
+# C4 - the closed-loop scoring profile, on the ground.
+#
+# This is deliberately the SAME speed sequence the gains were tuned against on
+# blocks (0, 1.5, 3.2, 0.8, 0, -1.0, 0 m/s, README "Bench Tuning"), so the
+# resulting table is directly comparable to the on-blocks one rather than being
+# a fresh set of numbers with no baseline.
+#
+# Unlike every other C profile this runs at the PRODUCTION speed_slew_rate,
+# because it is scoring the loop as it will actually be flown.  The step
+# response characterisation wants the opposite - see the launch file's
+# speed_slew_rate argument, which must be raised for that and left alone here.
+#
+# Sweep gains across runs rather than within one, so each run is one clean
+# scored dataset:
+#
+#   ros2 launch cfr_arduino_bridge characterize.launch.py \
+#       profile:=tune_profile gains:="speed_kp=24.0 speed_ki=10.0"
+#
+# The overrides land in metadata.yaml, so a run directory always says which
+# gains produced it.
+name: tune_profile
+description: The bench tuning speed sequence, run twice, for scoring ground gains.
+
+gains:
+  speed_trace: true
+
+limits:
+  # Two passes of the sequence reach roughly 38 m before the return leg. The
+  # speeds and holds are fixed by matching the on-blocks table, so the limit is
+  # what moves. Needs about 45 m of path.
+  max_distance: 45.0
+  max_duration: 240.0
+  max_speed: 3.2
+
+steps:
+  - {hold: 3.0, steering: 0.0, velocity: 0.0, label: settle}
+
+  - {hold: 3.5, steering: 0.0, velocity: 1.5, label: pass1_1p5}
+  - {hold: 4.0, steering: 0.0, velocity: 3.2, label: pass1_3p2}
+  - {hold: 3.5, steering: 0.0, velocity: 0.8, label: pass1_0p8}
+  - {hold: 3.5, steering: 0.0, velocity: 0.0, label: pass1_zero}
+  - {hold: 4.0, steering: 0.0, velocity: -1.0, label: pass1_rev}
+  - {hold: 3.5, steering: 0.0, velocity: 0.0, label: pass1_zero2}
+
+  - {hold: 3.5, steering: 0.0, velocity: 1.5, label: pass2_1p5}
+  - {hold: 4.0, steering: 0.0, velocity: 3.2, label: pass2_3p2}
+  - {hold: 3.5, steering: 0.0, velocity: 0.8, label: pass2_0p8}
+  - {hold: 3.5, steering: 0.0, velocity: 0.0, label: pass2_zero}
+  - {hold: 4.0, steering: 0.0, velocity: -1.0, label: pass2_rev}
+  - {hold: 3.5, steering: 0.0, velocity: 0.0, label: pass2_zero2}
+
+return:
+  mode: reverse_to_start
+  speed: 1.5
+  tolerance: 2.0
+  timeout: 60.0

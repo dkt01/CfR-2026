@@ -36,6 +36,21 @@ readonly EXCLUDES=(
   '.DS_Store'
 )
 
+# The scp fallback below has no rsync-style --exclude, so it has to prune the
+# same list itself. Derive its find(1) predicate from EXCLUDES rather than
+# hand-maintaining a second copy: rsync's directory patterns match at any
+# depth, so a lone top-level "! -path SOURCE_DIR/build/*" would miss a build/
+# nested under a package and silently sync it, unlike the rsync path.
+FIND_PRUNE_ARGS=()
+for pattern in "${EXCLUDES[@]}"; do
+  if [[ "${pattern}" == */ ]]; then
+    FIND_PRUNE_ARGS+=(! -path "*/${pattern%/}/*")
+  else
+    FIND_PRUNE_ARGS+=(! -name "${pattern}")
+  fi
+done
+readonly FIND_PRUNE_ARGS
+
 usage() {
   cat <<EOF
 Usage: $(basename "$0") [options]
@@ -102,6 +117,62 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# The Orin has no fixed IP: it's reached over a direct USB-gadget link
+# (192.168.55.1) or over Wi-Fi/LAN (something like 192.168.0.167) depending
+# on how it's plugged in, and both addresses front the same host key. Without
+# accept-new, connecting from a new address makes every ssh/scp/rsync call
+# below fail outright with "Host key verification failed" -- and worse, the
+# BatchMode probe just below reports that as "no public-key auth" and walks
+# the user into an unnecessary password prompt that would not have fixed
+# anything. accept-new still errors out if the host key ever actually
+# *changes*, so this doesn't disable verification, just first-contact TOFU.
+SSH_OPTS=(-o StrictHostKeyChecking=accept-new)
+
+# ssh, scp, and rsync each open their own connection, so a host that only
+# accepts a password (no key in ssh-agent) would otherwise ask for it once
+# per remote command below. ControlMaster connection sharing would fix that
+# on Linux/macOS, but it does not work over Git for Windows' bundled OpenSSH
+# (session multiplexing fails there), which this script must also support.
+# So instead: probe whether public-key auth alone gets in, and if not, read
+# the password once here and hand it to every remote command via sshpass.
+SSH_CMD=(ssh "${SSH_OPTS[@]}")
+SCP_CMD=(scp "${SSH_OPTS[@]}")
+RSYNC_RSH="ssh ${SSH_OPTS[*]}"
+if ! ssh "${SSH_OPTS[@]}" -o BatchMode=yes -o ConnectTimeout=5 "${REMOTE_HOST}" true >/dev/null 2>&1; then
+  # The `&&` chain keeps this compatible with `set -e`: if sshpass is missing,
+  # or there is no controlling terminal to prompt on (e.g. run from cron), the
+  # read is skipped rather than aborting the script on a failed redirect.
+  if command -v sshpass >/dev/null && read -rs -p "Password for ${REMOTE_HOST}: " SSH_PASSWORD </dev/tty 2>/dev/null; then
+    echo
+    export SSHPASS="${SSH_PASSWORD}"
+    unset SSH_PASSWORD
+    SSH_CMD=(sshpass -e ssh "${SSH_OPTS[@]}")
+    SCP_CMD=(sshpass -e scp "${SSH_OPTS[@]}")
+    RSYNC_RSH="sshpass -e ssh ${SSH_OPTS[*]}"
+  else
+    echo "note: public-key login to ${REMOTE_HOST} isn't set up (or no" >&2
+    echo "      terminal is available to ask for the password once), so" >&2
+    echo "      ssh/scp/rsync will each prompt separately. Install sshpass" >&2
+    echo "      and run this interactively, or run ssh-copy-id" >&2
+    echo "      ${REMOTE_HOST}, to be asked only once." >&2
+  fi
+fi
+
+# The Orin has no RTC, so its clock resets to some fixed build date on every
+# power cycle and only free-runs from there. rsync/scp compare timestamps to
+# decide what changed, and a build clean-rebuilds two packages specifically
+# because of clock skew (see the comment below) -- so fix the clock first.
+LOCAL_EPOCH="$(date +%s)"
+if [[ "${DRY_RUN}" == true ]]; then
+  echo "would sync the Orin's clock to $(date -d "@${LOCAL_EPOCH}" 2>/dev/null || date -r "${LOCAL_EPOCH}")"
+elif "${SSH_CMD[@]}" "${REMOTE_HOST}" "sudo -n date --set=@${LOCAL_EPOCH}" >/dev/null 2>&1; then
+  echo "synced the Orin's clock to this host's time"
+else
+  echo "warning: couldn't set the Orin's clock (needs passwordless sudo for" >&2
+  echo "         'date' on the Orin); if timestamps still look wrong, run:" >&2
+  echo "           ssh ${REMOTE_HOST} 'sudo date --set=@${LOCAL_EPOCH}'" >&2
+fi
+
 HAS_RSYNC=false
 if command -v rsync >/dev/null; then
   HAS_RSYNC=true
@@ -120,10 +191,26 @@ if [[ ! -d "${SOURCE_DIR}/cfr_arduino_bridge" ]]; then
   exit 1
 fi
 
-rsync_args=(--archive --compress --human-readable --itemize-changes)
-for pattern in "${EXCLUDES[@]}"; do
-  rsync_args+=(--exclude "${pattern}")
-done
+# What gets synced is exactly one NUL-delimited list of paths relative to
+# SOURCE_DIR, consumed identically by both the rsync and scp-fallback paths
+# below, so they can never again disagree on what to exclude (see the git
+# history of this file for the bug that caused). git already knows how to
+# apply .gitignore, including nested ignore files like a tool's own
+# .pytest_cache/.gitignore, so prefer asking it over re-deriving that logic;
+# fall back to the hardcoded EXCLUDES list only when git isn't available.
+FILE_LIST="$(mktemp)"
+trap 'rm -f "${FILE_LIST}"' EXIT
+if command -v git >/dev/null && git -C "${SOURCE_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  git -C "${SOURCE_DIR}" ls-files -z --cached --others --exclude-standard >"${FILE_LIST}"
+else
+  echo "note: ${SOURCE_DIR} isn't a git checkout (or git isn't installed), so" >&2
+  echo "      .gitignore can't be consulted; falling back to this script's" >&2
+  echo "      own hardcoded ignore list, which may sync extra cache/build" >&2
+  echo "      files that .gitignore would otherwise catch." >&2
+  find "${SOURCE_DIR}" -type f "${FIND_PRUNE_ARGS[@]}" -printf '%P\0' >"${FILE_LIST}"
+fi
+
+rsync_args=(--archive --compress --human-readable --itemize-changes -e "${RSYNC_RSH}" --files-from="${FILE_LIST}" --from0)
 
 if [[ "${DRY_RUN}" == true ]]; then
   rsync_args+=(--dry-run)
@@ -138,35 +225,26 @@ fi
 echo "syncing ${SOURCE_DIR}/ -> ${REMOTE_HOST}:${REMOTE_DIR}/"
 
 # Trailing slashes matter: copy the contents of jetson/, not the directory.
-ssh "${REMOTE_HOST}" "mkdir -p ${REMOTE_DIR}"
+if [[ "${DRY_RUN}" != true ]]; then
+  "${SSH_CMD[@]}" "${REMOTE_HOST}" "mkdir -p ${REMOTE_DIR}"
+fi
 if [[ "${HAS_RSYNC}" == true ]]; then
   rsync "${rsync_args[@]}" "${SOURCE_DIR}/" "${REMOTE_HOST}:${REMOTE_DIR}/"
 else
   echo "rsync unavailable; using scp fallback"
-  while IFS= read -r source_file; do
-    relative_file="${source_file#"${SOURCE_DIR}/"}"
+  while IFS= read -r -d '' relative_file; do
+    source_file="${SOURCE_DIR}/${relative_file}"
     remote_file="${REMOTE_DIR}/${relative_file}"
     if [[ "${DRY_RUN}" == true ]]; then
       printf 'would copy %s -> %s:%s\n' "${source_file}" "${REMOTE_HOST}" "${remote_file}"
     else
       remote_directory="${REMOTE_DIR}/$(dirname "${relative_file}")"
-      ssh "${REMOTE_HOST}" "mkdir -p ${remote_directory}"
-      scp "${source_file}" "${REMOTE_HOST}:${remote_file}"
+      # </dev/null: ssh/scp otherwise inherit this loop's stdin (FILE_LIST
+      # below) and drain it, so only the first file would ever transfer.
+      "${SSH_CMD[@]}" "${REMOTE_HOST}" "mkdir -p ${remote_directory}" </dev/null
+      "${SCP_CMD[@]}" "${source_file}" "${REMOTE_HOST}:${remote_file}" </dev/null
     fi
-  done < <(find "${SOURCE_DIR}" -type f \
-    ! -path "${SOURCE_DIR}/.git/*" \
-    ! -path "${SOURCE_DIR}/build/*" \
-    ! -path "${SOURCE_DIR}/install/*" \
-    ! -path "${SOURCE_DIR}/log/*" \
-    ! -path "${SOURCE_DIR}/logs/*" \
-    ! -path "${SOURCE_DIR}/bin/*" \
-    ! -path "${SOURCE_DIR}/lib/*" \
-    ! -path '*/__pycache__/*' \
-    ! -name '*.pyc' \
-    ! -name '*.swp' \
-    ! -name '*~' \
-    ! -name '.DS_Store' \
-    -print)
+  done < "${FILE_LIST}"
 fi
 
 if [[ "${DRY_RUN}" == true ]]; then
@@ -186,15 +264,15 @@ fi
 
 echo
 echo "building on ${REMOTE_HOST} in ${REMOTE_WS}"
-ssh "${REMOTE_HOST}" "bash -lc '
+"${SSH_CMD[@]}" "${REMOTE_HOST}" "bash -lc '
   set -eo pipefail
   source /opt/ros/${ROS_DISTRO_NAME}/setup.bash
   set -u
   mkdir -p ${REMOTE_WS}
   cd ${REMOTE_WS}
-  # The Jetson clock can lag files synced from the development host.  A clean
-  # package build prevents Make from retaining an older installed binary when
-  # source timestamps appear to be in the future.
+  # Belt and suspenders alongside the clock sync above: if that did not set
+  # the time (no passwordless sudo), stale timestamps could still make Make
+  # retain an older installed binary, so force these two packages to rebuild.
   rm -rf build/cfr_interfaces install/cfr_interfaces build/cfr_arduino_bridge install/cfr_arduino_bridge
   colcon build --base-paths ${REMOTE_DIR} --cmake-args -DCMAKE_BUILD_TYPE=Release
 '"
@@ -203,7 +281,7 @@ echo "build complete"
 if [[ "${DO_TEST}" == true ]]; then
   echo
   echo "testing on ${REMOTE_HOST}"
-  ssh "${REMOTE_HOST}" "bash -lc '
+  "${SSH_CMD[@]}" "${REMOTE_HOST}" "bash -lc '
     set -eo pipefail
     source /opt/ros/${ROS_DISTRO_NAME}/setup.bash
     set -u

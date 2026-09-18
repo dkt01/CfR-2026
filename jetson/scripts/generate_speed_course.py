@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Generate the straw-bale layout and start signal in the speed-course SDF.
 
-The rest of ``speed_course.sdf`` is maintained by hand; this rewrites the two
-blocks that are derived from something else -- the bales from the site-layout
-DXF, and the start signal from the position chosen below.  Both are delimited
-in the SDF so the hand written parts around them survive.
+This rewrites the two blocks that are derived from something else -- the bales
+from the site-layout DXF, and the start signal from the position chosen below.
+Both are delimited in the SDF so the parts around them survive.  The car
+between them is generated separately, by ``generate_vehicle_model.py`` out of
+``config/vehicle.yaml``; the rest of the world is maintained by hand.
 
 Also writes ``config/speed_course_layout.yaml``, so the signal's pose reaches
 ``obstacle_randomizer_node`` from the same place the world gets it and the two
@@ -215,9 +216,14 @@ def main() -> None:
     if shifted:
         print(f"moved {shifted} bale(s) along the wall to clear the start signal")
 
-    replacement = build_course(cleared) + '\n\n    <model name="slash">'
+    # Ends at the vehicle block's BEGIN marker rather than at <model
+    # name="slash"> itself: the model is generated from vehicle.yaml by
+    # generate_vehicle_model.py, and anchoring on the model tag would pull
+    # that block's header comments into the bale region and delete them.
+    replacement = build_course(cleared) + "\n\n    <!-- BEGIN generated vehicle"
     contents, replacements = re.subn(
-        r"    <!-- (?:44\.7 m by 34\.5 m drawing area|135 ft by 47 ft speed course).*?    <model name=\"slash\">",
+        r"    <!-- (?:44\.7 m by 34\.5 m drawing area|135 ft by 47 ft speed course)"
+        r".*?    <!-- BEGIN generated vehicle",
         replacement,
         contents,
         flags=re.DOTALL,

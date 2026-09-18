@@ -1,0 +1,45 @@
+# B3 - yaw response to a steering step.
+#
+# This is the validator for the inertia ESTIMATE in vehicle.yaml.  A bifilar
+# pendulum measurement was ruled out as too fiddly, so izz is calculated from a
+# parts-list breakdown instead - which means it needs checking in the loop
+# rather than trusting.  If the simulated yaw-rate rise time and overshoot match
+# the car here, the rotational model is good enough; if they do not, suspect
+# inertia before blaming the tires.
+#
+# Alternating left and right keeps this a symmetric slalom, so the car ends up
+# roughly on its original heading and the reverse leg can bring it home.
+name: step_steer
+description: Steering steps at two speeds, alternating left and right.
+
+gains:
+  speed_trace: true
+
+limits:
+  max_distance: 32.0
+  max_duration: 240.0
+  max_speed: 3.2
+
+# Holds are short on purpose. A 0.5 command at 2 m/s is already around
+# 1.2 rad/s of yaw, so a 3 s hold drives most of a circle while every bit of
+# rise-time information arrives in the first half second. Short steps keep the
+# car inside the path and still resolve the response.
+steps:
+  - {hold: 3.0, steering: 0.0, velocity: 0.0, label: settle}
+  - {hold: 2.5, steering: 0.0, velocity: 2.0, label: straight_2p0}
+  - {hold: 2.0, steering: 0.50, velocity: 2.0, label: step_left_2p0}
+  - {hold: 2.0, steering: 0.0, velocity: 2.0, label: recover_2p0}
+  - {hold: 2.0, steering: -0.50, velocity: 2.0, label: step_right_2p0}
+  - {hold: 2.0, steering: 0.0, velocity: 2.0, label: recover_2p0}
+  - {hold: 2.5, steering: 0.0, velocity: 3.0, label: straight_3p0}
+  - {hold: 2.0, steering: 0.50, velocity: 3.0, label: step_left_3p0}
+  - {hold: 2.0, steering: 0.0, velocity: 3.0, label: recover_3p0}
+  - {hold: 2.0, steering: -0.50, velocity: 3.0, label: step_right_3p0}
+  - {hold: 2.0, steering: 0.0, velocity: 3.0, label: recover_3p0}
+  - {hold: 3.0, steering: 0.0, velocity: 0.0, label: settle}
+
+return:
+  mode: reverse_to_start
+  speed: 1.5
+  tolerance: 2.0
+  timeout: 60.0

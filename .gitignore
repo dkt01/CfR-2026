@@ -72,6 +72,14 @@ __pycache__/
 # Core dumps
 core.*
 
+# Characterization run data pulled off the Orin by scripts/sync_runs.sh.
+# Runs are recorded on the car and are far too large to version; the numbers
+# fitted from them live in cfr_arduino_bridge/config/vehicle.yaml instead.
+/runs/
+# Simulator runs recorded by characterize.launch.py use_sim:=true, used to check
+# the twin against the car.  Same shape as /runs/, same reason to keep it out.
+/simruns/
+
 # RL training checkpoints
 rl/bale_follower/checkpoints/
 rl/bale_follower/rl_model/

@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <fstream>
 #include <memory>
 #include <stdexcept>
@@ -45,6 +46,7 @@ namespace cfr_arduino_bridge {
       boot_delay_ = declare_parameter<double>("boot_delay", 2.0);
       tx_trace_path_ = declare_parameter<std::string>("tx_trace_path", "");
       rx_trace_path_ = declare_parameter<std::string>("rx_trace_path", "");
+      trace_timestamps_ = declare_parameter<bool>("trace_timestamps", false);
       max_speed_ = declare_parameter<double>("max_speed", 2.0);
       max_steering_ = declare_parameter<double>("max_steering", 1.0);
       speed_slew_rate_ = declare_parameter<double>("speed_slew_rate", 2.0);
@@ -313,35 +315,89 @@ namespace cfr_arduino_bridge {
       }
     }
 
+    /// Runtime-settable parameters.  The speed gains are here so the loop can be
+    /// retuned on the ground without a restart; the drivetrain constants and the
+    /// slew rate are here because a characterization run sweeps them between
+    /// steps, and a restart between steps would cost the Arduino handshake and
+    /// the run directory.  Everything else is launch-time only on purpose: the
+    /// device, the safety clamps and the arming policy should not move under a
+    /// car that is already armed.
     rcl_interfaces::msg::SetParametersResult OnSetParameters(const std::vector<rclcpp::Parameter>& parameters) {
       rcl_interfaces::msg::SetParametersResult result;
       result.successful = true;
 
       SpeedGains candidate = gains_;
-      bool touched = false;
+      double candidate_ratio = spur_to_wheel_ratio_;
+      double candidate_diameter = tire_diameter_;
+      double candidate_slew = speed_slew_rate_;
+      bool gains_touched = false;
+      bool drivetrain_touched = false;
+      bool slew_touched = false;
+
       for (const rclcpp::Parameter& parameter : parameters) {
-        if (parameter.get_name() == "speed_trace") {
+        const std::string& name = parameter.get_name();
+        if (name == "speed_trace") {
           candidate.trace = parameter.as_bool();
-          touched = true;
-        } else if (double* field = GainField(candidate, parameter.get_name())) {
+          gains_touched = true;
+        } else if (name == "spur_to_wheel_ratio") {
+          candidate_ratio = parameter.as_double();
+          drivetrain_touched = true;
+        } else if (name == "tire_diameter") {
+          candidate_diameter = parameter.as_double();
+          drivetrain_touched = true;
+        } else if (name == "speed_slew_rate") {
+          candidate_slew = parameter.as_double();
+          slew_touched = true;
+        } else if (double* field = GainField(candidate, name)) {
           *field = parameter.as_double();
-          touched = true;
+          gains_touched = true;
         }
       }
-      if (!touched) {
+      if (!gains_touched && !drivetrain_touched && !slew_touched) {
         return result;
       }
-      if (Serialize(ToFirmwareGains(candidate)).empty()) {
+
+      if (drivetrain_touched && !(candidate_ratio > 0.0 && candidate_diameter > 0.0)) {
+        result.successful = false;
+        result.reason = "spur_to_wheel_ratio and tire_diameter must both be positive";
+        return result;
+      }
+      if (slew_touched && !(candidate_slew >= 0.0 && std::isfinite(candidate_slew))) {
+        result.successful = false;
+        result.reason = "speed_slew_rate must be finite and non-negative (0 disables rate limiting)";
+        return result;
+      }
+      // The firmware works per 1000 spur RPM, so the drivetrain constants are
+      // part of the gain conversion: changing either has to be validated
+      // against the gains it will be sent with.
+      if (Serialize(ToFirmwareGains(candidate, candidate_ratio, candidate_diameter)).empty()) {
         result.successful = false;
         result.reason = "out of range for the Arduino: limits must be non-negative, speed_output_limit at most 500, "
                         "speed_brake_limit at most 440, and every converted value within +/-9999.999";
         return result;
       }
 
-      gains_ = candidate;
-      gains_seq_ = static_cast<uint8_t>((gains_seq_ % 255) + 1);  // 0 is reserved for firmware defaults
-      have_gains_tx_ = false;                                     // send on the next cycle
-      LogGains("speed gains updated");
+      if (slew_touched) {
+        speed_slew_rate_ = candidate_slew;
+        RCLCPP_INFO(get_logger(), "speed_slew_rate updated to %.2f m/s per second", speed_slew_rate_);
+      }
+      if (drivetrain_touched) {
+        spur_to_wheel_ratio_ = candidate_ratio;
+        tire_diameter_ = candidate_diameter;
+        RCLCPP_INFO(get_logger(),
+                    "drivetrain updated: spur_to_wheel_ratio=%.4f tire_diameter=%.4f m (1 m/s = %.0f spur RPM)",
+                    spur_to_wheel_ratio_,
+                    tire_diameter_,
+                    SpeedToSpurRpm(1.0, spur_to_wheel_ratio_, tire_diameter_));
+      }
+      if (gains_touched || drivetrain_touched) {
+        // A drivetrain change rescales every rate gain on the wire even when the
+        // per-m/s values did not move, so it needs a resend just as much.
+        gains_ = candidate;
+        gains_seq_ = static_cast<uint8_t>((gains_seq_ % 255) + 1);  // 0 is reserved for firmware defaults
+        have_gains_tx_ = false;                                     // send on the next cycle
+        LogGains("speed gains updated");
+      }
       return result;
     }
 
@@ -374,10 +430,14 @@ namespace cfr_arduino_bridge {
     }
 
     /// Parameters are per m/s; the firmware works per 1000 spur RPM.
-    SpeedGains ToFirmwareGains(const SpeedGains& per_mps) const {
-      SpeedGains firmware = GainsPerMpsToPerKrpm(per_mps, SpeedToSpurRpm(1.0, spur_to_wheel_ratio_, tire_diameter_));
+    SpeedGains ToFirmwareGains(const SpeedGains& per_mps, double spur_to_wheel_ratio, double tire_diameter) const {
+      SpeedGains firmware = GainsPerMpsToPerKrpm(per_mps, SpeedToSpurRpm(1.0, spur_to_wheel_ratio, tire_diameter));
       firmware.seq = gains_seq_;
       return firmware;
+    }
+
+    SpeedGains ToFirmwareGains(const SpeedGains& per_mps) const {
+      return ToFirmwareGains(per_mps, spur_to_wheel_ratio_, tire_diameter_);
     }
 
     void LogGains(const char* prefix) const {
@@ -397,6 +457,20 @@ namespace cfr_arduino_bridge {
                   gains_.trace ? "on" : "off");
     }
 
+    /// Host timestamp for a trace line, or empty when trace_timestamps is off.
+    ///
+    /// The Arduino stamps its own lines with millis() since ITS boot, which
+    /// cannot be aligned to a rosbag or to telemetry.csv.  This prefix is what
+    /// makes the serial traces joinable with everything else recorded in a run.
+    std::string TracePrefix() const {
+      if (!trace_timestamps_) {
+        return std::string();
+      }
+      char buffer[32];
+      const int length = std::snprintf(buffer, sizeof(buffer), "%.6f ", now().seconds());
+      return (length > 0 && length < static_cast<int>(sizeof(buffer))) ? std::string(buffer, length) : std::string();
+    }
+
     bool WriteWire(const std::string& wire) {
       if (wire.empty()) {
         RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 2000, "refusing to send an unencodable frame");
@@ -407,8 +481,12 @@ namespace cfr_arduino_bridge {
         return false;
       }
       if (tx_trace_.is_open()) {
-        // The trace is intentionally raw: each line is byte-for-byte identical
-        // to the successfully completed USB write above.
+        // Without trace_timestamps the trace is byte-for-byte identical to the
+        // successfully completed USB write above.  With it, each line gains a
+        // host timestamp and one space in front; everything after that space is
+        // still the exact frame.
+        const std::string prefix = TracePrefix();
+        tx_trace_.write(prefix.data(), static_cast<std::streamsize>(prefix.size()));
         tx_trace_.write(wire.data(), static_cast<std::streamsize>(wire.size()));
         tx_trace_.flush();
         if (!tx_trace_) {
@@ -423,6 +501,8 @@ namespace cfr_arduino_bridge {
       if (!rx_trace_.is_open()) {
         return;
       }
+      const std::string prefix = TracePrefix();
+      rx_trace_.write(prefix.data(), static_cast<std::streamsize>(prefix.size()));
       rx_trace_.write(line.data(), static_cast<std::streamsize>(line.size()));
       rx_trace_.put('\n');
       rx_trace_.flush();
@@ -495,6 +575,7 @@ namespace cfr_arduino_bridge {
     double boot_delay_ = 2.0;
     std::string tx_trace_path_;
     std::string rx_trace_path_;
+    bool trace_timestamps_ = false;
     double max_speed_ = 2.0;
     double max_steering_ = 1.0;
     double speed_slew_rate_ = 2.0;

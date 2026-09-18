@@ -1,0 +1,27 @@
+# B0 - stationary ZED odometry noise.
+#
+# Run this first at every session, while the cones are still going out: it costs
+# nothing but five minutes of sitting still, and it is what makes the path
+# follower's heading_deadband (0.01 rad) and max_angular (0.10 rad/s) tunable in
+# simulation instead of only on the car.  Those two numbers exist purely to
+# reject stationary ZED yaw noise, and the simulator currently feeds the follower
+# perfect ground truth, so it cannot reproduce the problem they solve.
+#
+# Paved surfaces are uniform and low-texture, which is a known stressor for
+# visual-inertial odometry.  Do not assume this is fine - that is the point.
+name: zed_static
+description: Five minutes stationary, recording ZED odometry noise and drift.
+
+# The car must not move, so it never arms.  Leave the E-Stop asserted throughout.
+arming: none
+
+limits:
+  max_distance: 1.0
+  max_duration: 400.0
+  max_speed: 0.1
+
+steps:
+  - {hold: 300.0, steering: 0.0, velocity: 0.0, label: stationary}
+
+return:
+  mode: none

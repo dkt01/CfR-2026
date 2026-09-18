@@ -12,6 +12,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 WORLD = os.environ.get("CFR_SIM_WORLD", "cfr_speed_course")
 MODEL = "slash"
 PORT = 9003
+# Settling margin above the ground, matching generate_vehicle_model.py.  The
+# vehicle model puts wheel bottoms at model-frame z = 0, so anything larger
+# drops the car onto its wheels on every teleport.  This was 0.12.
+SPAWN_HEIGHT_M = 0.02
+
 MAX_ABS_X = 30.0
 MAX_ABS_Y = 20.0
 
@@ -59,7 +64,7 @@ class TeleportHandler(BaseHTTPRequestHandler):
         half_heading = math.radians(heading) / 2.0
         request = (
             f'name: "{MODEL}" '
-            f"position {{ x: {x:.9g} y: {y:.9g} z: 0.12 }} "
+            f"position {{ x: {x:.9g} y: {y:.9g} z: {SPAWN_HEIGHT_M:.9g} }} "
             "orientation { x: 0 y: 0 "
             f"z: {math.sin(half_heading):.17g} w: {math.cos(half_heading):.17g} }}"
         )

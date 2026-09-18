@@ -18,6 +18,13 @@ arduino_bridge:
     # from the Uno, including its debug lines and, with speed_trace on, the
     # speed controller's per-tick trace.
     rx_trace_path: /tmp/cfr-arduino-rx.log
+    # Prefix each trace line with a host timestamp and a space.  The Arduino
+    # stamps its own lines with millis() since ITS boot, which cannot be aligned
+    # to a rosbag or to a run's telemetry.csv; this is what makes the serial
+    # traces joinable with everything else.  characterize.launch.py sets it, and
+    # also redirects both paths into the run directory - these defaults are
+    # truncated on every node start, so each run would otherwise destroy the last.
+    trace_timestamps: false
 
     # Watchdogs
     command_timeout: 0.2    # zero speed if the autonomy stack goes quiet
@@ -39,11 +46,13 @@ arduino_bridge:
     require_auto_active: true
 
     # Drivetrain, for converting between m/s and the Arduino's spur RPM in both
-    # directions.  The Slash 4X4 reduces spur to wheel 2.85:1 whatever pinion is
-    # fitted.  Tire is the Traxxas 6764 Gravix 2.8" at a nominal 4.5" outer
-    # diameter - calibrate with a measured roll-out.
+    # directions.  Measured values and their provenance live in vehicle.yaml;
+    # these must agree with it.  Runtime-settable, so a calibration sweep does
+    # not need a restart.  The Slash 4X4 reduces spur to wheel 2.85:1 whatever pinion is
+    # fitted.  Tire is the Traxxas 6764 Gravix 2.8" (nominal 4.5" outer
+    # diameter); the value below is the A5 measured roll-out.
     spur_to_wheel_ratio: 2.85
-    tire_diameter: 0.1143   # meters
+    tire_diameter: 0.1132   # metres
 
     # Arduino speed controller, see "Speed controller tuning" in
     # jetson/README.md.  Output is throttle pulse microseconds (us) from the
@@ -64,8 +73,8 @@ arduino_bridge:
 
 cmd_vel_to_drive:
   ros__parameters:
-    wheelbase: 0.324               # Traxxas Slash 4X4, meters
-    max_speed: 8.0                 # m/s that maps to full throttle
+    wheelbase: 0.324               # Traxxas Slash 4X4, metres
+    max_speed: 8.0                 # m/s, linear.x is clamped to this
     max_steering_angle: 0.40       # rad at full lock
     min_speed_for_steering: 0.3    # floor speed for the bicycle model
     cmd_timeout: 0.3
@@ -73,16 +82,53 @@ cmd_vel_to_drive:
 
 sim_vehicle:
   ros__parameters:
-    # The simulated car holds the commanded velocity, and models a zero target
-    # as a coast rather than a zero wheel-speed command.  Lower deceleration
-    # makes the simulated Slash roll farther after the target returns to zero.
-    # Gazebo's tire contact brakes forward motion more than reverse, so these
-    # command-side values compensate to make world-space coast distance
-    # symmetric.
+    # Response envelope of the REAL car, from the Session B/C runs.  Every value
+    # here mirrors config/vehicle.yaml; see docs/characterization-results.md.
+    #
+    # The forward/reverse coast pair that used to live here is gone.  It was a
+    # command-side fudge for a Gazebo contact asymmetry (0.1 forward, 0.3
+    # reverse) and the car turns out to be symmetric to 3.3%, so one measured
+    # drag curve replaces both numbers.
     neutral_speed_deadband: 0.05  # m/s
-    neutral_coast_deceleration: 0.3  # m/s^2 fallback for both directions
-    forward_neutral_coast_deceleration: 0.1  # m/s^2
-    reverse_neutral_coast_deceleration: 0.3  # m/s^2
+    vehicle_mass: 3.599           # kg, A1
+    # m dv/dt = -(f0 + f1 v + f2 v^2): 0.74 / 0.87 / 1.00 m/s^2 at 1 / 2 / 3 m/s.
+    # The old pair was 7-10x too free, which is the single largest sim-to-car
+    # error the campaign found.
+    coast_f0: 2.18                # N
+    coast_f1: 0.47                # N/(m/s)
+    coast_f2: 0.0                 # N/(m/s)^2, below this test's resolution
+    max_acceleration: 3.0         # m/s^2, p90 of achieved accel below 2.5 m/s
+    # THE CAR HAS NO BRAKES.  Every non-zero brake limit tested stopped it
+    # SLOWER than coasting, because the ESC reads the reverse-side pulse as
+    # reverse drive.  Zero here means deceleration is coast-limited, which is
+    # what the car does.  Raise it only once the firmware brake path is fixed
+    # AND re-measured -- not because a simulated lap looks slow.
+    brake_deceleration: 0.0       # m/s^2 on top of coast drag
+    command_dead_time: 0.19       # s, Jetson command to first movement
+    understeer_gradient: 0.007    # rad/(m/s^2), B2 skidpad
+    # Measured effective steering angle vs normalized command.  Asymmetric by
+    # ~34% at matched command; the +/-1.0 ends are extrapolated, not measured
+    # (steer_authority ran too slowly to be usable).  Keep in step with
+    # vehicle.yaml steering.effective_angle_table.
+    steering_command_points: [-1.0, -0.5, 0.0, 0.5, 1.0]
+    steering_angle_points: [-0.512, -0.256, 0.0, 0.191, 0.382]
+    # Simulated tachometer.  It used to report a hard-coded rpm = 0, so a sim
+    # run logged an empty speed channel while the car logged ~1000 distinct
+    # values.  These mirror the firmware constants in src/arduino_rcm.ino; the
+    # sim reproduces its estimator, including the two behaviours that confuse
+    # people reading real telemetry -- zero until the SECOND revolution after a
+    # stop, and a hard floor at 60/0.4 = 150 spur RPM (~0.3 m/s) from the stall
+    # timeout.
+    tire_diameter: 0.1132         # m, A5
+    spur_to_wheel_ratio: 2.85
+    tach_window: 0.1              # s, TACH_WINDOW_US
+    tach_stall_timeout: 0.4       # s, TACH_STALL_US
+    tach_pulses_per_rev: 1        # one trigger magnet, so direction-blind
+    # Reported throttle pulse, from the measured steady-state feedforward.
+    # 1504 not 1500: the firmware's auto-mode centre is PctToPulseLength(128).
+    throttle_neutral_us: 1504.0
+    throttle_ks_us: 28.8
+    throttle_kv_us: 11.13
 
 path_follower:
   ros__parameters:

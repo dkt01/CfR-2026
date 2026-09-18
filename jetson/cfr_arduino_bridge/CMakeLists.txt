@@ -15,6 +15,7 @@ endif()
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 find_package(ament_cmake REQUIRED)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
 find_package(cfr_interfaces REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
@@ -73,7 +74,7 @@ install(TARGETS arduino_bridge_node cmd_vel_to_drive_node sim_vehicle_node path_
   RUNTIME DESTINATION bin
 )
 
-install(PROGRAMS src/teleport_api.py src/obstacle_randomizer_node.py
+install(PROGRAMS src/teleport_api.py src/maneuver_runner_node.py src/obstacle_randomizer_node.py
   src/start_signal_detector_node.py src/lap_counter_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
@@ -114,6 +115,28 @@ if(BUILD_TESTING)
   ament_add_gtest(test_drivetrain test/test_drivetrain.cpp)
   target_link_libraries(test_drivetrain cfr_arduino_protocol)
 
+  # Offline characterization analysis: trace parsers, fits, the run loader and
+  # the vehicle.yaml patcher.  Plain unittest, so it also runs as a bare script
+  # on a laptop with no test runner installed - which is where runs get analysed.
+  ament_add_pytest_test(test_characterize test/test_characterize.py)
+
+  # The Gazebo vehicle model is generated from config/vehicle.yaml into EVERY
+  # world in WORLD_SPAWN_POSES (speed_course.sdf and obstacle_course.sdf).
+  # This fails the build if someone edited one without regenerating the
+  # other, rather than letting a simulator quietly describe a different car.
+  find_package(ament_cmake_test REQUIRED)
+  # --check reports through its exit code and prints a human readable reason;
+  # it does not write a JUnit file, which ament_add_test otherwise insists on
+  # and fails the test for missing however the check itself came out.  No
+  # --world: omitting it checks every world the generator knows about.
+  ament_add_test(test_vehicle_model_up_to_date
+    GENERATE_RESULT_FOR_RETURN_CODE_ZERO
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/generate_vehicle_model.py"
+            --check
+            --vehicle "${CMAKE_CURRENT_SOURCE_DIR}/config/vehicle.yaml"
+    OUTPUT_FILE "${CMAKE_BINARY_DIR}/test_results/${PROJECT_NAME}/test_vehicle_model_up_to_date.txt"
+  )
+
   # start_signal_detector_node's color decision, which the test imports
   # straight out of src/ -- it is free of ROS, so it needs no workspace.
   ament_add_pytest_test(test_start_signal_detector test/test_start_signal_detector.py)
@@ -121,6 +144,12 @@ if(BUILD_TESTING)
   # lap_counter_node's crossing logic, imported straight out of src/ the same
   # way -- also free of ROS, so it also needs no workspace.
   ament_add_pytest_test(test_lap_counter test/test_lap_counter.py)
+
+  # maneuver_runner_node's arming/abort state machine -- unlike the two tests
+  # above, this one has no ROS-free module to import: it constructs a real
+  # rclpy Node and drives it with cfr_interfaces/nav_msgs messages on a fake
+  # clock, so it needs the built workspace rather than running standalone.
+  ament_add_pytest_test(test_maneuver_runner test/test_maneuver_runner.py)
 endif()
 
 ament_export_include_directories(include)

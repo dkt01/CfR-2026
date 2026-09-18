@@ -775,8 +775,7 @@ Zero is ambiguous between stopped, no sensor fitted, and a dead link; check
 The Arduino runs a feedforward plus PID loop from target spur RPM to throttle
 pulse every 20 ms. The control law, speed measurement, direction handling and
 braking are described in [Speed Control](../README.md#speed-control). Its gains
-are `arduino_bridge` parameters, and they are the only bridge parameters that
-take effect when changed at runtime:
+are `arduino_bridge` parameters that take effect when changed at runtime:
 
 | Parameter | Units | Meaning |
 | --------- | ----- | ------- |
@@ -790,6 +789,22 @@ take effect when changed at runtime:
 | `speed_brake_limit` | us, at most 440 | braking effort; `0` disables braking so the car coasts |
 | `speed_trace` | bool | have the Arduino emit a `T,` trace line every 20 ms |
 
+Three more bridge parameters are runtime-settable, for characterization runs
+that sweep them between steps and cannot afford a restart (a restart costs the
+Arduino handshake and, mid-run, the run directory):
+
+| Parameter | Units | Meaning |
+| --------- | ----- | ------- |
+| `speed_slew_rate` | m/s per second | `0` disables rate limiting. Raise it for step-response work: the production `2.0` takes 1.6 s to reach 3.2 m/s and would swamp a plant time constant near 0.5 s |
+| `spur_to_wheel_ratio` | - | must stay positive |
+| `tire_diameter` | m | must stay positive |
+
+The drivetrain pair is part of the gain conversion - the firmware works per 1000
+spur RPM - so changing either revalidates the gains against the new scaling and
+resends them. Everything else is launch-time only on purpose: the device, the
+safety clamps and the arming policy should not move under a car that is already
+armed.
+
 "us" is microseconds of throttle pulse. The bridge converts the rate gains into
 the firmware's per-1000-spur-RPM units, sends them tagged with a new sequence
 number, and resends until the Arduino echoes that number; `gains_applied` on
@@ -801,7 +816,19 @@ The defaults were tuned **with the car on blocks** (see the bench notes under
 the car adds several times the inertia plus rolling drag, so the feedforward
 terms will need to rise and the loop will respond more slowly than on blocks.
 
-A procedure for the ground, with the E-Stop in hand and plenty of room:
+The ground retune is now a characterization profile rather than a manual
+procedure - see [Characterization](#characterization). `tune_profile` drives the
+same speed sequence these gains were scored against on blocks, and
+`analyze_run.py` prints a row in the same format as the table below, so the
+ground numbers sit directly beside the bench ones. Sweep gains across runs:
+
+```bash
+ros2 launch cfr_arduino_bridge characterize.launch.py \
+    profile:=tune_profile gains:="speed_kp=24.0 speed_ki=10.0" label:=kp24ki10
+```
+
+The manual procedure, still valid if you would rather drive it by hand, with the
+E-Stop in hand and plenty of room:
 
 1. Log every controller tick to `rx_trace_path`:
    `ros2 param set /arduino_bridge speed_trace true`.
@@ -833,6 +860,91 @@ ros2 topic pub -r 20 /drive_cmd cfr_interfaces/msg/DriveCommand \
 feedforward, proportional, integral, derivative and total output in tenths of a
 microsecond, the requested pulse, the braking flag, and the dither duty out of
 256.
+
+## Characterization
+
+[`docs/characterization.md`](../docs/characterization.md) is the procedure for
+measuring the car so the Gazebo simulation can be a twin of it, and
+[`docs/field-card.md`](../docs/field-card.md) is the printable one-page version
+to take to the test site.
+
+Everything about it is built for testing away from a network: the car records
+locally because Wi-Fi drops out at range, the analysis needs nothing but a stock
+Python 3, and **no step requires reflashing the Arduino** - the whole campaign
+runs through the runtime `speed_*` parameters and the firmware's existing `D,`
+debug line.
+
+```bash
+ros2 launch cfr_arduino_bridge characterize.launch.py profile:=coastdown
+```
+
+One command, one profile name. The launch picks a run directory under
+`~/cfr_runs`, points the Arduino serial traces into it, and starts
+`maneuver_runner_node.py`, which **waits for E-Stop to be asserted and then
+cleared** before it moves the car. That sequence can only be completed by
+someone holding a working, connected E-Stop, which is the precondition worth
+enforcing before a car drives itself. Re-asserting E-Stop aborts the run.
+
+Straight-line profiles reverse themselves back to the start under odometry, so
+nobody walks the length of a bike path after every run - and averaging the two
+directions cancels the path's grade into the bargain.
+
+| Profile | Session | Measures |
+| ------- | ------- | -------- |
+| `zed_static` | parking lot | ZED odometry noise and drift; never arms, the car cannot move |
+| `steer_authority` | parking lot | effective steering angle per command, and minimum turn radius |
+| `skidpad` | parking lot | understeer gradient, plus a lower bound on lateral grip |
+| `step_steer` | parking lot | yaw response, validating the inertia estimate |
+| `pulse_staircase` | 60 m straight | open-loop throttle pulse to ground speed |
+| `coastdown` | 60 m straight | rolling, viscous and aero resistance |
+| `brake_sweep` | 60 m straight | braking authority against `speed_brake_limit` |
+| `tune_profile` | 60 m straight | closed-loop scoring, matching the on-blocks table |
+
+Rehearse the procedure against Gazebo before the car ever sees it:
+`use_sim:=true require_estop_cycle:=false` swaps in `sim_vehicle_node` (bringing
+up its own world), exercising arming, gains handshake, limits and output end to
+end - but with no E-Stop interlock and no plant to characterize. See
+[Dry run in simulation](../docs/characterization.md#dry-run-in-simulation).
+
+Afterwards:
+
+```bash
+./scripts/sync_runs.sh                        # pull runs off the Orin
+./scripts/analyze_run.py runs/<run> --mass 4.7
+./scripts/apply_vehicle_patch.py runs/<run>   # fold results into vehicle.yaml
+./scripts/generate_vehicle_model.py           # push them into the Gazebo world
+```
+
+### `config/vehicle.yaml`
+
+The single source of truth for vehicle geometry, mass, actuator and sensor
+behaviour. Before it existed the wheelbase was a bare literal in five places,
+the steering limit in five more, and the Gazebo wheel radius disagreed with the
+drivetrain tire diameter by 3.6% without anything noticing.
+
+Every entry carries a **provenance** tag - `measured`, `estimated` or `guess` -
+so an unmeasured number is visible rather than implied. `apply_vehicle_patch.py`
+stamps each value it updates with the run that justifies it and the date; a
+number in that file should always be able to answer "says who?".
+
+`scripts/generate_vehicle_model.py` writes the `<model name="slash">` block of
+`worlds/speed_course.sdf` **and** `worlds/obstacle_course.sdf` from it (each
+world keeps its own spawn point; everything else about the car is shared), and
+`--check` runs in the test suite, so a `vehicle.yaml` edit that nobody
+regenerated fails the build instead of quietly leaving the simulator
+describing a different car.
+
+The vehicle includes a suspension DOF per corner (a damped, sprung prismatic
+joint between the chassis and each wheel's upright) so the obstacle course's
+potholes, gravel and ramps actually excite the chassis instead of being
+transmitted straight through rigidly-mounted wheels. The rates describe the
+stock Slash 4X4 Ultimate hardware - GTR long shocks on #7444 springs at the
+front, XX-long on the stiffer #7446 at the rear, all four collars at maximum
+preload - derived from the car's own measured mass and ride height rather than
+from a catalog rate Traxxas does not publish. They are tagged `estimated`;
+characterization's A8 measures them directly, and `vehicle.yaml` writes out
+every assumption A8 has to check. See
+[docs/characterization.md](../docs/characterization.md).
 
 ## Deploy from a development host
 
