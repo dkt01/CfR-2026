@@ -17,6 +17,7 @@ this for a real point-cloud-derived lidar later.
 from __future__ import annotations
 
 import math
+import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 
@@ -45,8 +46,14 @@ class Bale:
 
 def parse_bales(sdf_path: str) -> list[Bale]:
     """Parse every bale_<N>_collision box in the course_bales model."""
-    tree = ET.parse(sdf_path)
-    root = tree.getroot()
+    with open(sdf_path, encoding="utf-8") as handle:
+        text = handle.read()
+    # The world files' prose comments use "--" as a dash, which is illegal
+    # inside an XML comment body and trips ElementTree's strict parser
+    # (Gazebo's own SDF parser is more lenient about it). The comments carry
+    # no geometry, so stripping them before parsing is safe.
+    text = re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
+    root = ET.fromstring(text)
     bales_link = root.find(".//model[@name='course_bales']/link[@name='bales']")
     if bales_link is None:
         raise ValueError(f"course_bales/bales link not found in {sdf_path}")

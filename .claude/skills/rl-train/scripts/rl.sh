@@ -10,6 +10,7 @@
 #   rl.sh start [--course speed|obstacle] [--steps N] [--dir NAME]
 #               [--resume-from PATH] [--sensors|--no-sensors] [--curriculum] [--force]
 #   rl.sh status [--dir NAME]
+#   rl.sh tui [--dir NAME] [--interval SECONDS] [--once]  # live full-screen dashboard
 #   rl.sh logs [--lines N]
 #   rl.sh eval --checkpoint PATH [--episodes N]
 #   rl.sh stop
@@ -46,6 +47,20 @@ REPO_DIR="$(cd "$SCRIPT_DIR" && git rev-parse --show-toplevel)"
 RL_DIR="$REPO_DIR/rl/bale_follower"
 
 PYTHON_BIN="$(command -v python3 || command -v python)"
+
+# MSYS2_ARG_CONV_EXCL="*" above (needed so docker exec sees container-side
+# paths unmangled) also stops MSYS from converting host-side paths for any
+# OTHER command, including this native Windows python.exe -- it then gets a
+# POSIX-looking path it cannot open. Route host paths through cygpath before
+# handing them to $PYTHON_BIN; on a non-MSYS host cygpath does not exist and
+# the path is passed through as-is.
+winpath() {
+    if command -v cygpath >/dev/null 2>&1; then
+        cygpath -w "$1"
+    else
+        printf '%s' "$1"
+    fi
+}
 
 log() { echo "[rl.sh] $*"; }
 die() { echo "[rl.sh] error: $*" >&2; exit 1; }
@@ -158,7 +173,7 @@ start() {
     done
     [ "$course" = speed ] || [ "$course" = obstacle ] || die "--course must be speed or obstacle"
 
-    if ! "$PYTHON_BIN" "$SCRIPT_DIR/course_preflight.py" --course "$course" --repo "$REPO_DIR"; then
+    if ! "$PYTHON_BIN" "$(winpath "$SCRIPT_DIR/course_preflight.py")" --course "$course" --repo "$(winpath "$REPO_DIR")"; then
         [ "$force" = true ] || die "preflight failed; fix the checks above or pass --force to start anyway"
         log "preflight failed but --force was given; starting"
     fi
@@ -219,6 +234,10 @@ start() {
 
 # ---- status ---------------------------------------------------------------
 
+newest_checkpoint_dir() {
+    ls -td "$RL_DIR"/checkpoints* 2>/dev/null | head -1 || true
+}
+
 status() {
     local dir=""
     while [ $# -gt 0 ]; do
@@ -246,14 +265,39 @@ status() {
     log "gz servers in container: ${servers:-0}$([ "${servers:-0}" -gt 1 ] && echo '  <-- duplicates corrupt the run' || true)"
 
     if [ -z "$dir" ]; then
-        dir="$(ls -td "$RL_DIR"/checkpoints* 2>/dev/null | head -1 || true)"
+        dir="$(newest_checkpoint_dir)"
         [ -n "$dir" ] || { log "no checkpoint directory found under rl/bale_follower"; return 0; }
     else
         dir="$RL_DIR/$dir"
     fi
 
     echo
-    "$PYTHON_BIN" "$SCRIPT_DIR/progress.py" --dir "$dir" --logs "$RL_DIR"
+    "$PYTHON_BIN" "$(winpath "$SCRIPT_DIR/progress.py")" --dir "$(winpath "$dir")" --logs "$(winpath "$RL_DIR")"
+}
+
+# ---- tui ------------------------------------------------------------------
+
+tui() {
+    local dir="" interval=5 extra=()
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --dir) dir="$2"; shift 2 ;;
+            --interval) interval="$2"; shift 2 ;;
+            --once) extra+=("--once"); shift ;;
+            *) die "unknown tui option '$1'" ;;
+        esac
+    done
+
+    if [ -z "$dir" ]; then
+        dir="$(newest_checkpoint_dir)"
+        [ -n "$dir" ] || die "no checkpoint directory found under rl/bale_follower"
+    else
+        dir="$RL_DIR/$dir"
+    fi
+
+    "$PYTHON_BIN" "$(winpath "$SCRIPT_DIR/tui.py")" --dir "$(winpath "$dir")" \
+        --logs "$(winpath "$RL_DIR")" --root "$(winpath "$RL_DIR")" \
+        --container "$CONTAINER" --interval "$interval" "${extra[@]}"
 }
 
 # ---- logs -----------------------------------------------------------------
@@ -320,6 +364,7 @@ case "$command" in
     setup) setup "$@" ;;
     start) start "$@" ;;
     status) status "$@" ;;
+    tui) tui "$@" ;;
     logs) logs "$@" ;;
     eval) evaluate "$@" ;;
     stop) stop "$@" ;;

@@ -4,20 +4,21 @@ env:
   lidar_fov_deg: 180.0
   lidar_max_range: 6.0
   control_hz: 10.0
-  # No cap: the policy picks its own speed everywhere, fast on the straights
-  # and slow through the hairpins, rather than being held to a ceiling.
-  max_speed: 2.5
-  # Boost disabled: max_speed is the only limit and the policy chooses.
-  straight_speed: 0.0
+  max_speed: 2.0
+  straight_speed: 4.5
   reverse_speed: 0.5
   episode_time_limit_s: 60.0
   stuck_window_s: 5.0
   stuck_distance: 0.5
   randomize_start: true
   odom_timeout_s: 2.0
-  # analytic matches v7, so this run is comparable to it. The validated
-  # cloud path (scan_source: cloud + CFR_SENSORS=1) is for sim-to-real.
-  scan_source: cloud
+  # Matches the rl_straight_boost checkpoint this run resumes from -- a
+  # resume under scan_source: cloud (different noise/statistics) or a
+  # different max_speed/straight_speed (the action decode's speed mapping
+  # itself) would not be a refinement of that policy, it would be training
+  # a new one on top of its weights. The validated cloud path (scan_source:
+  # cloud + CFR_SENSORS=1) is for a future sim-to-real pass, not this one.
+  scan_source: analytic
   traction: 0.6
   max_steering_rate: 3.5
 zed_sim:

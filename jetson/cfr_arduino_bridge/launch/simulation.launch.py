@@ -191,6 +191,10 @@ def generate_launch_description():
             # ackermann plugin's odometry above drifts and is never
             # corrected, exactly as the real camera's ~/odom is not.
             "/model/slash/pose@geometry_msgs/msg/PoseStamped[gz.msgs.Pose",
+            # Same ground-truth pose training.launch.py bridges, for anything
+            # (run_policy.py, path_racer.py's tf pose source) built against
+            # that topic instead of /zed/zed_node/pose.
+            "/world/cfr_speed_course/dynamic_pose/info@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V",
             "/zed/gz/rgbd/image@sensor_msgs/msg/Image[gz.msgs.Image",
             "/zed/gz/rgbd/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo",
             "/zed/gz/rgbd/depth_image@sensor_msgs/msg/Image[gz.msgs.Image",

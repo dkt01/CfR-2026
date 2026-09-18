@@ -19,6 +19,7 @@ logic is worth more than a tidier command line.
 .claude/skills/rl-train/scripts/rl.sh setup                      # once per machine
 .claude/skills/rl-train/scripts/rl.sh start --steps 200000 --dir checkpoints_v10
 .claude/skills/rl-train/scripts/rl.sh status --dir checkpoints_v10
+.claude/skills/rl-train/scripts/rl.sh tui --dir checkpoints_v10   # live full-screen dashboard
 .claude/skills/rl-train/scripts/rl.sh logs --lines 60
 .claude/skills/rl-train/scripts/rl.sh eval --checkpoint checkpoints_v10/best_model.zip
 .claude/skills/rl-train/scripts/rl.sh stop
@@ -93,6 +94,18 @@ distance, best so far and how long ago, the slope in metres per 10k steps, and
 any restart lines. Keep it to a few lines; the user is waiting out hours, not
 reading a report.
 
+`rl.sh tui` is the same data as `rl.sh status`, redrawn every few seconds
+(`--interval`) as a full-screen dashboard instead of a one-shot report: a step
+gauge against the run's own logged target with an ETA from the actual
+checkpoint cadence (not a theoretical wall-clock guess), a sparkline of the
+deterministic-eval trend, and — the thing a single `status` call can't show —
+a sparkline and table across every run that has ever produced a
+`best_model.json` (`checkpoints_*/` and `models/*/`), so a plateau reads
+against "did the last run already beat this" rather than in isolation. It
+shells out to `docker` directly (not through `docker exec` inside a bash
+string), so it is not subject to the MSYS path-mangling note below. Leave it
+running in its own terminal; `Ctrl+C` to stop it, `--once` for a single frame.
+
 **Only the deterministic eval counts as progress.** `ep_rew_mean` is the
 stochastic sampled policy; deployment runs the Gaussian mean, and the two come
 apart — the v3 run had a healthy training curve while the mean action floored
@@ -132,6 +145,62 @@ checkpoint stays comparable to what it was trained under.
 Five episodes is a small sample with randomized starts. Quote the range and the
 clean-episode distance, not the best single number — REPORT.md's v6 entry is
 the precedent (112-120 m mean, ~130 m clean).
+
+## Watching a checkpoint drive in the browser
+
+`rl.sh eval` never shows the car in the viewer (see Notes) -- it runs inside
+`cfr-rl`, an isolated container on its own `ROS_DOMAIN_ID`. To actually watch a
+checkpoint drive, run `run_policy.py` against the `sim-launch` skill's `cfr-sim`
+container instead (`sim.sh start --course speed --sensors`; `--sensors` is
+required, it's what brings up `start_signal_detector`). None of this is
+wrapped in a script yet, and every piece of it has bitten a session before:
+
+- **`cfr-sim` has no Python RL stack of its own.** `stable_baselines3`/`torch`
+  have to be installed there directly (same recipe as `setup` above:
+  `apt-get install python3-venv python3-pip`, `python3 -m venv
+  --system-site-packages`, then pip). Do NOT default to putting that venv
+  under `/repo/rl/bale_follower/.venv` in `cfr-sim` the way `cfr-rl` does --
+  `cfr-rl`'s venv is a **named Docker volume** precisely so pip's tens of
+  thousands of small files never touch the Windows bind mount; `cfr-sim` has
+  no such volume mounted, so a venv built there under `/repo` unpacks through
+  the bind mount and each package install (torch especially) can take 20-40+
+  minutes instead of 1-2. Build it at a container-local path instead (e.g.
+  `/opt/rl-venv`, `--system-site-packages`) -- reading the sibling `.py`
+  modules from `/repo` at import time is fine, only writing thousands of
+  small package files there is slow.
+- **Plain `pip install torch` pulls the CUDA stack even for the `+cpu`
+  wheel.** `triton` (a torch dependency) drags in `nvidia-cublas`,
+  `nvidia-nccl-cu13`, `nvidia-nvshmem-cu13` and half a dozen more -- several
+  extra GB, unused on CPU, and the reason a "quick" torch install can look
+  hung. `pip uninstall -y triton nvidia-cublas nvidia-cuda-cupti
+  nvidia-cuda-nvrtc nvidia-cuda-runtime nvidia-cufft nvidia-cufile
+  nvidia-curand nvidia-cusparse nvidia-cusparselt-cu13 nvidia-nccl-cu13
+  nvidia-nvjitlink nvidia-nvshmem-cu13 nvidia-nvtx` right after, then install
+  `stable-baselines3` (bare, not `[extra]`, if opencv/tensorboard aren't
+  already needed) so it doesn't get reintroduced.
+- **`run_policy.py` now gates on the start signal and the lap counter**
+  (`--free-run` to skip waiting for `/start_signal_detector/go`;
+  `--go-topic`/`--done-topic` to override the defaults). It holds zero
+  `/cmd_vel` until the signal goes green and stops for good once
+  `/lap_counter/done` latches true -- previously it had no notion of either
+  and just drove the instant it was launched, forever.
+- **`path_follower` fights it on `/cmd_vel`.** See the `sim-launch` skill's
+  note on `keep_auto_active_when_idle` -- run `ros2 param set /path_follower
+  keep_auto_active_when_idle false` after every `sim.sh start`, or the car
+  never moves and there is no error to point at why.
+- **`bale_geometry.parse_bales` used to choke on the speed course's own SDF**
+  (`xml.etree.ElementTree.ParseError: not well-formed`) whenever a world-file
+  prose comment used `--` as a dash -- legal to Gazebo's own lenient SDF
+  parser, illegal inside a strict XML comment. Fixed by stripping `<!--...-->`
+  before parsing; if this error resurfaces after an SDF edit, the fix is a
+  comment, not the geometry.
+- **`casadi`'s native extension is fragile to install through the bind mount**
+  (a partial/interrupted install leaves `ModuleNotFoundError: No module named
+  'casadi.casadi'`) and `run_policy.py` used to import it unconditionally at
+  module load even though `--smoother` (the only thing that needs it) is off
+  by default for v6+ checkpoints. The import is now deferred into the
+  `--smoother` branch, so a deployment that never passes `--smoother` doesn't
+  need `casadi` installed at all.
 
 ## The obstacle course
 

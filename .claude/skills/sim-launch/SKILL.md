@@ -85,3 +85,29 @@ even when nothing inside is serving them.
   which it normally does since it's committed to not require setup on a
   fresh clone... unless `node_modules` was gitignored and this is a truly
   fresh checkout, in which case run `npm install` once.
+- **On Windows, prefix any manual `docker exec` against this container with
+  `MSYS_NO_PATHCONV=1`.** Git Bash's MSYS layer rewrites a leading `/repo/...`
+  argument into a Windows path (`C:/Program Files/Git/repo/...`) before
+  handing it to the native `docker.exe`, so the exec's own command string
+  breaks with `bash: line 1: C:/Program: No such file or directory` --
+  confusingly, commands run through this tool's own backgrounding path are
+  unaffected (they don't go through the same argv translation), so the bug
+  only bites plain foreground `docker exec` calls. `sim.sh` itself is immune
+  (it calls docker from inside a script), this only matters for ad hoc
+  `docker exec cfr-sim ...` debugging.
+- **Driving the car with something other than `path_follower_node` (e.g.
+  `run_policy.py`, a hand-rolled controller) fights `path_follower` on
+  `/cmd_vel` unless you disarm it first.** `arduino_bridge.yaml` sets
+  `keep_auto_active_when_idle: true`, so `path_follower` publishes idle-zero
+  Twists at its own control rate even with no goal, and since it and the
+  other driver are two independent publishers on the same topic, path_follower's
+  zeros silently win some of the time (looks exactly like "the car won't move" with no
+  error anywhere). Fix: `ros2 param set /path_follower keep_auto_active_when_idle false`
+  once the sim is up. Also, `simulation.launch.py`'s own bridge list does
+  NOT include `/world/<world>/dynamic_pose/info` (the ground-truth TF pose
+  that `run_policy.py`/`path_racer.py` read by default, and that
+  `training.launch.py` bridges separately) -- anything built against that
+  topic gets no pose at all under this launch file and silently never
+  publishes a command. Both are one-time fixes per sim session; the pose
+  bridge fix has to be a launch-file change (already applied), the
+  param-set has to be redone after every `sim.sh stop`/`start` cycle.

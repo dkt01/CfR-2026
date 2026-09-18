@@ -19,16 +19,18 @@ import math
 import threading
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile
 from stable_baselines3 import PPO
+from std_msgs.msg import Bool
 from tf2_msgs.msg import TFMessage
 
 import bale_geometry
-from casadi_smoother import CommandSmoother, smoother_from_metadata
 from speed_boost import BoostConfig, BoostLimiter
 from env import (
     MAX_STEERING_ANGLE,
@@ -37,6 +39,12 @@ from env import (
     _wrap_to_pi,
     _yaw_from_quaternion,
 )
+
+if TYPE_CHECKING:
+    # casadi is only needed for the --smoother legacy path (v5 and earlier
+    # checkpoints); this import never runs, it only gives the CommandSmoother
+    # annotation below something real to resolve against.
+    from casadi_smoother import CommandSmoother
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SDF = REPO_ROOT / "jetson/cfr_arduino_bridge/worlds/speed_course.sdf"
@@ -50,11 +58,26 @@ class PolicyRunner(Node):
         env_config: dict,
         world_name: str,
         smoother: CommandSmoother | None = None,
+        require_start_signal: bool = True,
+        go_topic: str = "/start_signal_detector/go",
+        done_topic: str = "/lap_counter/done",
     ) -> None:
         super().__init__("bale_follower_policy")
         self.model = model
         self.bales = bales
         self.smoother = smoother
+
+        # Gating on the same latched signals the rest of the stack uses
+        # (start_signal_detector's ~/go, lap_counter's ~/done), so the
+        # policy waits behind the line instead of driving the instant it is
+        # launched, and stops once the lap counter says the run is over --
+        # neither of which the policy itself has any notion of.
+        self.armed = not require_start_signal
+        self.finished = False
+        latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        if require_start_signal:
+            self.create_subscription(Bool, go_topic, self._on_go, latched)
+        self.create_subscription(Bool, done_topic, self._on_done, latched)
         self.num_lidar_bins = env_config["num_lidar_bins"]
         self.lidar_fov_deg = env_config["lidar_fov_deg"]
         self.lidar_max_range = env_config["lidar_max_range"]
@@ -93,12 +116,36 @@ class PolicyRunner(Node):
         self._pose_history: list[tuple[float, float, float]] = []
         self._recovery_until = 0.0
         self._recovery_delta = 0.0
+        self._recovery_start = 0.0
         self._no_trigger_until = 0.0
-        # Escalation: re-sticking right after a recovery means the policy is
-        # driving straight back into the same bale, so each quick re-trigger
-        # doubles the reverse time (up to 4x) to break the oscillation.
-        self._last_recovery_end = 0.0
+        # Escalation keys off actual displacement, not wall-clock spacing
+        # between triggers: a car ping-ponging out of a pocket and straight
+        # back into it re-triggers on a roughly constant cycle, so a
+        # time-since-last-recovery gate (the previous approach) never sees
+        # a long-enough gap to reset and never climbs past 2x either --
+        # measured on the speed course's first hairpin: real trigger gaps of
+        # 4.6-12.1 s straddled a 6 s cutoff randomly, escalation stayed
+        # between 1x-2x for over 90 s straight and the car never broke free.
+        # Tracking net progress since the last recovery began answers the
+        # actual question ("did that reverse help?") instead of guessing at
+        # it from timing.
+        # A small wiggle inside the same pocket can clear the raw 0.12 m
+        # stuck_distance gate without netting real progress -- measured on
+        # the speed course's first turn: escalation reset to 0 after a
+        # partial reverse, then re-triggered within 4 s at the same spot.
+        # Half a car length is a better bar for "that recovery worked."
+        self.min_recovery_progress = 0.6
+        self.max_escalation_count = 5  # 2**5 = 32x base duration, ~38 s reverse
+        self._recovery_anchor: tuple[float, float] | None = None
+        self._escalation_count = 0
         self._escalation = 1.0
+        # Phase 1 (straight reverse, no steer) clears the pocket the nose is
+        # wedged into before phase 2 points the car away -- steering while
+        # still jammed against the obstacle just re-noses into the same spot,
+        # which is what a fixed nearest-scan bearing does when the car is
+        # stuck symmetrically (a corner or a pocket, not a single wall). Only
+        # engaged once plain escalation has already failed twice.
+        self.straight_phase_fraction = 0.4
 
         # Same ground-truth pose source as training -- the Ackermann plugin's
         # odometry is dead-reckoned and drifts from the true pose.
@@ -107,7 +154,22 @@ class PolicyRunner(Node):
         )
         self._cmd_pub = self.create_publisher(Twist, "/cmd_vel", 10)
         self.create_timer(1.0 / self.control_hz, self._on_control_tick)
-        self.get_logger().info("bale-following policy ready, waiting for pose")
+        if self.armed:
+            self.get_logger().info("bale-following policy ready, waiting for pose")
+        else:
+            self.get_logger().info(
+                f"bale-following policy ready, waiting for pose and start signal on {go_topic}"
+            )
+
+    def _on_go(self, message: Bool) -> None:
+        if message.data and not self.armed:
+            self.get_logger().info("start signal latched; driving")
+        self.armed = self.armed or message.data
+
+    def _on_done(self, message: Bool) -> None:
+        if message.data and not self.finished:
+            self.get_logger().info("lap counter done; stopping")
+        self.finished = message.data
 
     def _on_pose(self, msg: TFMessage) -> None:
         if not msg.transforms:
@@ -135,36 +197,84 @@ class PolicyRunner(Node):
             return False
         return math.hypot(x - oldest[1], y - oldest[2]) < self.stuck_distance
 
-    def _start_recovery(self, now: float, scan: np.ndarray) -> None:
-        # Steer toward the side the nearest obstacle is on: in reverse the
-        # nose swings away from the wheels' direction. Bin 0 is the rightmost
-        # ray, positive bearings are left.
-        nearest = int(np.argmin(scan))
-        half_fov = math.radians(self.lidar_fov_deg) / 2.0
-        bearing = -half_fov + nearest * 2.0 * half_fov / max(1, self.num_lidar_bins - 1)
-        self._recovery_delta = math.copysign(
-            MAX_STEERING_ANGLE, bearing if abs(bearing) > 1e-3 else 1.0
-        )
-        if now - self._last_recovery_end < 6.0:
-            self._escalation = min(self._escalation * 2.0, 4.0)
+    def _start_recovery(self, now: float, x: float, y: float, scan: np.ndarray) -> None:
+        if self._recovery_anchor is not None:
+            progress = math.hypot(
+                x - self._recovery_anchor[0], y - self._recovery_anchor[1]
+            )
         else:
-            self._escalation = 1.0
-        self._recovery_until = now + self.recovery_duration_s * self._escalation
+            progress = math.inf
+        if progress < self.min_recovery_progress:
+            self._escalation_count = min(
+                self._escalation_count + 1, self.max_escalation_count
+            )
+        else:
+            self._escalation_count = 0
+        self._recovery_anchor = (x, y)
+        self._escalation = 2.0**self._escalation_count
+
+        if self._escalation_count >= 2:
+            # Plain escalation already failed twice: alternate the escape
+            # side deterministically instead of trusting the nearest-scan
+            # bearing, which is exactly the signal that kept picking a side
+            # that walked the car straight back into the same pocket.
+            sign = 1.0 if self._escalation_count % 2 == 0 else -1.0
+        else:
+            # Steer toward the side the nearest obstacle is on: in reverse
+            # the nose swings away from the wheels' direction. Bin 0 is the
+            # rightmost ray, positive bearings are left.
+            nearest = int(np.argmin(scan))
+            half_fov = math.radians(self.lidar_fov_deg) / 2.0
+            bearing = -half_fov + nearest * 2.0 * half_fov / max(
+                1, self.num_lidar_bins - 1
+            )
+            sign = math.copysign(1.0, bearing if abs(bearing) > 1e-3 else 1.0)
+        self._recovery_delta = sign * MAX_STEERING_ANGLE
+
+        duration = self.recovery_duration_s * self._escalation
+        self._recovery_start = now
+        self._recovery_until = now + duration
+        phase = (
+            f"{self.straight_phase_fraction * duration:.1f}s straight + "
+            f"{(1 - self.straight_phase_fraction) * duration:.1f}s steered"
+            if self._escalation_count >= 2
+            else f"{duration:.1f}s steered"
+        )
         self.get_logger().info(
-            f"stuck (moved <{self.stuck_distance} m in {self.stuck_window_s} s); "
-            f"reversing with steer {self._recovery_delta:+.2f} rad"
+            f"stuck (moved <{self.stuck_distance} m in {self.stuck_window_s} s, "
+            f"escalation {self._escalation_count}); reversing {phase}, "
+            f"steer {self._recovery_delta:+.2f} rad"
         )
 
-    def _publish_recovery(self) -> None:
+    def _publish_recovery(self, now: float) -> None:
         twist = Twist()
         twist.linear.x = -self.recovery_reverse_speed
-        twist.angular.z = (twist.linear.x / WHEELBASE) * math.tan(self._recovery_delta)
+        duration = self._recovery_until - self._recovery_start
+        elapsed = now - self._recovery_start
+        straight_phase = (
+            self._escalation_count >= 2
+            and elapsed < self.straight_phase_fraction * duration
+        )
+        delta = 0.0 if straight_phase else self._recovery_delta
+        twist.angular.z = (twist.linear.x / WHEELBASE) * math.tan(delta)
         self._cmd_pub.publish(twist)
 
     def _on_control_tick(self) -> None:
         with self._lock:
             pose = self._pose
         if pose is None:
+            return
+
+        if self.finished:
+            self._cmd_pub.publish(Twist())
+            return
+        if not self.armed:
+            self._cmd_pub.publish(Twist())
+            # Don't accumulate stuck/speed history while held at the line --
+            # it would read as "hasn't moved in stuck_window_s" the instant
+            # the signal goes green.
+            self._prev_pose = pose
+            self._pose_history.clear()
             return
 
         x, y, yaw = pose
@@ -188,7 +298,7 @@ class PolicyRunner(Node):
 
         now = time.monotonic()
         if now < self._recovery_until:
-            self._publish_recovery()
+            self._publish_recovery(now)
             return
         if (
             self._recovery_until
@@ -198,12 +308,11 @@ class PolicyRunner(Node):
             # reversed state, and give the policy a grace period to move off.
             self._pose_history.clear()
             self._no_trigger_until = now + self.recovery_cooldown_s
-            self._last_recovery_end = now
             if self.smoother is not None:
                 self.smoother.reset()
         if self._check_stuck(now, x, y):
-            self._start_recovery(now, scan)
-            self._publish_recovery()
+            self._start_recovery(now, x, y, scan)
+            self._publish_recovery(now)
             return
 
         observation = np.concatenate(
@@ -267,6 +376,23 @@ def main() -> None:
         help="disable the scripted reverse-out stuck recovery",
     )
     parser.add_argument(
+        "--free-run",
+        action="store_true",
+        help="drive immediately instead of waiting for start_signal_detector's "
+        "~/go (matching lap_counter's free_run); still stops on ~/done",
+    )
+    parser.add_argument(
+        "--go-topic",
+        default="/start_signal_detector/go",
+        help="latched std_msgs/Bool that arms driving",
+    )
+    parser.add_argument(
+        "--done-topic",
+        default="/lap_counter/done",
+        help="latched std_msgs/Bool that stops driving once the target lap "
+        "count is reached",
+    )
+    parser.add_argument(
         "--max-speed",
         type=float,
         default=None,
@@ -305,6 +431,11 @@ def main() -> None:
 
     smoother = None
     if args.smoother and not args.no_smoother:
+        # Imported lazily: casadi is only needed for this legacy path (v5
+        # and earlier checkpoints), so a deployment running a v6+ checkpoint
+        # without --smoother never needs casadi installed at all.
+        from casadi_smoother import smoother_from_metadata
+
         # Same construction evaluate.py uses, so "watch it drive" and the
         # metrics run send identical commands.
         smoother = smoother_from_metadata(
@@ -320,7 +451,16 @@ def main() -> None:
         raise SystemExit(f"could not start world '{args.world_name}' running")
 
     rclpy.init()
-    node = PolicyRunner(model, bales, env_config, args.world_name, smoother)
+    node = PolicyRunner(
+        model,
+        bales,
+        env_config,
+        args.world_name,
+        smoother,
+        require_start_signal=not args.free_run,
+        go_topic=args.go_topic,
+        done_topic=args.done_topic,
+    )
     if args.no_recovery:
         node.recovery_enabled = False
     try:
