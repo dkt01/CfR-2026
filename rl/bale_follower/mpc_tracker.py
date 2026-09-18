@@ -81,11 +81,11 @@ class MpcTracker:
         a = opti.variable(n)
         delta = opti.variable(n)
 
-        state0 = opti.parameter(4)      # x, y, yaw, v
-        delta0 = opti.parameter()       # last applied steering, for rate limit
-        ref_xy = opti.parameter(n, 2)   # reference points, one per step
+        state0 = opti.parameter(4)  # x, y, yaw, v
+        delta0 = opti.parameter()  # last applied steering, for rate limit
+        ref_xy = opti.parameter(n, 2)  # reference points, one per step
         ref_v = opti.parameter(n)
-        v_floor = opti.parameter()      # curvature-dependent minimum speed
+        v_floor = opti.parameter()  # curvature-dependent minimum speed
 
         opti.subject_to(x[0] == state0[0])
         opti.subject_to(y[0] == state0[1])
@@ -103,24 +103,36 @@ class MpcTracker:
             )
             opti.subject_to(v[k + 1] == v[k] + a[k] * c.dt)
             opti.subject_to(opti.bounded(-a_max, a[k], a_max))
-            opti.subject_to(opti.bounded(-c.max_steering_angle, delta[k], c.max_steering_angle))
+            opti.subject_to(
+                opti.bounded(-c.max_steering_angle, delta[k], c.max_steering_angle)
+            )
             prev = delta0 if k == 0 else delta[k - 1]
             opti.subject_to(opti.bounded(-rate, delta[k] - prev, rate))
             lateral = v[k] ** 2 * casadi.tan(delta[k]) / c.wheelbase
             opti.subject_to(lateral**2 <= a_max**2)
 
             w_pos = c.w_terminal if k == n - 1 else c.w_position
-            cost += w_pos * ((x[k + 1] - ref_xy[k, 0]) ** 2 + (y[k + 1] - ref_xy[k, 1]) ** 2)
+            cost += w_pos * (
+                (x[k + 1] - ref_xy[k, 0]) ** 2 + (y[k + 1] - ref_xy[k, 1]) ** 2
+            )
             cost += c.w_speed * (v[k + 1] - ref_v[k]) ** 2
             cost += c.w_accel * a[k] ** 2
             cost += c.w_steer_rate * (delta[k] - prev) ** 2
         opti.subject_to(opti.bounded(v_floor, v[1:], c.max_speed))
-        opti.subject_to(opti.bounded(0.0, v[0], c.max_speed))  # current state may be slower
+        opti.subject_to(
+            opti.bounded(0.0, v[0], c.max_speed)
+        )  # current state may be slower
         opti.minimize(cost)
         opti.solver(
             "ipopt",
-            {"print_time": False, "ipopt.print_level": 0, "ipopt.sb": "yes",
-             "ipopt.max_iter": 60, "ipopt.tol": 1e-3, "ipopt.acceptable_tol": 1e-2},
+            {
+                "print_time": False,
+                "ipopt.print_level": 0,
+                "ipopt.sb": "yes",
+                "ipopt.max_iter": 60,
+                "ipopt.tol": 1e-3,
+                "ipopt.acceptable_tol": 1e-2,
+            },
         )
 
         self._opti = opti
@@ -132,8 +144,14 @@ class MpcTracker:
         self._warm = None
 
     def solve(
-        self, x: float, y: float, yaw: float, v: float,
-        ref_xy: np.ndarray, ref_v: np.ndarray, ref_curvature: float = 0.0,
+        self,
+        x: float,
+        y: float,
+        yaw: float,
+        v: float,
+        ref_xy: np.ndarray,
+        ref_v: np.ndarray,
+        ref_curvature: float = 0.0,
     ) -> tuple[float, float] | None:
         """One tick. Returns (commanded speed, steering angle) or None on failure.
 
@@ -196,13 +214,17 @@ if __name__ == "__main__":
         assert lateral <= config.traction * GRAVITY * 1.05, "friction circle violated"
         # crude plant: apply the command exactly for one dt
         x, y, yaw, v = state
-        state = [x + speed * math.cos(yaw) * config.dt,
-                 y + speed * math.sin(yaw) * config.dt,
-                 yaw + speed / config.wheelbase * math.tan(delta) * config.dt,
-                 speed]
+        state = [
+            x + speed * math.cos(yaw) * config.dt,
+            y + speed * math.sin(yaw) * config.dt,
+            yaw + speed / config.wheelbase * math.tan(delta) * config.dt,
+            speed,
+        ]
     elapsed_ms = (time.perf_counter() - start) / ticks * 1000
     error = math.hypot(state[0] - ref[-1, 0], state[1] - ref[-1, 1])
-    print(f"arc tracking: final offset {error:.2f} m from horizon end, "
-          f"{elapsed_ms:.1f} ms/solve (budget 50 ms at 20 Hz)")
+    print(
+        f"arc tracking: final offset {error:.2f} m from horizon end, "
+        f"{elapsed_ms:.1f} ms/solve (budget 50 ms at 20 Hz)"
+    )
     assert error < 0.8, "did not follow the arc"
     print("MPC tracker checks passed")

@@ -58,8 +58,14 @@ class DeterministicEvalCallback(BaseCallback):
     so PPO's next rollout starts from a coherent state.
     """
 
-    def __init__(self, raw_env: BaleFollowerEnv, metadata: dict, save_dir: Path,
-                 every_rollouts: int = 16, episodes: int = 3) -> None:
+    def __init__(
+        self,
+        raw_env: BaleFollowerEnv,
+        metadata: dict,
+        save_dir: Path,
+        every_rollouts: int = 16,
+        episodes: int = 3,
+    ) -> None:
         super().__init__()
         self.raw_env = raw_env
         self.metadata = metadata
@@ -99,32 +105,47 @@ class DeterministicEvalCallback(BaseCallback):
 
         mean_distance = sum(distances) / len(distances)
         self.logger.record("eval/deterministic_distance_m", mean_distance)
-        print(f"[deterministic eval] {self.num_timesteps} steps: "
-              f"mean {mean_distance:.1f} m over {self.episodes} episodes "
-              f"(best {max(self.best_distance, mean_distance):.1f})")
+        print(
+            f"[deterministic eval] {self.num_timesteps} steps: "
+            f"mean {mean_distance:.1f} m over {self.episodes} episodes "
+            f"(best {max(self.best_distance, mean_distance):.1f})"
+        )
         if mean_distance > self.best_distance:
             self.best_distance = mean_distance
             best_path = self.save_dir / "best_model"
             self.model.save(str(best_path))
             with open(best_path.with_suffix(".json"), "w") as handle:
-                json.dump({**self.metadata, "deterministic_distance_m": mean_distance,
-                           "at_timesteps": self.num_timesteps}, handle, indent=2)
+                json.dump(
+                    {
+                        **self.metadata,
+                        "deterministic_distance_m": mean_distance,
+                        "at_timesteps": self.num_timesteps,
+                    },
+                    handle,
+                    indent=2,
+                )
 
         # Our episodes drove the sim; hand PPO a fresh episode and matching
         # cached observation or its next rollout pairs stale obs with the
         # teleported car.
         reset_obs = self.model.env.reset()
         self.model._last_obs = reset_obs
-        self.model._last_episode_starts = np.ones((self.model.env.num_envs,), dtype=bool)
+        self.model._last_episode_starts = np.ones(
+            (self.model.env.num_envs,), dtype=bool
+        )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default=str(DEFAULT_CONFIG))
     parser.add_argument("--sdf-path", default=str(DEFAULT_SDF))
-    parser.add_argument("--teleport-url", default="http://localhost:9003/api/sim/teleport")
+    parser.add_argument(
+        "--teleport-url", default="http://localhost:9003/api/sim/teleport"
+    )
     parser.add_argument("--total-timesteps", type=int, default=None)
-    parser.add_argument("--checkpoint-dir", default=str(Path(__file__).resolve().parent / "checkpoints"))
+    parser.add_argument(
+        "--checkpoint-dir", default=str(Path(__file__).resolve().parent / "checkpoints")
+    )
     parser.add_argument("--resume-from", default=None)
     args = parser.parse_args()
 

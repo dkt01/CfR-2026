@@ -21,7 +21,6 @@ import statistics
 import time
 from pathlib import Path
 
-import numpy as np
 from stable_baselines3 import PPO
 
 from casadi_smoother import CommandSmoother, smoother_from_metadata
@@ -34,7 +33,9 @@ DEFAULT_SDF = REPO_ROOT / "jetson/cfr_arduino_bridge/worlds/speed_course.sdf"
 
 
 def run_episode(
-    env: BaleFollowerEnv, model: PPO, smoother: CommandSmoother | None,
+    env: BaleFollowerEnv,
+    model: PPO,
+    smoother: CommandSmoother | None,
     deterministic: bool = True,
 ) -> dict:
     observation, _ = env.reset()
@@ -79,7 +80,9 @@ def run_episode(
         "distance_m": round(distance, 2),
         "mean_speed": round(statistics.fmean(speeds), 2) if speeds else 0.0,
         "min_clearance": round(min(clearances), 3) if clearances else None,
-        "mean_steer_jerk_rad": round(statistics.fmean(steer_jerk), 4) if steer_jerk else 0.0,
+        "mean_steer_jerk_rad": round(statistics.fmean(steer_jerk), 4)
+        if steer_jerk
+        else 0.0,
         "reward": round(reward_total, 1),
         "collided": collided,
         "stuck": stuck,
@@ -94,21 +97,37 @@ def main() -> None:
     )
     parser.add_argument("--episodes", type=int, default=5)
     parser.add_argument("--sdf-path", default=str(DEFAULT_SDF))
-    parser.add_argument("--teleport-url", default="http://localhost:9003/api/sim/teleport")
-    parser.add_argument("--stochastic", action="store_true",
-                        help="sample the policy like training does instead of taking "
-                             "the Gaussian mean; diagnoses train/eval gaps")
+    parser.add_argument(
+        "--teleport-url", default="http://localhost:9003/api/sim/teleport"
+    )
+    parser.add_argument(
+        "--stochastic",
+        action="store_true",
+        help="sample the policy like training does instead of taking "
+        "the Gaussian mean; diagnoses train/eval gaps",
+    )
     # Default matches deployment: run_policy.py publishes raw commands for a
     # policy trained against the env's actuator limits, so evaluating through
     # the smoother would measure a configuration nobody runs.
-    parser.add_argument("--smoother", action="store_true",
-                        help="route commands through the CasADi smoother (A/B baseline, or "
-                             "for checkpoints trained without env-side actuator limits)")
+    parser.add_argument(
+        "--smoother",
+        action="store_true",
+        help="route commands through the CasADi smoother (A/B baseline, or "
+        "for checkpoints trained without env-side actuator limits)",
+    )
     parser.add_argument("--no-smoother", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("--max-speed", type=float, default=None,
-                        help="override the trained max speed cap")
-    parser.add_argument("--traction", type=float, default=None,
-                        help="override the trained friction coefficient")
+    parser.add_argument(
+        "--max-speed",
+        type=float,
+        default=None,
+        help="override the trained max speed cap",
+    )
+    parser.add_argument(
+        "--traction",
+        type=float,
+        default=None,
+        help="override the trained friction coefficient",
+    )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--output", default=None, help="write results JSON here")
     args = parser.parse_args()
@@ -116,7 +135,9 @@ def main() -> None:
     checkpoint = Path(args.checkpoint)
     metadata_path = checkpoint.with_suffix(".json")
     if not metadata_path.exists():
-        raise SystemExit(f"missing {metadata_path} (written by train.py alongside the checkpoint)")
+        raise SystemExit(
+            f"missing {metadata_path} (written by train.py alongside the checkpoint)"
+        )
     with open(metadata_path) as handle:
         metadata = json.load(handle)
 
@@ -134,20 +155,33 @@ def main() -> None:
         **env_config,
     )
     model = PPO.load(str(checkpoint))
-    smoother = None if (args.no_smoother or not args.smoother) else smoother_from_metadata(
-        metadata, env.control_hz, env.traction, env.max_speed, WHEELBASE, MAX_STEERING_ANGLE
+    smoother = (
+        None
+        if (args.no_smoother or not args.smoother)
+        else smoother_from_metadata(
+            metadata,
+            env.control_hz,
+            env.traction,
+            env.max_speed,
+            WHEELBASE,
+            MAX_STEERING_ANGLE,
+        )
     )
 
     episodes = []
     try:
         for index in range(args.episodes):
             env.reset(seed=args.seed + index)  # seeds the start-pose RNG
-            result = run_episode(env, model, smoother, deterministic=not args.stochastic)
+            result = run_episode(
+                env, model, smoother, deterministic=not args.stochastic
+            )
             episodes.append(result)
-            print(f"episode {index + 1}/{args.episodes}: "
-                  f"{result['distance_m']:.1f} m in {result['duration_s']:.0f} s, "
-                  f"mean {result['mean_speed']:.2f} m/s, "
-                  f"{'COLLIDED' if result['collided'] else 'stuck' if result['stuck'] else 'clean'}")
+            print(
+                f"episode {index + 1}/{args.episodes}: "
+                f"{result['distance_m']:.1f} m in {result['duration_s']:.0f} s, "
+                f"mean {result['mean_speed']:.2f} m/s, "
+                f"{'COLLIDED' if result['collided'] else 'stuck' if result['stuck'] else 'clean'}"
+            )
     finally:
         env.close()
 
@@ -159,12 +193,20 @@ def main() -> None:
         "max_speed": env_config["max_speed"],
         "traction": env_config.get("traction", 0.6),
         "episodes": len(episodes),
-        "collision_rate": round(sum(e["collided"] for e in episodes) / len(episodes), 2),
-        "mean_distance_m": round(statistics.fmean(e["distance_m"] for e in episodes), 2),
+        "collision_rate": round(
+            sum(e["collided"] for e in episodes) / len(episodes), 2
+        ),
+        "mean_distance_m": round(
+            statistics.fmean(e["distance_m"] for e in episodes), 2
+        ),
         "mean_speed": round(statistics.fmean(e["mean_speed"] for e in episodes), 2),
-        "mean_steer_jerk_rad": round(statistics.fmean(e["mean_steer_jerk_rad"] for e in episodes), 4),
+        "mean_steer_jerk_rad": round(
+            statistics.fmean(e["mean_steer_jerk_rad"] for e in episodes), 4
+        ),
         "clean_episode_mean_distance_m": (
-            round(statistics.fmean(e["distance_m"] for e in clean), 2) if clean else None
+            round(statistics.fmean(e["distance_m"] for e in clean), 2)
+            if clean
+            else None
         ),
         "per_episode": episodes,
     }
@@ -174,8 +216,10 @@ def main() -> None:
         if key != "per_episode":
             print(f"{key:32s} {value}")
 
-    output = Path(args.output) if args.output else Path(
-        f"eval_{checkpoint.stem}_{time.strftime('%Y%m%d_%H%M%S')}.json"
+    output = (
+        Path(args.output)
+        if args.output
+        else Path(f"eval_{checkpoint.stem}_{time.strftime('%Y%m%d_%H%M%S')}.json")
     )
     with open(output, "w") as handle:
         json.dump(summary, handle, indent=2)

@@ -61,8 +61,10 @@ def generate_launch_description():
     )
 
     sensors_arg = DeclareLaunchArgument(
-        "sensors", default_value="false",
-        description="render the ZED and bridge its point cloud (costs ~40% RTF)")
+        "sensors",
+        default_value="false",
+        description="render the ZED and bridge its point cloud (costs ~40% RTF)",
+    )
 
     def gazebo_actions(context):
         world = str(resolve_world(context)[0])

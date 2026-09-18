@@ -112,7 +112,10 @@ def scan_from_points(
 
 def scan_from_depth(
     depth: np.ndarray,
-    fx: float, fy: float, cx: float, cy: float,
+    fx: float,
+    fy: float,
+    cx: float,
+    cy: float,
     num_bins: int,
     fov_deg: float,
     max_range: float,
@@ -138,7 +141,7 @@ def scan_from_depth(
     u = cols * stride
     v = rows * stride
 
-    z = depth.ravel()          # optical +z, forward
+    z = depth.ravel()  # optical +z, forward
     u = u.ravel()
     v = v.ravel()
     valid = np.isfinite(z) & (z > 0.0) & (z <= max_range * 1.5)
@@ -146,8 +149,8 @@ def scan_from_depth(
         return np.full(num_bins, max_range, dtype=np.float32)
 
     z = z[valid]
-    x_optical = (u[valid] - cx) * z / fx   # +x right
-    y_optical = (v[valid] - cy) * z / fy   # +y down
+    x_optical = (u[valid] - cx) * z / fx  # +x right
+    y_optical = (v[valid] - cy) * z / fy  # +y down
 
     # Optical -> body (REP 103): forward, left, up. scan_from_points works in
     # body frame, so converting here keeps one binning implementation.
@@ -180,14 +183,18 @@ def points_from_pointcloud2(msg) -> np.ndarray:
     """
     offsets = {f.name: f.offset for f in msg.fields if f.name in ("x", "y", "z")}
     if len(offsets) != 3:
-        raise ValueError(f"cloud has no xyz fields, only {[f.name for f in msg.fields]}")
+        raise ValueError(
+            f"cloud has no xyz fields, only {[f.name for f in msg.fields]}"
+        )
 
     raw = np.frombuffer(msg.data, dtype=np.uint8)
     stride = msg.point_step
     count = len(raw) // stride
     raw = raw[: count * stride].reshape(count, stride)
     return np.stack(
-        [raw[:, o : o + 4].copy().view(np.float32).ravel() for o in
-         (offsets["x"], offsets["y"], offsets["z"])],
+        [
+            raw[:, o : o + 4].copy().view(np.float32).ravel()
+            for o in (offsets["x"], offsets["y"], offsets["z"])
+        ],
         axis=1,
     )

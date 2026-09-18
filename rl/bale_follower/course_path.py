@@ -86,7 +86,9 @@ def _skeleton_cycle(skeleton: np.ndarray) -> np.ndarray:
     work = skeleton.copy()
     kernel = np.ones((3, 3), dtype=int)
     while True:
-        neighbor_count = ndimage.convolve(work.astype(int), kernel, mode="constant") - work
+        neighbor_count = (
+            ndimage.convolve(work.astype(int), kernel, mode="constant") - work
+        )
         leaves = work & (neighbor_count <= 1)
         if not leaves.any():
             break
@@ -139,7 +141,8 @@ def extract_centerline(occupied, origin, seed_xy) -> np.ndarray:
     skeleton = skeletonize(free)
     path_cells = _skeleton_cycle(skeleton)
     xy = np.stack(
-        [x0 + (path_cells[:, 1] + 0.5) * res, y0 + (path_cells[:, 0] + 0.5) * res], axis=1
+        [x0 + (path_cells[:, 1] + 0.5) * res, y0 + (path_cells[:, 0] + 0.5) * res],
+        axis=1,
     )
     return xy
 
@@ -151,11 +154,14 @@ def resample(xy: np.ndarray, spacing: float) -> np.ndarray:
     s = np.concatenate([[0.0], np.cumsum(seg)])
     samples = np.arange(0.0, s[-1], spacing)
     return np.stack(
-        [np.interp(samples, s, closed[:, 0]), np.interp(samples, s, closed[:, 1])], axis=1
+        [np.interp(samples, s, closed[:, 0]), np.interp(samples, s, closed[:, 1])],
+        axis=1,
     )
 
 
-def enforce_min_radius(xy: np.ndarray, min_radius: float, iterations: int = 60) -> np.ndarray:
+def enforce_min_radius(
+    xy: np.ndarray, min_radius: float, iterations: int = 60
+) -> np.ndarray:
     """Smooth away curvature the vehicle physically cannot achieve.
 
     The planner is free to draw an apex tighter than the car's real minimum
@@ -205,9 +211,7 @@ def optimize_racing_line(
     down = casadi.vertcat(pts[-1:, :], pts[:-1, :])
     bend = up - 2 * pts + down
     stay = pts - centerline
-    opti.minimize(
-        casadi.sumsqr(bend) * 100.0 + casadi.sumsqr(stay) * 0.05
-    )
+    opti.minimize(casadi.sumsqr(bend) * 100.0 + casadi.sumsqr(stay) * 0.05)
     for k in range(n):
         if radii[k] > 1e-3:
             opti.subject_to(
@@ -217,8 +221,12 @@ def optimize_racing_line(
             opti.subject_to(pts[k, :] == centerline[k, :][None, :])
     opti.solver(
         "ipopt",
-        {"print_time": False, "ipopt.print_level": 0, "ipopt.sb": "yes",
-         "ipopt.max_iter": 300},
+        {
+            "print_time": False,
+            "ipopt.print_level": 0,
+            "ipopt.sb": "yes",
+            "ipopt.max_iter": 300,
+        },
     )
     try:
         solution = opti.solve()
@@ -237,9 +245,14 @@ def curvature(xy: np.ndarray) -> np.ndarray:
     return np.where(den > 1e-9, num / den, 0.0)
 
 
-def speed_profile(xy: np.ndarray, traction: float, max_speed: float,
-                  speed_margin: float = 0.85, turn_speed: float = 0.0,
-                  turn_curvature: float = 0.15) -> np.ndarray:
+def speed_profile(
+    xy: np.ndarray,
+    traction: float,
+    max_speed: float,
+    speed_margin: float = 0.85,
+    turn_speed: float = 0.0,
+    turn_curvature: float = 0.15,
+) -> np.ndarray:
     """Minimum-time flying-lap profile for a closed loop, on a traction ellipse.
 
     Three limits, applied in order:
@@ -273,7 +286,9 @@ def speed_profile(xy: np.ndarray, traction: float, max_speed: float,
     # Smooth curvature a little: single-sample kinks from the grid otherwise
     # punch unnecessary dips into the profile.
     kernel = np.ones(5) / 5.0
-    kappa = np.convolve(np.concatenate([kappa[-2:], kappa, kappa[:2]]), kernel, mode="same")[2:-2]
+    kappa = np.convolve(
+        np.concatenate([kappa[-2:], kappa, kappa[:2]]), kernel, mode="same"
+    )[2:-2]
     v = np.minimum(np.sqrt(a_plan / np.maximum(kappa, 1e-6)), max_speed)
     # Flat cap, retained as an option. It is cruder than the ellipse -- one
     # speed for every corner regardless of radius -- but it is the only
@@ -305,10 +320,19 @@ def speed_profile(xy: np.ndarray, traction: float, max_speed: float,
     return v
 
 
-def plan(sdf_path: str, resolution: float, spacing: float, margin: float,
-         safety: float, traction: float, max_speed: float,
-         min_radius: float = 0.0, speed_margin: float = 0.85,
-         turn_speed: float = 0.0, turn_curvature: float = 0.15) -> dict:
+def plan(
+    sdf_path: str,
+    resolution: float,
+    spacing: float,
+    margin: float,
+    safety: float,
+    traction: float,
+    max_speed: float,
+    min_radius: float = 0.0,
+    speed_margin: float = 0.85,
+    turn_speed: float = 0.0,
+    turn_curvature: float = 0.15,
+) -> dict:
     bales = bale_geometry.parse_bales(sdf_path)
     spawn = bale_geometry.parse_vehicle_spawn(sdf_path)
     occupied, origin = build_occupancy(bales, resolution, CAR_HALF_WIDTH + margin)
@@ -317,8 +341,9 @@ def plan(sdf_path: str, resolution: float, spacing: float, margin: float,
     if min_radius > 0:
         line = enforce_min_radius(line, min_radius)
     line = resample(line, spacing)
-    v = speed_profile(line, traction, max_speed, speed_margin,
-                      turn_speed, turn_curvature)
+    v = speed_profile(
+        line, traction, max_speed, speed_margin, turn_speed, turn_curvature
+    )
     ds = np.linalg.norm(np.roll(line, -1, axis=0) - line, axis=1)
     s = np.concatenate([[0.0], np.cumsum(ds[:-1])])
     v_mid = np.maximum((v + np.roll(v, -1)) / 2.0, 0.05)
@@ -345,61 +370,103 @@ def main() -> None:
     parser.add_argument("--output", default=str(DEFAULT_OUTPUT))
     parser.add_argument("--resolution", type=float, default=0.05)
     parser.add_argument("--spacing", type=float, default=0.10)
-    parser.add_argument("--margin", type=float, default=0.05,
-                        help="extra inflation beyond the car half-width (m)")
-    parser.add_argument("--safety", type=float, default=0.05,
-                        help="clearance the racing line must keep beyond the inflated grid (m)")
+    parser.add_argument(
+        "--margin",
+        type=float,
+        default=0.05,
+        help="extra inflation beyond the car half-width (m)",
+    )
+    parser.add_argument(
+        "--safety",
+        type=float,
+        default=0.05,
+        help="clearance the racing line must keep beyond the inflated grid (m)",
+    )
     parser.add_argument("--traction", type=float, default=0.6)
     parser.add_argument("--max-speed", type=float, default=4.0)
-    parser.add_argument("--min-radius", type=float, default=1.25,
-                        help="tightest radius the line may ask for (m). The vehicle "
-                             "measures 0.97 m at full lock (vehicle_calibration.py), so "
-                             "this leaves margin for tracking error rather than planning "
-                             "apexes the car can only just make.")
-    parser.add_argument("--speed-margin", type=float, default=0.85,
-                        help="fraction of the grip budget the profile plans for "
-                             "(0-1). The remainder is the allowance for tracking "
-                             "error: cross-track grows with speed and the corridor "
-                             "is only 0.95 m wide, so planning at 1.0 rubs the bales.")
-    parser.add_argument("--turn-speed", type=float, default=0.0,
-                        help="flat speed cap (m/s) wherever curvature exceeds "
-                             "--turn-curvature; 0 uses the ellipse profile alone. "
-                             "Cruder than --speed-margin, but the only setting with "
-                             "a verified single-racer lap time behind it.")
-    parser.add_argument("--turn-curvature", type=float, default=0.15,
-                        help="curvature (1/m) above which --turn-speed applies "
-                             "(0.15 = radius 6.7 m)")
+    parser.add_argument(
+        "--min-radius",
+        type=float,
+        default=1.25,
+        help="tightest radius the line may ask for (m). The vehicle "
+        "measures 0.97 m at full lock (vehicle_calibration.py), so "
+        "this leaves margin for tracking error rather than planning "
+        "apexes the car can only just make.",
+    )
+    parser.add_argument(
+        "--speed-margin",
+        type=float,
+        default=0.85,
+        help="fraction of the grip budget the profile plans for "
+        "(0-1). The remainder is the allowance for tracking "
+        "error: cross-track grows with speed and the corridor "
+        "is only 0.95 m wide, so planning at 1.0 rubs the bales.",
+    )
+    parser.add_argument(
+        "--turn-speed",
+        type=float,
+        default=0.0,
+        help="flat speed cap (m/s) wherever curvature exceeds "
+        "--turn-curvature; 0 uses the ellipse profile alone. "
+        "Cruder than --speed-margin, but the only setting with "
+        "a verified single-racer lap time behind it.",
+    )
+    parser.add_argument(
+        "--turn-curvature",
+        type=float,
+        default=0.15,
+        help="curvature (1/m) above which --turn-speed applies (0.15 = radius 6.7 m)",
+    )
     parser.add_argument("--plot", action="store_true")
     args = parser.parse_args()
 
-    result = plan(args.sdf_path, args.resolution, args.spacing, args.margin,
-                  args.safety, args.traction, args.max_speed, args.min_radius,
-                  args.speed_margin, args.turn_speed, args.turn_curvature)
+    result = plan(
+        args.sdf_path,
+        args.resolution,
+        args.spacing,
+        args.margin,
+        args.safety,
+        args.traction,
+        args.max_speed,
+        args.min_radius,
+        args.speed_margin,
+        args.turn_speed,
+        args.turn_curvature,
+    )
     with open(args.output, "w") as handle:
         json.dump(result, handle)
     v = np.array(result["v"])
-    print(f"path: {result['length_m']:.1f} m, estimated lap {result['estimated_time_s']:.1f} s "
-          f"(traction {args.traction}, margin {args.speed_margin}, max {args.max_speed} m/s)")
+    print(
+        f"path: {result['length_m']:.1f} m, estimated lap {result['estimated_time_s']:.1f} s "
+        f"(traction {args.traction}, margin {args.speed_margin}, max {args.max_speed} m/s)"
+    )
     print(f"speed: min {v.min():.2f}  mean {v.mean():.2f}  max {v.max():.2f} m/s")
     print(f"wrote {args.output}")
 
     if args.plot:
         import matplotlib
+
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
 
         bales = bale_geometry.parse_bales(args.sdf_path)
         fig, ax = plt.subplots(figsize=(14, 6))
         for bale in bales:
-            corners = bale_geometry.obb_corners(bale.x, bale.y, bale.yaw, bale.half_x, bale.half_y)
+            corners = bale_geometry.obb_corners(
+                bale.x, bale.y, bale.yaw, bale.half_x, bale.half_y
+            )
             ax.fill(corners[:, 0], corners[:, 1], color="peru", alpha=0.8)
-        points = ax.scatter(result["x"], result["y"], c=result["v"], s=4, cmap="viridis")
+        points = ax.scatter(
+            result["x"], result["y"], c=result["v"], s=4, cmap="viridis"
+        )
         fig.colorbar(points, ax=ax, label="planned speed (m/s)")
         spawn = bale_geometry.parse_vehicle_spawn(args.sdf_path)
         ax.plot(spawn[0], spawn[1], "r*", markersize=14, label="spawn")
         ax.set_aspect("equal")
         ax.legend()
-        ax.set_title(f"{result['length_m']:.1f} m racing line, estimated {result['estimated_time_s']:.1f} s")
+        ax.set_title(
+            f"{result['length_m']:.1f} m racing line, estimated {result['estimated_time_s']:.1f} s"
+        )
         png = Path(args.output).with_suffix(".png")
         fig.savefig(png, dpi=110, bbox_inches="tight")
         print(f"wrote {png}")

@@ -17,7 +17,6 @@ import argparse
 import json
 import math
 import threading
-import os
 import time
 from pathlib import Path
 
@@ -31,7 +30,13 @@ from tf2_msgs.msg import TFMessage
 import bale_geometry
 from casadi_smoother import CommandSmoother, smoother_from_metadata
 from speed_boost import BoostConfig, BoostLimiter
-from env import MAX_STEERING_ANGLE, WHEELBASE, _unpause_world, _wrap_to_pi, _yaw_from_quaternion
+from env import (
+    MAX_STEERING_ANGLE,
+    WHEELBASE,
+    _unpause_world,
+    _wrap_to_pi,
+    _yaw_from_quaternion,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SDF = REPO_ROOT / "jetson/cfr_arduino_bridge/worlds/speed_course.sdf"
@@ -65,7 +70,9 @@ class PolicyRunner(Node):
             control_hz=self.control_hz,
             lidar_fov_deg=self.lidar_fov_deg,
         )
-        self.obs_speed_scale = max(self.max_speed, env_config.get("straight_speed", 0.0))
+        self.obs_speed_scale = max(
+            self.max_speed, env_config.get("straight_speed", 0.0)
+        )
 
         self._lock = threading.Lock()
         self._pose = None
@@ -116,7 +123,10 @@ class PolicyRunner(Node):
 
     def _check_stuck(self, now: float, x: float, y: float) -> bool:
         self._pose_history.append((now, x, y))
-        while self._pose_history and now - self._pose_history[0][0] > self.stuck_window_s + 1.0:
+        while (
+            self._pose_history
+            and now - self._pose_history[0][0] > self.stuck_window_s + 1.0
+        ):
             self._pose_history.pop(0)
         if not self.recovery_enabled or now < self._no_trigger_until:
             return False
@@ -132,7 +142,9 @@ class PolicyRunner(Node):
         nearest = int(np.argmin(scan))
         half_fov = math.radians(self.lidar_fov_deg) / 2.0
         bearing = -half_fov + nearest * 2.0 * half_fov / max(1, self.num_lidar_bins - 1)
-        self._recovery_delta = math.copysign(MAX_STEERING_ANGLE, bearing if abs(bearing) > 1e-3 else 1.0)
+        self._recovery_delta = math.copysign(
+            MAX_STEERING_ANGLE, bearing if abs(bearing) > 1e-3 else 1.0
+        )
         if now - self._last_recovery_end < 6.0:
             self._escalation = min(self._escalation * 2.0, 4.0)
         else:
@@ -165,14 +177,23 @@ class PolicyRunner(Node):
             angular_z = _wrap_to_pi(yaw - pyaw) / dt
         self._prev_pose = pose
         scan = bale_geometry.lidar_scan(
-            self.bales, x, y, yaw, self.num_lidar_bins, self.lidar_fov_deg, self.lidar_max_range
+            self.bales,
+            x,
+            y,
+            yaw,
+            self.num_lidar_bins,
+            self.lidar_fov_deg,
+            self.lidar_max_range,
         )
 
         now = time.monotonic()
         if now < self._recovery_until:
             self._publish_recovery()
             return
-        if self._recovery_until and now - self._recovery_until < 1.0 / self.control_hz + 0.1:
+        if (
+            self._recovery_until
+            and now - self._recovery_until < 1.0 / self.control_hz + 0.1
+        ):
             # Recovery just ended: forget the stuck history and the smoother's
             # reversed state, and give the policy a grace period to move off.
             self._pose_history.clear()
@@ -233,21 +254,35 @@ def main() -> None:
     # plan with no notion of actuator limits. A policy trained against those
     # limits does not need it. Use --smoother only for a checkpoint trained
     # WITHOUT env-side actuator limits (v5 and earlier).
-    parser.add_argument("--smoother", action="store_true",
-                        help="filter commands through the CasADi smoother; needed only "
-                             "for checkpoints trained without env-side actuator limits")
+    parser.add_argument(
+        "--smoother",
+        action="store_true",
+        help="filter commands through the CasADi smoother; needed only "
+        "for checkpoints trained without env-side actuator limits",
+    )
     parser.add_argument("--no-smoother", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("--no-recovery", action="store_true",
-                        help="disable the scripted reverse-out stuck recovery")
-    parser.add_argument("--max-speed", type=float, default=None,
-                        help="override the trained speed cap (m/s); affects both the "
-                             "action decoding and the speed observation scaling, same "
-                             "as evaluate.py's override")
-    parser.add_argument("--straight-speed", type=float, default=None,
-                        help="speed ceiling (m/s) on clear, straight sections. The "
-                             "policy keeps its trained cap everywhere else, so curves "
-                             "stay at the speed it was trained to take them. Unset "
-                             "leaves the trained cap everywhere.")
+    parser.add_argument(
+        "--no-recovery",
+        action="store_true",
+        help="disable the scripted reverse-out stuck recovery",
+    )
+    parser.add_argument(
+        "--max-speed",
+        type=float,
+        default=None,
+        help="override the trained speed cap (m/s); affects both the "
+        "action decoding and the speed observation scaling, same "
+        "as evaluate.py's override",
+    )
+    parser.add_argument(
+        "--straight-speed",
+        type=float,
+        default=None,
+        help="speed ceiling (m/s) on clear, straight sections. The "
+        "policy keeps its trained cap everywhere else, so curves "
+        "stay at the speed it was trained to take them. Unset "
+        "leaves the trained cap everywhere.",
+    )
     args = parser.parse_args()
 
     checkpoint = Path(args.checkpoint)
@@ -273,8 +308,12 @@ def main() -> None:
         # Same construction evaluate.py uses, so "watch it drive" and the
         # metrics run send identical commands.
         smoother = smoother_from_metadata(
-            metadata, env_config["control_hz"], env_config.get("traction", 0.6),
-            env_config["max_speed"], WHEELBASE, MAX_STEERING_ANGLE,
+            metadata,
+            env_config["control_hz"],
+            env_config.get("traction", 0.6),
+            env_config["max_speed"],
+            WHEELBASE,
+            MAX_STEERING_ANGLE,
         )
 
     if not _unpause_world(args.world_name):

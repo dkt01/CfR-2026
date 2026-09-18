@@ -109,15 +109,81 @@ def compute_reward(
 
 if __name__ == "__main__":
     cfg = RewardConfig()
-    good = compute_reward(cfg, progress_distance=0.4, min_clearance=0.45, angular_z=0.1, prev_angular_z=0.08, collided=False, center_error=0.0)
-    hugging = compute_reward(cfg, progress_distance=0.4, min_clearance=0.45, angular_z=0.1, prev_angular_z=0.08, collided=False, center_error=0.35)
-    scraping = compute_reward(cfg, progress_distance=0.4, min_clearance=0.05, angular_z=0.1, prev_angular_z=0.08, collided=False, center_error=0.4)
-    crashed = compute_reward(cfg, progress_distance=0.05, min_clearance=0.0, angular_z=0.4, prev_angular_z=-0.4, collided=True, center_error=0.5)
-    stalled = compute_reward(cfg, progress_distance=0.0, min_clearance=0.5, angular_z=0.0, prev_angular_z=0.0, collided=False, center_error=0.0)
+    good = compute_reward(
+        cfg,
+        progress_distance=0.4,
+        min_clearance=0.45,
+        angular_z=0.1,
+        prev_angular_z=0.08,
+        collided=False,
+        center_error=0.0,
+    )
+    hugging = compute_reward(
+        cfg,
+        progress_distance=0.4,
+        min_clearance=0.45,
+        angular_z=0.1,
+        prev_angular_z=0.08,
+        collided=False,
+        center_error=0.35,
+    )
+    scraping = compute_reward(
+        cfg,
+        progress_distance=0.4,
+        min_clearance=0.05,
+        angular_z=0.1,
+        prev_angular_z=0.08,
+        collided=False,
+        center_error=0.4,
+    )
+    crashed = compute_reward(
+        cfg,
+        progress_distance=0.05,
+        min_clearance=0.0,
+        angular_z=0.4,
+        prev_angular_z=-0.4,
+        collided=True,
+        center_error=0.5,
+    )
+    stalled = compute_reward(
+        cfg,
+        progress_distance=0.0,
+        min_clearance=0.5,
+        angular_z=0.0,
+        prev_angular_z=0.0,
+        collided=False,
+        center_error=0.0,
+    )
 
-    sawing = compute_reward(cfg, progress_distance=0.4, min_clearance=0.45, angular_z=0.1, prev_angular_z=0.08, collided=False, center_error=0.0, steer_fraction=1.0, prev_steer_fraction=-1.0)
-    touching = compute_reward(cfg, progress_distance=0.4, min_clearance=0.04, angular_z=0.1, prev_angular_z=0.08, collided=False, center_error=0.1)
-    near_miss = compute_reward(cfg, progress_distance=0.4, min_clearance=0.15, angular_z=0.1, prev_angular_z=0.08, collided=False, center_error=0.1)
+    sawing = compute_reward(
+        cfg,
+        progress_distance=0.4,
+        min_clearance=0.45,
+        angular_z=0.1,
+        prev_angular_z=0.08,
+        collided=False,
+        center_error=0.0,
+        steer_fraction=1.0,
+        prev_steer_fraction=-1.0,
+    )
+    touching = compute_reward(
+        cfg,
+        progress_distance=0.4,
+        min_clearance=0.04,
+        angular_z=0.1,
+        prev_angular_z=0.08,
+        collided=False,
+        center_error=0.1,
+    )
+    near_miss = compute_reward(
+        cfg,
+        progress_distance=0.4,
+        min_clearance=0.15,
+        angular_z=0.1,
+        prev_angular_z=0.08,
+        collided=False,
+        center_error=0.1,
+    )
 
     print(f"clean centered step: {good.total:+.3f}")
     print(f"same step, sawing:   {sawing.total:+.3f}")
@@ -134,6 +200,8 @@ if __name__ == "__main__":
     assert stalled.total > crashed.total, "anything should beat crashing"
     assert good.total > sawing.total, "steady steering should beat sawing"
     # Same pose and speed, differing only in whether the car brushes a bale.
-    assert touching.total < near_miss.total, "touching a bale must cost more than clearing it"
+    assert touching.total < near_miss.total, (
+        "touching a bale must cost more than clearing it"
+    )
     print("\nordering check passed: centered > hugging > scraping > stalled > crashed")
     print("sawing and bale-touching both rank below the clean step")

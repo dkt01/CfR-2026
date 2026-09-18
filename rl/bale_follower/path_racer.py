@@ -100,12 +100,14 @@ class PathRacer(Node):
         self._prev_pose_speed: tuple[float, float, float] | None = None
         self._measured_speed = 0.0
         if not args.no_mpc:
-            self.mpc = MpcTracker(MpcConfig(
-                wheelbase=WHEELBASE,
-                max_steering_angle=MAX_STEERING_ANGLE,
-                traction=plan["traction"],
-                max_speed=plan["max_speed"] * args.speed_scale,
-            ))
+            self.mpc = MpcTracker(
+                MpcConfig(
+                    wheelbase=WHEELBASE,
+                    max_steering_angle=MAX_STEERING_ANGLE,
+                    traction=plan["traction"],
+                    max_speed=plan["max_speed"] * args.speed_scale,
+                )
+            )
 
         # Stuck recovery, same shape as run_policy.py's: reverse briefly,
         # steering toward the path side so the nose swings back onto it.
@@ -135,15 +137,22 @@ class PathRacer(Node):
         t = msg.transforms[0].transform
         q = t.rotation
         with self._lock:
-            self._pose = (t.translation.x, t.translation.y,
-                          _yaw_from_quaternion(q.x, q.y, q.z, q.w))
+            self._pose = (
+                t.translation.x,
+                t.translation.y,
+                _yaw_from_quaternion(q.x, q.y, q.z, q.w),
+            )
 
     def _on_odom(self, msg: Odometry) -> None:
         p = msg.pose.pose
         with self._lock:
-            self._pose = (p.position.x, p.position.y,
-                          _yaw_from_quaternion(p.orientation.x, p.orientation.y,
-                                               p.orientation.z, p.orientation.w))
+            self._pose = (
+                p.position.x,
+                p.position.y,
+                _yaw_from_quaternion(
+                    p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w
+                ),
+            )
 
     def _nearest_index(self, x: float, y: float) -> int:
         """Nearest path sample, searched locally but re-globalized when lost.
@@ -180,13 +189,18 @@ class PathRacer(Node):
 
     def _check_stuck(self, now: float, x: float, y: float) -> bool:
         self._pose_history.append((now, x, y))
-        while self._pose_history and now - self._pose_history[0][0] > self.stuck_window_s + 0.5:
+        while (
+            self._pose_history
+            and now - self._pose_history[0][0] > self.stuck_window_s + 0.5
+        ):
             self._pose_history.pop(0)
         if now < self._no_trigger_until:
             return False
         oldest = self._pose_history[0]
-        return (now - oldest[0] >= self.stuck_window_s
-                and math.hypot(x - oldest[1], y - oldest[2]) < self.stuck_distance)
+        return (
+            now - oldest[0] >= self.stuck_window_s
+            and math.hypot(x - oldest[1], y - oldest[2]) < self.stuck_distance
+        )
 
     def _on_tick(self) -> None:
         with self._lock:
@@ -199,7 +213,9 @@ class PathRacer(Node):
         if now < self._recovery_until:
             twist = Twist()
             twist.linear.x = -0.6
-            twist.angular.z = (twist.linear.x / WHEELBASE) * math.tan(self._recovery_delta)
+            twist.angular.z = (twist.linear.x / WHEELBASE) * math.tan(
+                self._recovery_delta
+            )
             self._cmd_pub.publish(twist)
             return
 
@@ -215,8 +231,10 @@ class PathRacer(Node):
             if self.mpc is not None:
                 self.mpc.reset()
             if self.debug:
-                print(f"DBG recovery ended at ({x:.2f},{y:.2f}), re-acquiring path",
-                      flush=True)
+                print(
+                    f"DBG recovery ended at ({x:.2f},{y:.2f}), re-acquiring path",
+                    flush=True,
+                )
 
         index = self._nearest_index(x, y)
         if not self._direction_set:
@@ -303,8 +321,11 @@ class PathRacer(Node):
             travelled = 0.0
             for k in range(self.mpc.config.horizon):
                 ref_index = (index + int(travelled / step_len)) % self.n
-                speed_k = max(float(self.v_profile[ref_index]),
-                              float(self.turn_speed_floor[ref_index]), 0.3)
+                speed_k = max(
+                    float(self.v_profile[ref_index]),
+                    float(self.turn_speed_floor[ref_index]),
+                    0.3,
+                )
                 travelled += speed_k * self.mpc.config.dt
                 point_index = (index + int(travelled / step_len)) % self.n
                 ref_xy[k] = self.xy[point_index]
@@ -313,12 +334,19 @@ class PathRacer(Node):
             # to be up before the hairpin, not once already in it.
             horizon_end = (index + max(1, int(travelled / step_len))) % self.n
             if horizon_end > index:
-                kappa_ahead = float(np.abs(self.curvature[index:horizon_end + 1]).max())
+                kappa_ahead = float(
+                    np.abs(self.curvature[index : horizon_end + 1]).max()
+                )
             else:
-                kappa_ahead = float(max(np.abs(self.curvature[index:]).max(),
-                                        np.abs(self.curvature[:horizon_end + 1]).max()))
-            result = self.mpc.solve(x, y, yaw, self._measured_speed,
-                                    ref_xy, ref_v, kappa_ahead)
+                kappa_ahead = float(
+                    max(
+                        np.abs(self.curvature[index:]).max(),
+                        np.abs(self.curvature[: horizon_end + 1]).max(),
+                    )
+                )
+            result = self.mpc.solve(
+                x, y, yaw, self._measured_speed, ref_xy, ref_v, kappa_ahead
+            )
             if result is not None:
                 speed_cmd, delta_cmd = result
                 self._cmd_speed = speed_cmd
@@ -330,10 +358,12 @@ class PathRacer(Node):
                 if self.debug and now - getattr(self, "_last_debug", 0.0) > 0.5:
                     self._last_debug = now
                     crosstrack = float(np.linalg.norm(self.xy[index] - (x, y)))
-                    print(f"DBG t={now:.1f} pos=({x:.2f},{y:.2f}) idx={index} "
-                          f"xtrack={crosstrack:.2f} v_cmd={speed_cmd:.2f} "
-                          f"v_meas={self._measured_speed:.2f} delta={delta_cmd:+.2f} MPC",
-                          flush=True)
+                    print(
+                        f"DBG t={now:.1f} pos=({x:.2f},{y:.2f}) idx={index} "
+                        f"xtrack={crosstrack:.2f} v_cmd={speed_cmd:.2f} "
+                        f"v_meas={self._measured_speed:.2f} delta={delta_cmd:+.2f} MPC",
+                        flush=True,
+                    )
                 return
             # fall through to pure pursuit on solver failure
 
@@ -344,8 +374,13 @@ class PathRacer(Node):
         anticipation = max(1, int(self._cmd_speed * 1.2 / step_len))
         ahead = (index + np.arange(anticipation + 1)) % self.n
         speed_target = float(self.v_profile[ahead].min())
-        lookahead = float(np.clip(self.lookahead_gain * self._cmd_speed,
-                                  self.min_lookahead, self.max_lookahead))
+        lookahead = float(
+            np.clip(
+                self.lookahead_gain * self._cmd_speed,
+                self.min_lookahead,
+                self.max_lookahead,
+            )
+        )
         steps_ahead = max(1, int(lookahead / (self.lap_length / self.n)))
         target = self.xy[(index + steps_ahead) % self.n]
         alpha = math.atan2(target[1] - y, target[0] - x) - yaw
@@ -369,17 +404,21 @@ class PathRacer(Node):
         # ramp run at a fraction of real time -- the car accelerates far
         # slower than planned and falls behind its own reference. Clamped
         # because a late tick after a recovery must not produce a huge step.
-        dt = min(max(now - getattr(self, "_last_tick", now - 1.0 / self.control_hz),
-                     1e-3), 0.2)
+        dt = min(
+            max(now - getattr(self, "_last_tick", now - 1.0 / self.control_hz), 1e-3),
+            0.2,
+        )
         self._last_tick = now
-        self._cmd_speed += float(np.clip(speed_target - self._cmd_speed,
-                                         -self.a_max * dt, self.a_max * dt))
+        self._cmd_speed += float(
+            np.clip(speed_target - self._cmd_speed, -self.a_max * dt, self.a_max * dt)
+        )
         # Grip check against the commanded steering angle, same friction
         # circle as everywhere else in this stack.
         tan_d = abs(math.tan(delta))
         if tan_d > 1e-6:
-            self._cmd_speed = min(self._cmd_speed,
-                                  math.sqrt(self.a_max * WHEELBASE / tan_d))
+            self._cmd_speed = min(
+                self._cmd_speed, math.sqrt(self.a_max * WHEELBASE / tan_d)
+            )
 
         twist = Twist()
         twist.linear.x = self._cmd_speed
@@ -390,28 +429,49 @@ class PathRacer(Node):
         if self.debug and now - getattr(self, "_last_debug", 0.0) > 0.5:
             self._last_debug = now
             crosstrack = float(np.linalg.norm(self.xy[index] - (x, y)))
-            print(f"DBG t={now:.1f} pos=({x:.2f},{y:.2f}) idx={index} "
-                  f"xtrack={crosstrack:.2f} v_cmd={self._cmd_speed:.2f} "
-                  f"alpha={alpha:+.2f} delta={delta:+.2f}", flush=True)
+            print(
+                f"DBG t={now:.1f} pos=({x:.2f},{y:.2f}) idx={index} "
+                f"xtrack={crosstrack:.2f} v_cmd={self._cmd_speed:.2f} "
+                f"alpha={alpha:+.2f} delta={delta:+.2f}",
+                flush=True,
+            )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--path", default=str(DEFAULT_PATH))
     parser.add_argument("--world-name", default="cfr_speed_course")
-    parser.add_argument("--pose-topic", default=None,
-                        help="pose source; default is the sim ground-truth bridge")
-    parser.add_argument("--pose-msg", choices=["tf", "odom"], default="tf",
-                        help="tf: tf2_msgs/TFMessage (sim bridge); odom: nav_msgs/Odometry (QuestNav)")
-    parser.add_argument("--speed-scale", type=float, default=1.0,
-                        help="scale the planned speed profile (e.g. 0.7 to shake down)")
-    parser.add_argument("--control-hz", type=float, default=20.0,
-                        help="command publish / MPC re-solve rate. 20 Hz is what a full "
-                             "tick (~34 ms) actually sustains; asking for more yields "
-                             "jitter and drives worse, not faster.")
+    parser.add_argument(
+        "--pose-topic",
+        default=None,
+        help="pose source; default is the sim ground-truth bridge",
+    )
+    parser.add_argument(
+        "--pose-msg",
+        choices=["tf", "odom"],
+        default="tf",
+        help="tf: tf2_msgs/TFMessage (sim bridge); odom: nav_msgs/Odometry (QuestNav)",
+    )
+    parser.add_argument(
+        "--speed-scale",
+        type=float,
+        default=1.0,
+        help="scale the planned speed profile (e.g. 0.7 to shake down)",
+    )
+    parser.add_argument(
+        "--control-hz",
+        type=float,
+        default=20.0,
+        help="command publish / MPC re-solve rate. 20 Hz is what a full "
+        "tick (~34 ms) actually sustains; asking for more yields "
+        "jitter and drives worse, not faster.",
+    )
     parser.add_argument("--debug", action="store_true", help="0.5 s telemetry prints")
-    parser.add_argument("--no-mpc", action="store_true",
-                        help="pure pursuit only (MPC is the default tracker)")
+    parser.add_argument(
+        "--no-mpc",
+        action="store_true",
+        help="pure pursuit only (MPC is the default tracker)",
+    )
     args = parser.parse_args()
     if args.pose_topic is None:
         args.pose_topic = f"/world/{args.world_name}/dynamic_pose/info"

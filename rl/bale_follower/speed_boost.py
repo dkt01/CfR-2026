@@ -27,8 +27,8 @@ class BoostConfig:
     # boosting entirely, which is the default so existing checkpoints are
     # unaffected.
     straight_speed: float = 0.0
-    clear_lo: float = 2.0     # m of forward sight: below this, no boost
-    clear_hi: float = 5.0     # m: at/above this, full boost
+    clear_lo: float = 2.0  # m of forward sight: below this, no boost
+    clear_hi: float = 5.0  # m: at/above this, full boost
     # Narrow cone. The corridor is ~0.95 m wide, so a wide cone measures the
     # distance to the side walls rather than the road ahead: at 25 deg a ray
     # meets a wall 0.475 m away after 1.1 m, and forward clearance reads ~1 m
@@ -52,8 +52,13 @@ class BoostConfig:
 class BoostLimiter:
     """Stateful speed ceiling. One instance per driving car."""
 
-    def __init__(self, config: BoostConfig, base_speed: float,
-                 control_hz: float, lidar_fov_deg: float) -> None:
+    def __init__(
+        self,
+        config: BoostConfig,
+        base_speed: float,
+        control_hz: float,
+        lidar_fov_deg: float,
+    ) -> None:
         self.config = config
         self.base_speed = base_speed
         self.control_hz = control_hz
@@ -74,7 +79,9 @@ class BoostLimiter:
         self._steer_avg = 0.0
 
     def forward_clearance(self, scan: np.ndarray) -> float:
-        angles = np.linspace(-self.lidar_fov_deg / 2.0, self.lidar_fov_deg / 2.0, len(scan))
+        angles = np.linspace(
+            -self.lidar_fov_deg / 2.0, self.lidar_fov_deg / 2.0, len(scan)
+        )
         cone = np.abs(angles) <= self.config.cone_deg
         return float(scan[cone].min()) if cone.any() else float(scan.min())
 
@@ -89,8 +96,12 @@ class BoostLimiter:
 
         span = max(c.clear_hi - c.clear_lo, 1e-6)
         room = min(max((self.forward_clearance(scan) - c.clear_lo) / span, 0.0), 1.0)
-        straightness = min(max(1.0 - abs(self._steer_avg) / max(c.steer_gate, 1e-6), 0.0), 1.0)
-        target = self.base_speed + room * straightness * (c.straight_speed - self.base_speed)
+        straightness = min(
+            max(1.0 - abs(self._steer_avg) / max(c.steer_gate, 1e-6), 0.0), 1.0
+        )
+        target = self.base_speed + room * straightness * (
+            c.straight_speed - self.base_speed
+        )
 
         rate = c.accel if target > self._ceiling else c.decel
         step = rate / self.control_hz

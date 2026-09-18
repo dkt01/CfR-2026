@@ -6,7 +6,6 @@ still usable directly with `world:=`.
 """
 
 import sys
-import tempfile
 from pathlib import Path
 
 from launch import LaunchDescription
@@ -38,6 +37,7 @@ from sensors_world import resolve_world  # noqa: E402
 # the markers in here beats keeping a second copy of each world: the Speed
 # Course's world is maintained by hand, and a derived copy of a hand
 # maintained file goes stale the first time somebody edits one and not the
+
 
 def generate_launch_description():
     package_share = FindPackageShare("cfr_arduino_bridge")

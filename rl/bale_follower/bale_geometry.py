@@ -24,7 +24,10 @@ import numpy as np
 
 CHASSIS_LENGTH = 0.55
 CHASSIS_WIDTH = 0.30
-CHASSIS_LOCAL_OFFSET = (0.0, 0.0)  # collision box is centered under the chassis origin in x/y
+CHASSIS_LOCAL_OFFSET = (
+    0.0,
+    0.0,
+)  # collision box is centered under the chassis origin in x/y
 
 
 @dataclass
@@ -53,20 +56,24 @@ def parse_bales(sdf_path: str) -> list[Bale]:
         name = collision.get("name", "")
         if not name.startswith("bale_") or not name.endswith("_collision"):
             continue
-        index = int(name[len("bale_"):-len("_collision")])
+        index = int(name[len("bale_") : -len("_collision")])
         pose_text = collision.findtext("pose")
         size_text = collision.findtext("geometry/box/size")
         if pose_text is None or size_text is None:
             continue
         px, py, _pz, _roll, _pitch, yaw = (float(v) for v in pose_text.split())
         sx, sy, _sz = (float(v) for v in size_text.split())
-        bales.append(Bale(index=index, x=px, y=py, yaw=yaw, half_x=sx / 2.0, half_y=sy / 2.0))
+        bales.append(
+            Bale(index=index, x=px, y=py, yaw=yaw, half_x=sx / 2.0, half_y=sy / 2.0)
+        )
 
     bales.sort(key=lambda bale: bale.index)
     return bales
 
 
-def parse_vehicle_spawn(sdf_path: str, model_name: str = "slash") -> tuple[float, float, float]:
+def parse_vehicle_spawn(
+    sdf_path: str, model_name: str = "slash"
+) -> tuple[float, float, float]:
     """Return the vehicle's default (x, y, yaw) spawn pose from the SDF."""
     tree = ET.parse(sdf_path)
     root = tree.getroot()
@@ -80,7 +87,9 @@ def parse_vehicle_spawn(sdf_path: str, model_name: str = "slash") -> tuple[float
     return x, y, yaw
 
 
-def obb_corners(x: float, y: float, yaw: float, half_x: float, half_y: float) -> np.ndarray:
+def obb_corners(
+    x: float, y: float, yaw: float, half_x: float, half_y: float
+) -> np.ndarray:
     """Four corners (4x2) of an oriented box centered at (x, y) with heading yaw."""
     local = np.array(
         [
@@ -122,7 +131,9 @@ def obb_overlap(corners_a: np.ndarray, corners_b: np.ndarray) -> bool:
 _BALE_BOUNDING_RADIUS = math.hypot(0.9144 / 2.0, 0.4572 / 2.0)
 
 
-def _ray_box_intersection(origin: np.ndarray, direction: np.ndarray, bale: Bale) -> float | None:
+def _ray_box_intersection(
+    origin: np.ndarray, direction: np.ndarray, bale: Bale
+) -> float | None:
     """Distance along `direction` (unit vector) to the nearest hit on bale's OBB, or None."""
     cos_yaw, sin_yaw = math.cos(-bale.yaw), math.sin(-bale.yaw)
     rotation = np.array([[cos_yaw, -sin_yaw], [sin_yaw, cos_yaw]])
@@ -178,7 +189,10 @@ def lidar_scan(
     half_fov = math.radians(fov_deg) / 2.0
     offsets = np.linspace(-half_fov, half_fov, num_bins)
     return np.array(
-        [nearest_bale_distance(bales, x, y, yaw + offset, max_range) for offset in offsets]
+        [
+            nearest_bale_distance(bales, x, y, yaw + offset, max_range)
+            for offset in offsets
+        ]
     )
 
 
@@ -214,8 +228,18 @@ if __name__ == "__main__":
         print(f"  bale_{bale.index}: x={bale.x:.4f} y={bale.y:.4f} yaw={bale.yaw:.5f}")
     print(f"Vehicle spawn: x={spawn[0]:.3f} y={spawn[1]:.3f} yaw={spawn[2]:.3f}")
 
-    scan = lidar_scan(parsed_bales, spawn[0], spawn[1], spawn[2], num_bins=36, fov_deg=180, max_range=6.0)
-    print(f"Lidar scan at spawn (36 bins, 180 deg fov, 6m max): min={scan.min():.2f} max={scan.max():.2f}")
+    scan = lidar_scan(
+        parsed_bales,
+        spawn[0],
+        spawn[1],
+        spawn[2],
+        num_bins=36,
+        fov_deg=180,
+        max_range=6.0,
+    )
+    print(
+        f"Lidar scan at spawn (36 bins, 180 deg fov, 6m max): min={scan.min():.2f} max={scan.max():.2f}"
+    )
 
     if args.plot:
         import matplotlib.pyplot as plt

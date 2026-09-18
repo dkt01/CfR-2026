@@ -60,9 +60,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SDF = REPO_ROOT / "jetson/cfr_arduino_bridge/worlds/speed_course.sdf"
 
 # Published Traxxas Slash 4X4 figures.
-WHEELBASE = 0.324          # m, confirmed against the SDF
-TRACK_WIDTH = 0.296        # m (SDF carries 0.290)
-VEHICLE_MASS = 2.28        # kg, 80.4 oz
+WHEELBASE = 0.324  # m, confirmed against the SDF
+TRACK_WIDTH = 0.296  # m (SDF carries 0.290)
+VEHICLE_MASS = 2.28  # kg, 80.4 oz
 BODY_LENGTH = 0.568
 BODY_WIDTH = 0.296
 # Traxxas 2075 servo: 0.17 s / 60 deg at 6 V, through a linkage that delivers
@@ -71,8 +71,8 @@ SERVO_RATE = math.radians(60) / 0.17
 LINKAGE_RATIO = 0.6
 WHEEL_STEER_RATE = SERVO_RATE * LINKAGE_RATIO
 
-DEFAULT_FULL_LOCK_DEG = 35   # the SDF's existing 0.61 rad
-DEFAULT_UNDERSTEER = 1.3       # midpoint of the 1.2-1.4 band
+DEFAULT_FULL_LOCK_DEG = 35  # the SDF's existing 0.61 rad
+DEFAULT_UNDERSTEER = 1.3  # midpoint of the 1.2-1.4 band
 
 
 def expected_radius(delta_rad: float, understeer: float = DEFAULT_UNDERSTEER) -> float:
@@ -81,8 +81,8 @@ def expected_radius(delta_rad: float, understeer: float = DEFAULT_UNDERSTEER) ->
 
 # ---------------------------------------------------------------- measurement
 
+
 def measure(args) -> None:
-    import numpy as np
     import rclpy
     import requests
     from geometry_msgs.msg import Twist
@@ -97,7 +97,10 @@ def measure(args) -> None:
             self.pub = self.create_publisher(Twist, "/cmd_vel", 10)
             self.samples: list[tuple[float, float, float, float, float, float]] = []
             self.create_subscription(
-                TFMessage, f"/world/{args.world_name}/dynamic_pose/info", self._on_pose, 20
+                TFMessage,
+                f"/world/{args.world_name}/dynamic_pose/info",
+                self._on_pose,
+                20,
             )
 
         def _on_pose(self, msg: TFMessage) -> None:
@@ -108,10 +111,16 @@ def measure(args) -> None:
             # Roll/pitch catch a flipped or airborne car; z catches a launch.
             roll = math.atan2(2 * (q.w * q.x + q.y * q.z), 1 - 2 * (q.x**2 + q.y**2))
             pitch = math.asin(max(-1.0, min(1.0, 2 * (q.w * q.y - q.z * q.x))))
-            self.samples.append((
-                time.monotonic(), t.translation.x, t.translation.y, t.translation.z,
-                _yaw_from_quaternion(q.x, q.y, q.z, q.w), max(abs(roll), abs(pitch)),
-            ))
+            self.samples.append(
+                (
+                    time.monotonic(),
+                    t.translation.x,
+                    t.translation.y,
+                    t.translation.z,
+                    _yaw_from_quaternion(q.x, q.y, q.z, q.w),
+                    max(abs(roll), abs(pitch)),
+                )
+            )
 
         def spin(self, seconds: float) -> None:
             deadline = time.monotonic() + seconds
@@ -194,22 +203,29 @@ def measure(args) -> None:
 
     rclpy.init()
     probe = Probe()
-    print(f"{'delta':>7} {'R_ideal':>8} {'R_meas':>8} {'ratio':>6} {'v':>6} {'rejects':>8}  status")
+    print(
+        f"{'delta':>7} {'R_ideal':>8} {'R_meas':>8} {'ratio':>6} {'v':>6} {'rejects':>8}  status"
+    )
     rows = []
     try:
         for delta_deg in args.angles:
             delta = math.radians(delta_deg)
             probe.brake()
-            requests.post(args.teleport_url,
-                          json={"x": args.x, "y": args.y, "heading": 0}, timeout=5)
+            requests.post(
+                args.teleport_url,
+                json={"x": args.x, "y": args.y, "heading": 0},
+                timeout=5,
+            )
             probe.spin(0.4)
             if not probe.wait_until_stationary():
                 residual = getattr(probe, "_last_residual", float("nan"))
                 speed = probe.current_speed()
                 pos = probe.latest()
-                print(f"{delta_deg:7.1f} {'':>8} {'':>8} {'':>6} {'':>6} {'':>8}  "
-                      f"NOT SETTLED (net {residual:.2f} m/s, "
-                      f"speed {speed:.2f} m/s, at {pos[1]:.1f},{pos[2]:.1f})")
+                print(
+                    f"{delta_deg:7.1f} {'':>8} {'':>8} {'':>6} {'':>6} {'':>8}  "
+                    f"NOT SETTLED (net {residual:.2f} m/s, "
+                    f"speed {speed:.2f} m/s, at {pos[1]:.1f},{pos[2]:.1f})"
+                )
                 continue
 
             twist = Twist()
@@ -231,7 +247,9 @@ def measure(args) -> None:
 
             window = probe.samples[:]
             if len(window) < 8:
-                print(f"{delta_deg:7.1f} {'':>8} {'':>8} {'':>6} {'':>6} {'':>8}  NO DATA")
+                print(
+                    f"{delta_deg:7.1f} {'':>8} {'':>8} {'':>6} {'':>6} {'':>8}  NO DATA"
+                )
                 continue
 
             # Per-interval speeds; drop anything physically impossible rather
@@ -239,7 +257,9 @@ def measure(args) -> None:
             # Difference over a ~0.1 s stride rather than adjacent samples:
             # at 60 Hz, millimetre pose jitter across a 16 ms gap reads as
             # metres per second of phantom speed.
-            stride = max(1, int(0.1 / max(1e-3, (window[-1][0] - window[0][0]) / len(window))))
+            stride = max(
+                1, int(0.1 / max(1e-3, (window[-1][0] - window[0][0]) / len(window)))
+            )
             speeds, yaw_rates, rejects = [], [], 0
             for a, b in zip(window, window[stride:]):
                 dt = b[0] - a[0]
@@ -264,7 +284,9 @@ def measure(args) -> None:
                 status = "UNRELIABLE"
 
             if not speeds:
-                print(f"{delta_deg:7.1f} {'':>8} {'':>8} {'':>6} {'':>6} {rejects:8d}  ALL REJECTED")
+                print(
+                    f"{delta_deg:7.1f} {'':>8} {'':>8} {'':>6} {'':>6} {rejects:8d}  ALL REJECTED"
+                )
                 continue
             v_mean = statistics.fmean(speeds)
             yaw_mean = abs(statistics.fmean(yaw_rates))
@@ -272,8 +294,10 @@ def measure(args) -> None:
             r_meas = v_mean / yaw_mean if yaw_mean > 1e-3 else float("inf")
             ratio = r_meas / r_ideal if math.isfinite(r_meas) else float("inf")
             rows.append((delta_deg, r_ideal, r_meas, ratio, v_mean, status))
-            print(f"{delta_deg:7.1f} {r_ideal:8.2f} {r_meas:8.2f} {ratio:6.2f} "
-                  f"{v_mean:6.2f} {rejects:8d}  {status}")
+            print(
+                f"{delta_deg:7.1f} {r_ideal:8.2f} {r_meas:8.2f} {ratio:6.2f} "
+                f"{v_mean:6.2f} {rejects:8d}  {status}"
+            )
     finally:
         probe.pub.publish(Twist())
         probe.destroy_node()
@@ -283,18 +307,27 @@ def measure(args) -> None:
     if clean:
         mean_ratio = statistics.fmean(r[3] for r in clean)
         full = min(clean, key=lambda r: abs(r[0] - max(args.angles)))
-        print(f"\nundersteer ratio (measured / kinematic): {mean_ratio:.2f} "
-              f"over {len(clean)} clean points")
-        print(f"full-lock radius: {full[2]:.2f} m   target for a real Slash: "
-              f"{expected_radius(math.radians(full[0])):.2f} m "
-              f"(=1.2-1.4x kinematic {full[1]:.2f} m)")
-        print(f"hairpin apex needs 1.30 m -> "
-              f"{'DRIVABLE' if full[2] < 1.25 else 'NOT DRIVABLE in one sweep'}")
+        print(
+            f"\nundersteer ratio (measured / kinematic): {mean_ratio:.2f} "
+            f"over {len(clean)} clean points"
+        )
+        print(
+            f"full-lock radius: {full[2]:.2f} m   target for a real Slash: "
+            f"{expected_radius(math.radians(full[0])):.2f} m "
+            f"(=1.2-1.4x kinematic {full[1]:.2f} m)"
+        )
+        print(
+            f"hairpin apex needs 1.30 m -> "
+            f"{'DRIVABLE' if full[2] < 1.25 else 'NOT DRIVABLE in one sweep'}"
+        )
     else:
-        print("\nno clean measurements -- fix the flagged failures before trusting any number")
+        print(
+            "\nno clean measurements -- fix the flagged failures before trusting any number"
+        )
 
 
 # --------------------------------------------------------------------- patch
+
 
 def patch(args) -> None:
     source = Path(args.sdf_path).read_text()
@@ -313,7 +346,9 @@ def patch(args) -> None:
     new_wheel = f"<ode><mu>{args.mu}</mu><mu2>{args.mu2}</mu2></ode>"
     if old_wheel in patched:
         patched = patched.replace(old_wheel, new_wheel)
-        notes.append(f"wheel friction -> mu={args.mu} mu2={args.mu2}, bogus fdir1 removed")
+        notes.append(
+            f"wheel friction -> mu={args.mu} mu2={args.mu2}, bogus fdir1 removed"
+        )
 
     old_ground = "<ode><mu>50</mu></ode>"
     if old_ground in patched:
@@ -329,14 +364,20 @@ def patch(args) -> None:
     ixx = round(chassis_mass * (box_w**2 + box_h**2) / 12, 4)
     iyy = round(chassis_mass * (box_l**2 + box_h**2) / 12, 4)
     izz = round(chassis_mass * (box_l**2 + box_w**2) / 12, 4)
-    old_inertial = ("<inertial><mass>3.5</mass><inertia><ixx>0.08</ixx>"
-                    "<iyy>0.12</iyy><izz>0.16</izz></inertia></inertial>")
-    new_inertial = (f"<inertial><mass>{chassis_mass}</mass><inertia><ixx>{ixx}</ixx>"
-                    f"<iyy>{iyy}</iyy><izz>{izz}</izz></inertia></inertial>")
+    old_inertial = (
+        "<inertial><mass>3.5</mass><inertia><ixx>0.08</ixx>"
+        "<iyy>0.12</iyy><izz>0.16</izz></inertia></inertial>"
+    )
+    new_inertial = (
+        f"<inertial><mass>{chassis_mass}</mass><inertia><ixx>{ixx}</ixx>"
+        f"<iyy>{iyy}</iyy><izz>{izz}</izz></inertia></inertial>"
+    )
     if old_inertial in patched:
         patched = patched.replace(old_inertial, new_inertial)
-        notes.append(f"chassis mass 3.5 -> {chassis_mass} kg (total {VEHICLE_MASS} kg), "
-                     f"inertia recomputed for the box")
+        notes.append(
+            f"chassis mass 3.5 -> {chassis_mass} kg (total {VEHICLE_MASS} kg), "
+            f"inertia recomputed for the box"
+        )
 
     # 3. Drive joints. AckermannSteering applies one velocity per side, but the
     #    front wheels are also the steered wheels and need a different rotation
@@ -344,27 +385,40 @@ def patch(args) -> None:
     #    the rears only; the plugin still steers the fronts.
     if args.rear_wheel_drive:
         for side in ("left", "right"):
-            both = (f"<{side}_joint>front_{side}_wheel_joint</{side}_joint>"
-                    f"<{side}_joint>rear_{side}_wheel_joint</{side}_joint>")
+            both = (
+                f"<{side}_joint>front_{side}_wheel_joint</{side}_joint>"
+                f"<{side}_joint>rear_{side}_wheel_joint</{side}_joint>"
+            )
             if both in patched:
                 patched = patched.replace(
-                    both, f"<{side}_joint>rear_{side}_wheel_joint</{side}_joint>")
-                notes.append(f"{side}: drive rear joint only (was front+rear, conflicting)")
+                    both, f"<{side}_joint>rear_{side}_wheel_joint</{side}_joint>"
+                )
+                notes.append(
+                    f"{side}: drive rear joint only (was front+rear, conflicting)"
+                )
 
     # 4. Steering limit, from the measured full-lock angle.
     if abs(args.full_lock_deg - DEFAULT_FULL_LOCK_DEG) > 0.05:
         limit = round(full_lock, 3)
-        patched = patched.replace("<steering_limit>0.40</steering_limit>",
-                                  f"<steering_limit>{limit}</steering_limit>")
-        patched = patched.replace("<lower>-0.40</lower><upper>0.40</upper>",
-                                  f"<lower>-{limit}</lower><upper>{limit}</upper>")
-        notes.append(f"steering limit 0.40 -> {limit} rad ({args.full_lock_deg} deg measured)")
+        patched = patched.replace(
+            "<steering_limit>0.40</steering_limit>",
+            f"<steering_limit>{limit}</steering_limit>",
+        )
+        patched = patched.replace(
+            "<lower>-0.40</lower><upper>0.40</upper>",
+            f"<lower>-{limit}</lower><upper>{limit}</upper>",
+        )
+        notes.append(
+            f"steering limit 0.40 -> {limit} rad ({args.full_lock_deg} deg measured)"
+        )
 
     # 5. Track width, published 296 mm against the model's 290 mm.
     if args.fix_track_width:
         if "<wheel_separation>0.290</wheel_separation>" in patched:
-            patched = patched.replace("<wheel_separation>0.290</wheel_separation>",
-                                      f"<wheel_separation>{TRACK_WIDTH}</wheel_separation>")
+            patched = patched.replace(
+                "<wheel_separation>0.290</wheel_separation>",
+                f"<wheel_separation>{TRACK_WIDTH}</wheel_separation>",
+            )
             notes.append(f"wheel separation 0.290 -> {TRACK_WIDTH} m (published track)")
 
     out = Path(args.out)
@@ -379,37 +433,61 @@ def patch(args) -> None:
     print("committed one, because an earlier friction-only patch fixed the")
     print("turning radius and destabilized the vehicle at the same time:")
     print(f"  ros2 launch cfr_arduino_bridge training.launch.py world:={out}")
-    print(f"  python vehicle_calibration.py measure")
-    print(f"Adopt only if every row reads 'ok' AND the understeer ratio lands "
-          f"in 1.2-1.4 (full-lock R around {expected_radius(full_lock):.2f} m).")
+    print("  python vehicle_calibration.py measure")
+    print(
+        f"Adopt only if every row reads 'ok' AND the understeer ratio lands "
+        f"in 1.2-1.4 (full-lock R around {expected_radius(full_lock):.2f} m)."
+    )
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     m = sub.add_parser("measure", help="sweep steering angles against a running sim")
-    m.add_argument("--angles", type=float, nargs="+",
-                   default=[10, 15, 20, 22.9], help="steering angles in degrees")
+    m.add_argument(
+        "--angles",
+        type=float,
+        nargs="+",
+        default=[10, 15, 20, 22.9],
+        help="steering angles in degrees",
+    )
     m.add_argument("--speed", type=float, default=1.5, help="test speed (m/s)")
-    m.add_argument("--settle", type=float, default=2.0, help="settling time before measuring (s)")
+    m.add_argument(
+        "--settle", type=float, default=2.0, help="settling time before measuring (s)"
+    )
     m.add_argument("--window", type=float, default=2.5, help="measurement window (s)")
     m.add_argument("--x", type=float, default=20.0, help="open-ground test x")
-    m.add_argument("--y", type=float, default=-11.0, help="open-ground test y (outside the course)")
+    m.add_argument(
+        "--y", type=float, default=-11.0, help="open-ground test y (outside the course)"
+    )
     m.add_argument("--world-name", default="cfr_speed_course")
     m.add_argument("--teleport-url", default="http://localhost:9003/api/sim/teleport")
-    m.add_argument("--max-plausible-speed", type=float, default=8.0,
-                   help="reject samples implying more than this (m/s)")
+    m.add_argument(
+        "--max-plausible-speed",
+        type=float,
+        default=8.0,
+        help="reject samples implying more than this (m/s)",
+    )
     m.set_defaults(func=measure)
 
     p = sub.add_parser("patch", help="write a corrected copy of the world")
     p.add_argument("--sdf-path", default=str(DEFAULT_SDF))
     p.add_argument("--out", default="/tmp/speed_course_calibrated.sdf")
-    p.add_argument("--full-lock-deg", type=float, default=DEFAULT_FULL_LOCK_DEG,
-                   help="MEASURED front wheel angle at full lock (degrees)")
-    p.add_argument("--turning-circle-m", type=float, default=None,
-                   help="MEASURED full-lock circle diameter (m); reported as an understeer factor")
+    p.add_argument(
+        "--full-lock-deg",
+        type=float,
+        default=DEFAULT_FULL_LOCK_DEG,
+        help="MEASURED front wheel angle at full lock (degrees)",
+    )
+    p.add_argument(
+        "--turning-circle-m",
+        type=float,
+        default=None,
+        help="MEASURED full-lock circle diameter (m); reported as an understeer factor",
+    )
     p.add_argument("--mu", type=float, default=1.2, help="longitudinal tire friction")
     p.add_argument("--mu2", type=float, default=1.0, help="lateral tire friction")
     # Default is 4WD: the Slash 4X4 Ultimate is four-wheel drive, and once the
@@ -417,9 +495,13 @@ def main() -> None:
     # 0.95 m, understeer 1.14 vs 1.09 -- the 4WD figure is actually closer to
     # the realistic band). The front/rear joint conflict was a real modelling
     # error but not the dominant one; mu=50 was.
-    p.add_argument("--rear-wheel-drive", action="store_true", default=False,
-                   help="drive only the rear joints (a 2WD Slash, or to isolate "
-                        "the plugin's one-velocity-per-side drive conflict)")
+    p.add_argument(
+        "--rear-wheel-drive",
+        action="store_true",
+        default=False,
+        help="drive only the rear joints (a 2WD Slash, or to isolate "
+        "the plugin's one-velocity-per-side drive conflict)",
+    )
     p.add_argument("--fix-track-width", action="store_true", default=True)
     p.set_defaults(func=patch)
 
@@ -427,8 +509,10 @@ def main() -> None:
     if getattr(args, "turning_circle_m", None):
         measured_r = args.turning_circle_m / 2
         ideal = WHEELBASE / math.tan(math.radians(args.full_lock_deg))
-        print(f"measured full-lock radius {measured_r:.2f} m vs kinematic {ideal:.2f} m "
-              f"-> understeer factor {measured_r / ideal:.2f}\n")
+        print(
+            f"measured full-lock radius {measured_r:.2f} m vs kinematic {ideal:.2f} m "
+            f"-> understeer factor {measured_r / ideal:.2f}\n"
+        )
     args.func(args)
 
 

@@ -65,8 +65,12 @@ class SmootherConfig:
 
 
 def smoother_from_metadata(
-    metadata: dict, control_hz: float, traction: float, max_speed: float,
-    wheelbase: float, max_steering_angle: float,
+    metadata: dict,
+    control_hz: float,
+    traction: float,
+    max_speed: float,
+    wheelbase: float,
+    max_steering_angle: float,
 ) -> "CommandSmoother":
     """Build a smoother from a checkpoint's metadata JSON (written by train.py).
 
@@ -76,15 +80,17 @@ def smoother_from_metadata(
     """
     knobs = dict(metadata.get("smoother", {}))
     knobs.pop("enabled", None)
-    return CommandSmoother(SmootherConfig(
-        dt=1.0 / control_hz,
-        traction=traction,
-        max_speed=max_speed,
-        min_speed=-metadata.get("env", {}).get("reverse_speed", 0.0),
-        wheelbase=wheelbase,
-        max_steering_angle=max_steering_angle,
-        **knobs,
-    ))
+    return CommandSmoother(
+        SmootherConfig(
+            dt=1.0 / control_hz,
+            traction=traction,
+            max_speed=max_speed,
+            min_speed=-metadata.get("env", {}).get("reverse_speed", 0.0),
+            wheelbase=wheelbase,
+            max_steering_angle=max_steering_angle,
+            **knobs,
+        )
+    )
 
 
 class CommandSmoother:
@@ -117,7 +123,9 @@ class CommandSmoother:
             opti.subject_to(v[k + 1] == v[k] + a[k] * c.dt)
             opti.subject_to(delta[k + 1] == delta[k] + r[k] * c.dt)
             opti.subject_to(opti.bounded(-a_max, a[k], a_max))
-            opti.subject_to(opti.bounded(-c.max_steering_rate, r[k], c.max_steering_rate))
+            opti.subject_to(
+                opti.bounded(-c.max_steering_rate, r[k], c.max_steering_rate)
+            )
             # Lateral acceleration of the kinematic bicycle: v^2 tan(delta)/L.
             # tan(delta)^2 form keeps it smooth through delta = 0.
             lat = v[k + 1] ** 2 * casadi.tan(delta[k + 1]) / c.wheelbase
@@ -129,12 +137,19 @@ class CommandSmoother:
                 + c.w_steer_rate * r[k] ** 2
             )
         opti.subject_to(opti.bounded(c.min_speed, v, c.max_speed))
-        opti.subject_to(opti.bounded(-c.max_steering_angle, delta, c.max_steering_angle))
+        opti.subject_to(
+            opti.bounded(-c.max_steering_angle, delta, c.max_steering_angle)
+        )
         opti.minimize(cost)
         opti.solver(
             "ipopt",
-            {"print_time": False, "ipopt.print_level": 0, "ipopt.sb": "yes",
-             "ipopt.max_iter": 50, "ipopt.tol": 1e-4},
+            {
+                "print_time": False,
+                "ipopt.print_level": 0,
+                "ipopt.sb": "yes",
+                "ipopt.max_iter": 50,
+                "ipopt.tol": 1e-4,
+            },
         )
 
         self._opti = opti
@@ -148,7 +163,9 @@ class CommandSmoother:
         a_max = c.traction * GRAVITY
         v = self._v + np.clip(v_ref - self._v, -a_max * c.dt, a_max * c.dt)
         delta = self._delta + np.clip(
-            delta_ref - self._delta, -c.max_steering_rate * c.dt, c.max_steering_rate * c.dt
+            delta_ref - self._delta,
+            -c.max_steering_rate * c.dt,
+            c.max_steering_rate * c.dt,
         )
         v = float(np.clip(v, c.min_speed, c.max_speed))
         delta = float(np.clip(delta, -c.max_steering_angle, c.max_steering_angle))
@@ -173,7 +190,14 @@ class CommandSmoother:
         opti.set_value(v0, self._v)
         opti.set_value(delta0, self._delta)
         opti.set_value(vr, np.clip(v_ref, self.config.min_speed, self.config.max_speed))
-        opti.set_value(dr, np.clip(delta_ref, -self.config.max_steering_angle, self.config.max_steering_angle))
+        opti.set_value(
+            dr,
+            np.clip(
+                delta_ref,
+                -self.config.max_steering_angle,
+                self.config.max_steering_angle,
+            ),
+        )
         if self._warm is not None:
             for var, val in zip(self._vars, self._warm):
                 opti.set_initial(var, val)
@@ -204,19 +228,25 @@ if __name__ == "__main__":
     for _ in range(ticks):
         v, d = smoother.smooth(cfg.max_speed, cfg.max_steering_angle)
         assert v - prev_v <= a_max * cfg.dt + 1e-6, "accel slew violated"
-        assert abs(d - prev_d) <= cfg.max_steering_rate * cfg.dt + 1e-6, "steer slew violated"
+        assert abs(d - prev_d) <= cfg.max_steering_rate * cfg.dt + 1e-6, (
+            "steer slew violated"
+        )
         lat = v**2 * abs(math.tan(d)) / cfg.wheelbase
         assert lat <= a_max * 1.01, f"friction circle violated: {lat:.2f} > {a_max:.2f}"
         prev_v, prev_d = v, d
     per_tick_ms = (time.perf_counter() - start) / ticks * 1000
-    print(f"steady state under full-lock request: v={v:.2f} m/s delta={d:.2f} rad "
-          f"(lat accel {lat:.2f} <= {a_max:.2f} m/s^2)")
+    print(
+        f"steady state under full-lock request: v={v:.2f} m/s delta={d:.2f} rad "
+        f"(lat accel {lat:.2f} <= {a_max:.2f} m/s^2)"
+    )
     print(f"solve time {per_tick_ms:.2f} ms/tick (budget 100 ms at 10 Hz)")
 
     # And it should track a benign reference essentially exactly.
     smoother.reset()
     for _ in range(30):
         v, d = smoother.smooth(1.0, 0.05)
-    assert abs(v - 1.0) < 0.05 and abs(d - 0.05) < 0.01, f"benign tracking off: {v=} {d=}"
+    assert abs(v - 1.0) < 0.05 and abs(d - 0.05) < 0.01, (
+        f"benign tracking off: {v=} {d=}"
+    )
     print(f"benign reference tracked: v={v:.3f} delta={d:.3f}")
     print("\nCasADi smoother checks passed")

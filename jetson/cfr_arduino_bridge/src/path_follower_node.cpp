@@ -54,17 +54,16 @@ namespace cfr_arduino_bridge {
       // Without this callback `ros2 param set` only updates the parameter
       // server; the cached member kept its startup value and the node went on
       // publishing idle zeros that fight any other /cmd_vel publisher.
-      parameter_callback_ = add_on_set_parameters_callback(
-          [this](const std::vector<rclcpp::Parameter>& parameters) {
-            for (const auto& parameter : parameters) {
-              if (parameter.get_name() == "keep_auto_active_when_idle") {
-                keep_auto_active_when_idle_ = parameter.as_bool();
-              }
-            }
-            rcl_interfaces::msg::SetParametersResult result;
-            result.successful = true;
-            return result;
-          });
+      parameter_callback_ = add_on_set_parameters_callback([this](const std::vector<rclcpp::Parameter>& parameters) {
+        for (const auto& parameter : parameters) {
+          if (parameter.get_name() == "keep_auto_active_when_idle") {
+            keep_auto_active_when_idle_ = parameter.as_bool();
+          }
+        }
+        rcl_interfaces::msg::SetParametersResult result;
+        result.successful = true;
+        return result;
+      });
 
       cmd_vel_publisher_ = create_publisher<geometry_msgs::msg::Twist>("cmd_vel", rclcpp::SensorDataQoS());
       odom_subscription_ = create_subscription<nav_msgs::msg::Odometry>(

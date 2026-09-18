@@ -69,5 +69,3 @@ def resolve_world(context, *_args, **_kwargs):
     rendered = scratch / world.name
     rendered.write_text(text)
     return [rendered]
-
-

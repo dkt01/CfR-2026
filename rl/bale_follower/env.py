@@ -43,7 +43,9 @@ from speed_boost import BoostConfig, BoostLimiter
 from cloud_scan import points_from_pointcloud2, scan_from_points
 
 WHEELBASE = 0.324
-MAX_STEERING_ANGLE = 0.40  # rad, matches jetson/cfr_arduino_bridge/config/arduino_bridge.yaml
+MAX_STEERING_ANGLE = (
+    0.40  # rad, matches jetson/cfr_arduino_bridge/config/arduino_bridge.yaml
+)
 GRAVITY = 9.81
 
 
@@ -52,7 +54,7 @@ class Pose2D:
     x: float
     y: float
     yaw: float
-    stamp: float          # wall clock, for "has a fresh pose arrived yet"
+    stamp: float  # wall clock, for "has a fresh pose arrived yet"
     sim_stamp: float = 0.0  # simulation clock, for anything measuring motion
 
 
@@ -73,13 +75,24 @@ def _unpause_world(world: str, attempts: int = 3) -> bool:
     hammering WorldControl per step corrupts the server's heap.
     """
     command = [
-        "gz", "service", "-s", f"/world/{world}/control",
-        "--reqtype", "gz.msgs.WorldControl", "--reptype", "gz.msgs.Boolean",
-        "--timeout", "3000", "--req", "pause: false",
+        "gz",
+        "service",
+        "-s",
+        f"/world/{world}/control",
+        "--reqtype",
+        "gz.msgs.WorldControl",
+        "--reptype",
+        "gz.msgs.Boolean",
+        "--timeout",
+        "3000",
+        "--req",
+        "pause: false",
     ]
     for attempt in range(attempts):
         try:
-            result = subprocess.run(command, capture_output=True, text=True, timeout=6.0, check=False)
+            result = subprocess.run(
+                command, capture_output=True, text=True, timeout=6.0, check=False
+            )
             if result.returncode == 0 and "data: true" in result.stdout:
                 return True
         except subprocess.TimeoutExpired:
@@ -168,7 +181,6 @@ class BaleFollowerEnv(gymnasium.Env):
             low=0.0, high=1.0, shape=(obs_dim,), dtype=np.float32
         )
 
-
         self._pose_lock = threading.Lock()
         self._latest_pose: Pose2D | None = None
         self._episode_step = 0
@@ -211,7 +223,8 @@ class BaleFollowerEnv(gymnasium.Env):
         # measured against once rendering pulls the real-time factor below 1.
         self._sim_time = 0.0
         self._node.create_subscription(
-            Clock, "/clock",
+            Clock,
+            "/clock",
             lambda m: setattr(self, "_sim_time", m.clock.sec + m.clock.nanosec * 1e-9),
             10,
         )
@@ -256,8 +269,9 @@ class BaleFollowerEnv(gymnasium.Env):
         # returns at 2.5 m.
         sin_pitch = max(-1.0, min(1.0, 2.0 * (q.w * q.y - q.z * q.x)))
         pitch = math.asin(sin_pitch)
-        roll = math.atan2(2.0 * (q.w * q.x + q.y * q.z),
-                          1.0 - 2.0 * (q.x * q.x + q.y * q.y))
+        roll = math.atan2(
+            2.0 * (q.w * q.x + q.y * q.z), 1.0 - 2.0 * (q.x * q.x + q.y * q.y)
+        )
         with self._pose_lock:
             self._latest_pose = pose
             self._tilt = (pitch, roll)
@@ -276,8 +290,11 @@ class BaleFollowerEnv(gymnasium.Env):
             pitch, roll = self._tilt
         return scan_from_points(
             points_from_pointcloud2(msg),
-            self.num_lidar_bins, self.lidar_fov_deg, self.lidar_max_range,
-            pitch=pitch, roll=roll,
+            self.num_lidar_bins,
+            self.lidar_fov_deg,
+            self.lidar_max_range,
+            pitch=pitch,
+            roll=roll,
         )
 
     def _wait_for_pose(self, since: float) -> Pose2D:
@@ -288,7 +305,9 @@ class BaleFollowerEnv(gymnasium.Env):
             if pose is not None and pose.stamp > since:
                 return pose
             time.sleep(0.005)
-        raise TimeoutError(f"no pose received on /world/{self.world_name}/dynamic_pose/info")
+        raise TimeoutError(
+            f"no pose received on /world/{self.world_name}/dynamic_pose/info"
+        )
 
     def _settle(self, seconds: float) -> None:
         """Hold zero velocity so the car stops before the next episode starts."""
@@ -297,14 +316,18 @@ class BaleFollowerEnv(gymnasium.Env):
             self._cmd_pub.publish(Twist())
             time.sleep(0.02)
 
-    def _teleport(self, x: float, y: float, heading_deg: float, attempts: int = 3) -> None:
+    def _teleport(
+        self, x: float, y: float, heading_deg: float, attempts: int = 3
+    ) -> None:
         # teleport_api shells out to `gz service`, which can time out right
         # after a world reset while Gazebo is still settling.
         message = None
         for attempt in range(attempts):
             try:
                 response = requests.post(
-                    self.teleport_url, json={"x": x, "y": y, "heading": heading_deg}, timeout=5.0
+                    self.teleport_url,
+                    json={"x": x, "y": y, "heading": heading_deg},
+                    timeout=5.0,
                 )
                 result = response.json()
                 if response.ok and result.get("success"):
@@ -336,9 +359,7 @@ class BaleFollowerEnv(gymnasium.Env):
     def encode_action(self, speed: float, steer_fraction: float) -> np.ndarray:
         """Inverse of decode_action, for re-injecting externally filtered commands."""
         fraction = (speed + self.reverse_speed) / (self.max_speed + self.reverse_speed)
-        return np.array(
-            [2.0 * fraction - 1.0, steer_fraction], dtype=np.float32
-        )
+        return np.array([2.0 * fraction - 1.0, steer_fraction], dtype=np.float32)
 
     def _apply_traction(self, speed: float, steer_fraction: float) -> float:
         """Limit the commanded speed to what the tires can transmit.
@@ -353,7 +374,9 @@ class BaleFollowerEnv(gymnasium.Env):
         """
         a_max = self.traction * GRAVITY
         dt = 1.0 / self.control_hz
-        speed = self._cmd_speed + min(max(speed - self._cmd_speed, -a_max * dt), a_max * dt)
+        speed = self._cmd_speed + min(
+            max(speed - self._cmd_speed, -a_max * dt), a_max * dt
+        )
         tan_delta = abs(math.tan(steer_fraction * MAX_STEERING_ANGLE))
         if tan_delta > 1e-6:
             grip_speed = math.sqrt(a_max * WHEELBASE / tan_delta)
@@ -373,10 +396,22 @@ class BaleFollowerEnv(gymnasium.Env):
         """
         cap = 1.5
         left = bale_geometry.lidar_scan(
-            self.bales, pose.x, pose.y, pose.yaw + math.pi / 2, 5, 60.0, self.lidar_max_range
+            self.bales,
+            pose.x,
+            pose.y,
+            pose.yaw + math.pi / 2,
+            5,
+            60.0,
+            self.lidar_max_range,
         ).min()
         right = bale_geometry.lidar_scan(
-            self.bales, pose.x, pose.y, pose.yaw - math.pi / 2, 5, 60.0, self.lidar_max_range
+            self.bales,
+            pose.x,
+            pose.y,
+            pose.yaw - math.pi / 2,
+            5,
+            60.0,
+            self.lidar_max_range,
         ).min()
         return abs(min(left, cap) - min(right, cap))
 
@@ -402,7 +437,11 @@ class BaleFollowerEnv(gymnasium.Env):
         return self.spawn_pose
 
     def _build_observation(
-        self, pose: Pose2D, speed: float, yaw_rate: float, scan: np.ndarray | None = None
+        self,
+        pose: Pose2D,
+        speed: float,
+        yaw_rate: float,
+        scan: np.ndarray | None = None,
     ) -> np.ndarray:
         if scan is None and self.scan_source == "cloud":
             scan = self._cloud_scan()
@@ -418,8 +457,10 @@ class BaleFollowerEnv(gymnasium.Env):
                 # signal that the camera is not there.
                 self._cloud_misses += 1
                 if self._cloud_misses == 1:
-                    print("WARNING: scan_source=cloud but no cloud yet; using analytic scan",
-                          flush=True)
+                    print(
+                        "WARNING: scan_source=cloud but no cloud yet; using analytic scan",
+                        flush=True,
+                    )
                 elif self._cloud_misses >= 200:
                     raise RuntimeError(
                         f"scan_source=cloud but {self.cloud_topic} has produced nothing "
@@ -430,16 +471,26 @@ class BaleFollowerEnv(gymnasium.Env):
                 self._cloud_misses = 0
         if scan is None:
             scan = bale_geometry.lidar_scan(
-                self.bales, pose.x, pose.y, pose.yaw, self.num_lidar_bins, self.lidar_fov_deg, self.lidar_max_range
+                self.bales,
+                pose.x,
+                pose.y,
+                pose.yaw,
+                self.num_lidar_bins,
+                self.lidar_fov_deg,
+                self.lidar_max_range,
             )
         # Only the observation is corrupted; collision checks and the reward's
         # min_clearance stay on the ground-truth scan, the same split a real
         # robot has between what it senses and what physically happens.
-        scan = zed_sim.apply(scan.copy(), self.zed_config, self.lidar_max_range, self._rng)
+        scan = zed_sim.apply(
+            scan.copy(), self.zed_config, self.lidar_max_range, self._rng
+        )
         normalized_scan = (scan / self.lidar_max_range).astype(np.float32)
         normalized_speed = np.clip(speed / self.obs_speed_scale, 0.0, 1.0)
         normalized_yaw_rate = np.clip((yaw_rate + 1.0) / 2.0, 0.0, 1.0)
-        return np.concatenate([normalized_scan, [normalized_speed, normalized_yaw_rate]]).astype(np.float32)
+        return np.concatenate(
+            [normalized_scan, [normalized_speed, normalized_yaw_rate]]
+        ).astype(np.float32)
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
         super().reset(seed=seed)
@@ -480,18 +531,25 @@ class BaleFollowerEnv(gymnasium.Env):
         # episode, purely because it had never trained against a limit the
         # real hardware always imposes.
         max_delta_step = self.max_steering_rate / self.control_hz / MAX_STEERING_ANGLE
-        steer_fraction = float(np.clip(
-            steer_fraction,
-            self._cmd_steer_fraction - max_delta_step,
-            self._cmd_steer_fraction + max_delta_step,
-        ))
+        steer_fraction = float(
+            np.clip(
+                steer_fraction,
+                self._cmd_steer_fraction - max_delta_step,
+                self._cmd_steer_fraction + max_delta_step,
+            )
+        )
         self._cmd_steer_fraction = steer_fraction
         # Raise the ceiling on clear straights, before the traction limit --
         # the friction circle still has the last word on what the tires allow.
         if self.boost.enabled:
             ground_truth = bale_geometry.lidar_scan(
-                self.bales, self._prev_pose.x, self._prev_pose.y, self._prev_pose.yaw,
-                self.num_lidar_bins, self.lidar_fov_deg, self.lidar_max_range,
+                self.bales,
+                self._prev_pose.x,
+                self._prev_pose.y,
+                self._prev_pose.yaw,
+                self.num_lidar_bins,
+                self.lidar_fov_deg,
+                self.lidar_max_range,
             )
             speed = self.boost.apply(speed, ground_truth, steer_fraction)
         speed = self._apply_traction(speed, steer_fraction)
@@ -499,7 +557,9 @@ class BaleFollowerEnv(gymnasium.Env):
         if abs(speed) > 1e-3:
             # Signed bicycle model: reversing with the wheels turned swings
             # the nose the other way, exactly as the real car does.
-            angular_z = (speed / WHEELBASE) * math.tan(steer_fraction * MAX_STEERING_ANGLE)
+            angular_z = (speed / WHEELBASE) * math.tan(
+                steer_fraction * MAX_STEERING_ANGLE
+            )
 
         twist = Twist()
         twist.linear.x = speed
@@ -512,7 +572,13 @@ class BaleFollowerEnv(gymnasium.Env):
 
         collided = bale_geometry.check_collision(self.bales, pose.x, pose.y, pose.yaw)
         scan = bale_geometry.lidar_scan(
-            self.bales, pose.x, pose.y, pose.yaw, self.num_lidar_bins, self.lidar_fov_deg, self.lidar_max_range
+            self.bales,
+            pose.x,
+            pose.y,
+            pose.yaw,
+            self.num_lidar_bins,
+            self.lidar_fov_deg,
+            self.lidar_max_range,
         )
         progress_distance = forward_progress(
             self._prev_pose.x, self._prev_pose.y, self._prev_pose.yaw, pose.x, pose.y
@@ -532,7 +598,9 @@ class BaleFollowerEnv(gymnasium.Env):
         dt = pose.sim_stamp - self._prev_pose.sim_stamp
         if not (1e-4 < dt < 1.0):
             dt = 1.0 / self.control_hz
-        measured_speed = math.hypot(pose.x - self._prev_pose.x, pose.y - self._prev_pose.y) / dt
+        measured_speed = (
+            math.hypot(pose.x - self._prev_pose.x, pose.y - self._prev_pose.y) / dt
+        )
         measured_yaw_rate = _wrap_to_pi(pose.yaw - self._prev_pose.yaw) / dt
 
         center_error = self._center_error(pose)
@@ -565,7 +633,9 @@ class BaleFollowerEnv(gymnasium.Env):
         terminated = collided
         truncated = self._episode_time >= self.episode_time_limit_s or stuck
 
-        observation = self._build_observation(pose, measured_speed, measured_yaw_rate, scan)
+        observation = self._build_observation(
+            pose, measured_speed, measured_yaw_rate, scan
+        )
         info = {
             "collided": collided,
             "stuck": stuck,
