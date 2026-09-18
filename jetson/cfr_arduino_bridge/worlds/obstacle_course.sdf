@@ -219,16 +219,10 @@
       <visual name="bale_95_visual"><pose>-2.6549 -3.1329 0.1778 0.0000 0.0000 6.2832</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
       <collision name="bale_96_collision"><pose>-1.7941 -3.1329 0.1778 0.0000 0.0000 6.2832</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry></collision>
       <visual name="bale_96_visual"><pose>-1.7941 -3.1329 0.1778 0.0000 0.0000 6.2832</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
-      <collision name="bale_97_collision"><pose>-1.0843 -2.6715 0.1778 0.0000 0.0000 6.2832</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry></collision>
-      <visual name="bale_97_visual"><pose>-1.0843 -2.6715 0.1778 0.0000 0.0000 6.2832</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
       <collision name="bale_98_collision"><pose>-9.4494 1.6973 0.1778 0.0000 0.0000 4.2306</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry></collision>
       <visual name="bale_98_visual"><pose>-9.4494 1.6973 0.1778 0.0000 0.0000 4.2306</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
       <collision name="bale_99_collision"><pose>-8.8528 2.3958 0.1778 0.0000 0.0000 3.7850</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry></collision>
       <visual name="bale_99_visual"><pose>-8.8528 2.3958 0.1778 0.0000 0.0000 3.7850</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
-      <collision name="bale_100_collision"><pose>-0.8811 -3.3319 0.1778 0.0000 0.0000 4.7124</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry></collision>
-      <visual name="bale_100_visual"><pose>-0.8811 -3.3319 0.1778 0.0000 0.0000 4.7124</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
-      <collision name="bale_101_collision"><pose>-0.8811 -4.1955 0.1778 0.0000 0.0000 4.7124</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry></collision>
-      <visual name="bale_101_visual"><pose>-0.8811 -4.1955 0.1778 0.0000 0.0000 4.7124</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
       <collision name="bale_102_collision"><pose>-0.0260 -4.8559 0.1778 0.0000 0.0000 6.2832</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry></collision>
       <visual name="bale_102_visual"><pose>-0.0260 -4.8559 0.1778 0.0000 0.0000 6.2832</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
       <collision name="bale_103_collision"><pose>0.8419 -4.8559 0.1778 0.0000 0.0000 6.2832</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry></collision>
@@ -743,6 +737,32 @@
       <visual name="bank_visual"><pose>-4.0276 -9.3717 0.0000 0.0000 0.0000 3.1416</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/bank.stl</uri></mesh></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
       <collision name="surface_collision"><pose>-4.0276 -9.3717 0.0711 0.0000 0.1484 0.0000</pose><geometry><box><size>1.2327 3.2513 0.0400</size></box></geometry></collision>
     </link></model>
+
+    <!-- Gap bales: the wall between the car wash's open area and the bucket section is four bale-widths tall. obstacle_randomizer_node parks one of the four off-course on every draw, moving the one-bale entrance rather than leaving it fixed. -->
+    <model name="gap_bale_0"><static>true</static><pose>-5.2574 3.5371 0 0 0 4.71239</pose>
+      <link name="link">
+      <collision name="bale_collision"><pose>0.0000 0.0000 0.1778 0.0000 0.0000 0.0000</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry></collision>
+      <visual name="bale_visual"><pose>0.0000 0.0000 0.1778 0.0000 0.0000 0.0000</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
+      </link>
+    </model>
+    <model name="gap_bale_1"><static>true</static><pose>-1.0842 -2.6714 0 0 0 0.00000</pose>
+      <link name="link">
+      <collision name="bale_collision"><pose>0.0000 0.0000 0.1778 0.0000 0.0000 0.0000</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry></collision>
+      <visual name="bale_visual"><pose>0.0000 0.0000 0.1778 0.0000 0.0000 0.0000</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
+      </link>
+    </model>
+    <model name="gap_bale_2"><static>true</static><pose>-0.8812 -3.3316 0 0 0 4.71239</pose>
+      <link name="link">
+      <collision name="bale_collision"><pose>0.0000 0.0000 0.1778 0.0000 0.0000 0.0000</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry></collision>
+      <visual name="bale_visual"><pose>0.0000 0.0000 0.1778 0.0000 0.0000 0.0000</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
+      </link>
+    </model>
+    <model name="gap_bale_3"><static>true</static><pose>-0.8812 -4.1948 0 0 0 4.71239</pose>
+      <link name="link">
+      <collision name="bale_collision"><pose>0.0000 0.0000 0.1778 0.0000 0.0000 0.0000</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry></collision>
+      <visual name="bale_visual"><pose>0.0000 0.0000 0.1778 0.0000 0.0000 0.0000</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
+      </link>
+    </model>
 
     <!-- Buckets: moved at runtime by obstacle_randomizer_node. -->
     <model name="bucket_0"><static>true</static><pose>2.1586 -3.8653 0 0 0 0</pose>

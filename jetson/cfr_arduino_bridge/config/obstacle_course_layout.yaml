@@ -32,6 +32,28 @@ obstacle_randomizer:
           bucket_3: [2.1626, -1.9353]
           bucket_4: [0.1265, -2.4300]
           bucket_5: [1.2186, -3.8653]
+    gap_bales:
+      # The wall between the car wash's open area and the bucket section is
+      # four bale-widths tall.  Exactly one of the four stands off-course at
+      # `parking` on every draw, leaving a one-bale gap for the entrance; the
+      # other three stand at their own position on the wall.  `default_gap`
+      # is which one is left out on reset, matching the layout the drawing
+      # showed before this was randomized.
+      names: [gap_bale_0, gap_bale_1, gap_bale_2, gap_bale_3]
+      default_gap: gap_bale_0
+      parking: [-5.2574, 3.5371]
+      gap_bale_0:
+        position: [-0.8812, -1.8076]
+        yaw: 4.71239
+      gap_bale_1:
+        position: [-1.0842, -2.6714]
+        yaw: 0.00000
+      gap_bale_2:
+        position: [-0.8812, -3.3316]
+        yaw: 4.71239
+      gap_bale_3:
+        position: [-0.8812, -4.1948]
+        yaw: 4.71239
     hoops:
       names: [hoop_0, hoop_1, hoop_2]
       hoop_0:

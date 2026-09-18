@@ -132,6 +132,32 @@ HOOPS = [
 ]
 HOOP_BASE_LENGTH = 0.709
 
+# The wall between the car wash's open area and the bucket section is four
+# bale-widths tall.  The drawing only puts three bales on it, leaving the
+# fourth's width as the entrance; obstacle_randomizer_node now parks a
+# different one of the four off-course on every draw, so all four have to be
+# their own model rather than baked into the static bale wall like the rest
+# of the 121 dxf_obstacle_bales() bales.  (x feet, y feet, yaw radians in the
+# world frame -- unlike HOOPS above, these are the pose the bale stands at
+# directly, not a DXF-frame angle to be flipped by build_bales.)  Ordered
+# nearest the car wash to nearest the bucket-room corner; index 0, nearest
+# the car wash, is the one left parked on reset, matching the layout the
+# drawing showed before this was randomized.
+GAP_BALES = [
+    (100.406, 115.035, 4.71239),
+    (101.072, 117.869, 0.00000),
+    (100.406, 120.035, 4.71239),
+    (100.406, 122.867, 4.71239),
+]
+# The three of the four GAP_BALES that are real dxf_obstacle_bales() hatches
+# (all but index 0, which does not exist in the drawing) land inside this box
+# in world meters.  build_bales() excludes them so they are not drawn twice;
+# picked by position rather than DXF order, since HATCH order is not stable
+# across edits to the drawing.
+GAP_WALL_BOUNDS = ((-1.3, -4.4), (-0.7, -2.4))
+# Reuses the buckets' off-course row, one slot past the highest bucket index.
+GAP_BALE_PARKING_INDEX = BUCKET_MAX
+
 # The direction the car drives away from the start line.  to_world() turns
 # the drawing so that this is +x, which is what makes a path goal read the
 # same here as it does on the real course.
@@ -366,6 +392,20 @@ def build_bales(bales) -> str:
     shifted = sum(1 for before, after in zip(placed, cleared) if before != after)
     if shifted:
         print(f"moved {shifted} bale(s) along the wall to clear the start signal")
+
+    (gx0, gy0), (gx1, gy1) = GAP_WALL_BOUNDS
+    on_gap_wall = [(x, y) for x, y, _ in cleared if gx0 <= x <= gx1 and gy0 <= y <= gy1]
+    if len(on_gap_wall) != 3:
+        raise RuntimeError(
+            "Expected 3 bales on the wide-area/bucket wall within "
+            f"GAP_WALL_BOUNDS, found {len(on_gap_wall)} -- update GAP_BALES "
+            "and GAP_WALL_BOUNDS to match the drawing"
+        )
+    cleared = [
+        (x, y, yaw)
+        for x, y, yaw in cleared
+        if not (gx0 <= x <= gx1 and gy0 <= y <= gy1)
+    ]
 
     body = ""
     for index, (x, y, yaw) in enumerate(cleared):
@@ -757,6 +797,37 @@ def parking_spot(index: int) -> tuple[float, float]:
     return x - BUCKET_PARKING_PITCH * index, y
 
 
+def build_gap_bales() -> str:
+    """One model per wall bale, parked here by default at index 0.
+
+    Matches the fixed layout the drawing showed before this was randomized:
+    index 0 (nearest the car wash) stands off-course, the other three stand
+    on the wall.
+    """
+    out = (
+        "    <!-- Gap bales: the wall between the car wash's open area and"
+        " the bucket section is four bale-widths tall. obstacle_randomizer_node"
+        " parks one of the four off-course on every draw, moving the"
+        " one-bale entrance rather than leaving it fixed. -->\n"
+    )
+    park_x, park_y = parking_spot(GAP_BALE_PARKING_INDEX)
+    for index, (x_ft, y_ft, yaw) in enumerate(GAP_BALES):
+        x, y = (park_x, park_y) if index == 0 else to_world(x_ft, y_ft)
+        body = box(
+            "bale",
+            (0, 0, BALE_HEIGHT / 2, 0, 0, 0),
+            (BALE_LENGTH, BALE_WIDTH, BALE_HEIGHT),
+            STRAW,
+        )
+        out += (
+            f'    <model name="gap_bale_{index}"><static>true</static>'
+            f"<pose>{x:.4f} {y:.4f} 0 0 0 {yaw:.5f}</pose>\n"
+            f'      <link name="link">\n{body}      </link>\n'
+            "    </model>\n"
+        )
+    return out
+
+
 def build_buckets() -> str:
     """One model per bucket so the randomizer can move them independently."""
     out = "    <!-- Buckets: moved at runtime by obstacle_randomizer_node. -->\n"
@@ -943,6 +1014,7 @@ def build_world(dxf_file: Path) -> str:
         )
         + build_bank()
         + "\n"
+        + build_gap_bales()
         + build_buckets()
         + build_hoops()
         + build_start_signal()
@@ -1001,6 +1073,20 @@ def build_layout_yaml() -> str:
         world_x, world_y = to_world(*bucket)
         nominal += f"          bucket_{index}: [{world_x:.4f}, {world_y:.4f}]" + "\n"
 
+    gap_parking_x, gap_parking_y = parking_spot(GAP_BALE_PARKING_INDEX)
+    gap_names = ", ".join(f"gap_bale_{index}" for index in range(len(GAP_BALES)))
+    gap_bales = ""
+    for index, (x_ft, y_ft, yaw) in enumerate(GAP_BALES):
+        world_x, world_y = to_world(x_ft, y_ft)
+        gap_bales += "\n".join(
+            [
+                f"      gap_bale_{index}:",
+                f"        position: [{world_x:.4f}, {world_y:.4f}]",
+                f"        yaw: {yaw:.5f}",
+                "",
+            ]
+        )
+
     signal = start_signal.layout_block(SIGNAL_POSITION, LANE_HEADING)
     names = ", ".join(f"hoop_{index}" for index in range(len(HOOPS)))
     hoops = ""
@@ -1055,7 +1141,17 @@ obstacle_randomizer:
       parking_pitch: {BUCKET_PARKING_PITCH}
       # Where the drawing itself puts them; the reset service restores these.
       nominal:
-{nominal}    hoops:
+{nominal}    gap_bales:
+      # The wall between the car wash's open area and the bucket section is
+      # four bale-widths tall.  Exactly one of the four stands off-course at
+      # `parking` on every draw, leaving a one-bale gap for the entrance; the
+      # other three stand at their own position on the wall.  `default_gap`
+      # is which one is left out on reset, matching the layout the drawing
+      # showed before this was randomized.
+      names: [{gap_names}]
+      default_gap: gap_bale_0
+      parking: [{gap_parking_x:.4f}, {gap_parking_y:.4f}]
+{gap_bales}    hoops:
       names: [{names}]
 {hoops}{signal}"""
 
