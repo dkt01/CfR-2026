@@ -50,6 +50,14 @@ BALE_LENGTH = 36 * INCH
 BALE_WIDTH = 18 * INCH
 BALE_HEIGHT = 14 * INCH
 
+# Straw bales are soft and grab the car rather than let it slide past, unlike
+# the MDF/plywood ramp, tunnel, and banked-turn walls (left at the engine's
+# default friction) that a car can reasonably scrape against.  Matched to the
+# floor's own grip (see the floor collision's <mu>50</mu> below) so a car
+# pressed into a bale wall can't out-drive the friction and stalls instead of
+# sliding along it.
+BALE_FRICTION = 50
+
 # The start/finish line, and the centerline of the 32 in wide start lane, in
 # DXF feet.  The world origin sits here with +x pointing the way the car
 # drives away from the line, so a path goal reads the same as it would on the
@@ -414,6 +422,7 @@ def build_bales(bales) -> str:
             (x, y, BALE_HEIGHT / 2, 0, 0, yaw),
             (BALE_LENGTH, BALE_WIDTH, BALE_HEIGHT),
             STRAW,
+            friction=BALE_FRICTION,
         )
     return (
         "    <!-- 65 ft by 48 ft obstacle course, walled with 14 x 18 x 36 in"
@@ -818,6 +827,7 @@ def build_gap_bales() -> str:
             (0, 0, BALE_HEIGHT / 2, 0, 0, 0),
             (BALE_LENGTH, BALE_WIDTH, BALE_HEIGHT),
             STRAW,
+            friction=BALE_FRICTION,
         )
         out += (
             f'    <model name="gap_bale_{index}"><static>true</static>'

@@ -40,6 +40,13 @@ BALE_LENGTH = 36 * INCH
 BALE_WIDTH = 18 * INCH
 BALE_HEIGHT = 14 * INCH
 BALE_Z = BALE_HEIGHT / 2
+
+# Straw bales are soft and grab the car rather than let it slide past.
+# Well above the wheel-floor grip (mu 1.0-1.2 -- see the wheel and floor
+# collisions in speed_course.sdf) so a car pressed into a bale wall can't
+# out-drive the friction and stalls instead of sliding along it.  Matches
+# BALE_FRICTION in generate_obstacle_course.py.
+BALE_FRICTION = 50
 FOOT = 0.3048
 PACKAGE = Path(__file__).parents[1] / "cfr_arduino_bridge"
 WORLD_FILE = PACKAGE / "worlds/speed_course.sdf"
@@ -80,8 +87,13 @@ def bale_xml(index: int, x: float, y: float, yaw: float) -> str:
         f"<box><size>{BALE_LENGTH:.4f} {BALE_WIDTH:.4f} {BALE_HEIGHT:.4f}</size></box>"
     )
     material = "<material><diffuse>0.72 0.48 0.12 1</diffuse><specular>0.08 0.05 0.01 1</specular></material>"
+    surface = (
+        f"<surface><friction><ode><mu>{BALE_FRICTION}</mu><mu2>{BALE_FRICTION}</mu2></ode>"
+        f"<bullet><friction>{BALE_FRICTION}</friction><friction2>{BALE_FRICTION}</friction2>"
+        "</bullet></friction></surface>"
+    )
     return (
-        f'      <collision name="bale_{index}_collision"><pose>{pose}</pose><geometry>{geometry}</geometry></collision>\n'
+        f'      <collision name="bale_{index}_collision"><pose>{pose}</pose><geometry>{geometry}</geometry>{surface}</collision>\n'
         f'      <visual name="bale_{index}_visual"><pose>{pose}</pose><geometry>{geometry}</geometry>{material}</visual>'
     )
 
