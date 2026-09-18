@@ -39,6 +39,11 @@ env:
   randomize_layout: true
   layout_seeds: [101, 102, 103, 104, 105, 106, 107, 108, 109, 110]
   episodes_per_layout: 5
+  # Above _call_service's own 8 s default: randomize triggers ~12 sequential
+  # `gz service` calls inside obstacle_randomizer_node, whose own latency
+  # already nears 8 s on a quiet host and blew past it when another training
+  # run's Gazebo server shared the same CPU (observed TimeoutError).
+  randomize_timeout_s: 30.0
 zed_sim:
   enabled: true
   hfov_deg: 110.0

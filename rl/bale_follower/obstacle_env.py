@@ -114,6 +114,7 @@ class ObstacleCourseEnv(gymnasium.Env):
         episodes_per_layout: int = 5,
         randomizer_node: str = "/obstacle_randomizer",
         hoop_monitor_node: str = "/hoop_monitor",
+        randomize_timeout_s: float = 30.0,
     ) -> None:
         super().__init__()
         self.traction = traction
@@ -192,6 +193,7 @@ class ObstacleCourseEnv(gymnasium.Env):
         self.episodes_per_layout = max(1, episodes_per_layout)
         self._episode_count = 0
         self._last_layout_index: int | None = None
+        self.randomize_timeout_s = randomize_timeout_s
 
         # Per-run hoop tracking, latest-known from hoop_monitor_node's
         # ~/status. Reset every episode via its ~/reset service (independent
@@ -383,7 +385,18 @@ class ObstacleCourseEnv(gymnasium.Env):
             return
         else:
             self._set_randomizer_seed(-1)
-        result = self._call_service(self._randomize_client, Trigger.Request())
+        # Longer than _call_service's default: this one triggers roughly a
+        # dozen sequential `gz service` calls inside obstacle_randomizer_node
+        # (observed ~340 ms each), so its own latency already approaches the
+        # 8 s default under a quiet host -- and a second training container
+        # or anything else competing for CPU pushes it well past that
+        # (observed: timed out at 8 s with another training run's Gazebo
+        # server also active on the same host).
+        result = self._call_service(
+            self._randomize_client,
+            Trigger.Request(),
+            timeout_s=self.randomize_timeout_s,
+        )
         self._node.get_logger().info(f"course layout: {result.message}")
 
     # ------------------------------------------------------------ mechanics
