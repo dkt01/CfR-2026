@@ -287,6 +287,52 @@ rewards and detect collisions when the car inevitably hits a bale.
   car is 0.55 x 0.30 m, so clearances are tight; `safe_clearance` has to stay
   well under half a corridor width or every pose is penalized.
 
+## Obstacle Course
+
+A second, sibling pipeline for the Obstacle Course lives alongside the Speed
+Course files above: `obstacle_env.py` (env), `obstacle_reward.py` (reward),
+`config_obstacle.yaml` (config), `train_obstacle.py` (training entrypoint),
+`run_policy_obstacle.py` (deployment driver). Nothing here has been trained
+yet -- this is the scaffolding, not a checkpoint.
+
+What's different from the Speed Course, and why:
+
+- **Objective is lap time, not "stay in the corridor."** The reward is
+  dominated by a flat per-step time cost (`k_time`); see
+  `obstacle_reward.py`'s docstring.
+- **Perception is the ZED point cloud, not analytic geometry.** The course's
+  ramps, tunnel and helix are 3D in a way BaleFollowerEnv's top-down bale-box
+  model cannot represent, so `scan_source: cloud` is mandatory here, which
+  means launching with `sensors:=true` (a render context) is mandatory too --
+  see `obstacle_env.py`'s module docstring. There is no ground-truth
+  collision check independent of that same scan either; tune
+  `collision_clearance` against real sensor noise before trusting it.
+- **A missed hoop fails the run outright**, per the rules. `hoop_monitor_node`
+  (new, in `jetson/cfr_arduino_bridge/`) watches every hoop's gate and
+  reports it; the env terminates the episode the moment one is missed, and
+  `obstacle_reward.py` prices that above a collision.
+- **Course layout is randomized, not fixed**, so the policy cannot overfit to
+  one bucket/hoop arrangement: `ObstacleCourseEnv` cycles a pool of ten
+  precomputed `obstacle_randomizer_node` seeds (`layout_seeds` in
+  `config_obstacle.yaml`), holding each for `episodes_per_layout` consecutive
+  episodes rather than redrawing every reset, since each draw costs several
+  seconds of `gz service` calls (see `obstacle_randomizer_node.py`). Set
+  `layout_seeds: null` for a fresh draw every dwell period instead of a fixed
+  pool, or `randomize_layout: false` to pin the course for a smoke test.
+- **The deployment driver (`run_policy_obstacle.py`) starts on either of two
+  signals**: the camera-based `start_signal_detector`, or the Arduino's
+  `manual_start` override -- whichever comes first arms it -- and stops on
+  `lap_counter`'s `~/done`, same as the Speed Course's driver. It does not
+  include `run_policy.py`'s scripted stuck-recovery, which was tuned against
+  the Speed Course's hairpins specifically; see the module docstring.
+
+To train once ready:
+
+```
+ros2 launch cfr_arduino_bridge obstacle_course.launch.py sensors:=true
+python train_obstacle.py
+```
+
 ## Future work
 
 - **Real depth pipeline.** To make the simulated ZED actually produce a point

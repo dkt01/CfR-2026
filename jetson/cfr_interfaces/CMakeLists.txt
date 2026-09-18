@@ -5,6 +5,7 @@ find_package(ament_cmake REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 find_package(action_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/DriveCommand.msg"
@@ -12,8 +13,10 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/PathSegment.msg"
   "msg/StartSignal.msg"
   "msg/LapCount.msg"
+  "msg/HoopLayout.msg"
+  "msg/HoopStatus.msg"
   "action/DrivePath.action"
-  DEPENDENCIES std_msgs action_msgs
+  DEPENDENCIES std_msgs action_msgs geometry_msgs
 )
 
 ament_export_dependencies(rosidl_default_runtime)

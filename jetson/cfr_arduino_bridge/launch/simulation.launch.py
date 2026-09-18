@@ -163,6 +163,23 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration("randomizer")),
     )
 
+    # Only meaningful alongside the randomizer, which is what moves the
+    # hoops this watches; the Speed Course shares this launch file and its
+    # layout carries no hoops.names, so hoop_monitor_node just reports an
+    # always-clear status there.
+    hoop_monitor = Node(
+        package="cfr_arduino_bridge",
+        executable="hoop_monitor_node.py",
+        name="hoop_monitor",
+        output="screen",
+        parameters=[LaunchConfiguration("layout_file"), {"use_sim_time": True}],
+        remappings=[
+            ("pose", "/zed/zed_node/pose"),
+            ("hoop_layout", "/obstacle_randomizer/hoop_layout"),
+        ],
+        condition=IfCondition(LaunchConfiguration("randomizer")),
+    )
+
     command_bridge = Node(
         package="cfr_arduino_bridge",
         executable="sim_vehicle_node",
@@ -288,6 +305,7 @@ def generate_launch_description():
             websocket_server,
             teleport_api,
             randomizer,
+            hoop_monitor,
             command_bridge,
             gazebo_bridge,
             start_signal_detector,

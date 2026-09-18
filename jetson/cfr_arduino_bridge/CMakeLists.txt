@@ -75,14 +75,14 @@ install(TARGETS arduino_bridge_node cmd_vel_to_drive_node sim_vehicle_node path_
 )
 
 install(PROGRAMS src/teleport_api.py src/maneuver_runner_node.py src/obstacle_randomizer_node.py
-  src/start_signal_detector_node.py src/lap_counter_node.py
+  src/start_signal_detector_node.py src/lap_counter_node.py src/hoop_monitor_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
 # These are imported from beside their nodes, so they are installed into the
 # same directory -- but as modules rather than programs, since they have no
 # shebang and are not meant to be run.
-install(FILES src/start_signal_detector.py src/lap_counter.py
+install(FILES src/start_signal_detector.py src/lap_counter.py src/hoop_monitor.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -144,6 +144,9 @@ if(BUILD_TESTING)
   # lap_counter_node's crossing logic, imported straight out of src/ the same
   # way -- also free of ROS, so it also needs no workspace.
   ament_add_pytest_test(test_lap_counter test/test_lap_counter.py)
+
+  # hoop_monitor_node's per-hoop crossing logic, same pattern again.
+  ament_add_pytest_test(test_hoop_monitor test/test_hoop_monitor.py)
 
   # maneuver_runner_node's arming/abort state machine -- unlike the two tests
   # above, this one has no ROS-free module to import: it constructs a real

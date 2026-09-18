@@ -41,6 +41,8 @@ import time
 import traceback
 
 import rclpy
+from cfr_interfaces.msg import HoopLayout
+from geometry_msgs.msg import Point
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.node import Node
@@ -91,6 +93,15 @@ class ObstacleRandomizer(Node):
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
         )
 
+        # hoop_monitor_node's only source of where the hoops currently
+        # stand -- it does not duplicate draw_hoops()'s randomization logic,
+        # it just watches where this node last put them.
+        self.hoop_layout_publisher = self.create_publisher(
+            HoopLayout,
+            "~/hoop_layout",
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
+        )
+
         # Bridged to the world's joint controller by simulation.launch.py.
         # Latching, so the setpoint survives the bridge coming up late.
         self.arm_publisher = self.create_publisher(
@@ -122,6 +133,11 @@ class ObstacleRandomizer(Node):
         self.arm_angle = float(self.signal_param("red_angle"))
         self.command_arm(self.arm_angle)
         self.publish_signal(False)
+        # The world spawns every hoop at its nominal position -- build_hoops()
+        # places them there directly -- so this is the true initial layout, not
+        # a guess, and a monitor that comes up before the first ~/randomize or
+        # ~/reset still gets a value to watch.
+        self.publish_hoop_layout(self.nominal_hoops())
         movable = f"{len(self.hoop_names())} hoops, up to {self.bucket_limit()} buckets"
         if self.has_gap_bales():
             movable += f", 1 of {len(self.gap_bale_names())} wall bales parked"
@@ -360,6 +376,12 @@ class ObstacleRandomizer(Node):
             )
         return positions
 
+    def nominal_hoops(self) -> dict[str, tuple[float, float]]:
+        """Where the course drawing puts every hoop -- what ~/reset restores."""
+        return {
+            hoop: tuple(self.hoop_param(hoop, "nominal")) for hoop in self.hoop_names()
+        }
+
     def draw_gap_bale(self) -> str:
         """Which of the four wall bales stands off-course this draw.
 
@@ -395,6 +417,13 @@ class ObstacleRandomizer(Node):
                 self.set_pose(f"bucket_{index}", x, y, 0.0)
         for hoop, (x, y) in hoops.items():
             self.set_pose(hoop, x, y, 0.0, yaw=float(self.hoop_param(hoop, "yaw")))
+        self.publish_hoop_layout(hoops)
+
+    def publish_hoop_layout(self, hoops: dict[str, tuple[float, float]]) -> None:
+        message = HoopLayout()
+        message.names = list(hoops.keys())
+        message.positions = [Point(x=x, y=y, z=0.0) for x, y in hoops.values()]
+        self.hoop_layout_publisher.publish(message)
 
     # --------------------------------------------------------------- services
 
