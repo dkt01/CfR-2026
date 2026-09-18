@@ -47,7 +47,13 @@ p {
     margin: 0;
 }
 
+.scene-wrap {
+    position: relative;
+    min-height: 0;
+}
+
 #gz-scene {
+    height: 100%;
     min-height: 0;
     overflow: hidden;
     border: 3px solid #17242a;
@@ -146,7 +152,145 @@ button:hover {
     background: #e8bd56;
 }
 
+/* Speed gauge, overlaid on the scene in the usual HUD corner.
+   pointer-events: none so it never steals a drag from the orbit controls. */
+.speedo {
+    position: absolute;
+    right: 18px;
+    bottom: 18px;
+    width: 188px;
+    height: 188px;
+    pointer-events: none;
+    filter: drop-shadow(0 3px 6px rgba(23, 36, 42, 0.35));
+}
+
+.speedo-dial {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+.dial-face {
+    fill: #fffdf6;
+    stroke: #17242a;
+    stroke-width: 3;
+}
+
+.dial-track {
+    fill: none;
+    stroke: #d8dccd;
+    stroke-width: 9;
+}
+
+.dial-redline {
+    fill: none;
+    stroke: #a33a18;
+    stroke-width: 9;
+    opacity: 0.28;
+}
+
+.dial-value {
+    fill: none;
+    stroke: #2e7d46;
+    stroke-width: 9;
+    stroke-linecap: butt;
+}
+
+.dial-value.warm {
+    stroke: #c97119;
+}
+
+.dial-value.over {
+    stroke: #a33a18;
+}
+
+.tick {
+    stroke: #44504a;
+    stroke-width: 1.2;
+}
+
+.tick-major {
+    stroke: #17242a;
+    stroke-width: 2.2;
+}
+
+.tick-label {
+    fill: #17242a;
+    font: 700 13px/1 ui-monospace, monospace;
+    text-anchor: middle;
+    dominant-baseline: central;
+}
+
+.dial-peak {
+    stroke: #17242a;
+    stroke-width: 2.4;
+    stroke-dasharray: 3 2;
+    visibility: hidden;
+}
+
+.dial-peak.shown {
+    visibility: visible;
+}
+
+.dial-needle path {
+    fill: #a33a18;
+}
+
+.dial-hub {
+    fill: #17242a;
+}
+
+.speedo-readout {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 27%;
+    text-align: center;
+}
+
+.speedo-value {
+    font: 700 27px/1 ui-monospace, monospace;
+    color: #17242a;
+    font-variant-numeric: tabular-nums;
+}
+
+.speedo-unit {
+    margin-top: 1px;
+    font: 700 10px/1 ui-monospace, monospace;
+    letter-spacing: 1px;
+    color: #a33a18;
+    text-transform: uppercase;
+}
+
+.speedo-peak {
+    margin-top: 5px;
+    font: 700 9px/1 ui-monospace, monospace;
+    letter-spacing: 0.5px;
+    color: #44504a;
+    text-transform: uppercase;
+    font-variant-numeric: tabular-nums;
+}
+
 @media (max-width: 560px) {
+    .speedo {
+        right: 10px;
+        bottom: 10px;
+        width: 132px;
+        height: 132px;
+    }
+
+    .speedo-value {
+        font-size: 19px;
+    }
+
+    .speedo-unit {
+        font-size: 8px;
+    }
+
+    .speedo-peak {
+        font-size: 7px;
+    }
+
     main {
         padding: 12px;
     }

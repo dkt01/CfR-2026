@@ -1,0 +1,58 @@
+env:
+  world_name: cfr_speed_course
+  num_lidar_bins: 36
+  lidar_fov_deg: 180.0
+  lidar_max_range: 6.0
+  control_hz: 10.0
+  # No cap: the policy picks its own speed everywhere, fast on the straights
+  # and slow through the hairpins, rather than being held to a ceiling.
+  max_speed: 2.5
+  # Boost disabled: max_speed is the only limit and the policy chooses.
+  straight_speed: 0.0
+  reverse_speed: 0.5
+  episode_time_limit_s: 60.0
+  stuck_window_s: 5.0
+  stuck_distance: 0.5
+  randomize_start: true
+  odom_timeout_s: 2.0
+  # analytic matches v7, so this run is comparable to it. The validated
+  # cloud path (scan_source: cloud + CFR_SENSORS=1) is for sim-to-real.
+  scan_source: cloud
+  traction: 0.6
+  max_steering_rate: 3.5
+zed_sim:
+  enabled: true
+  hfov_deg: 110.0
+  noise_a: 0.01
+  noise_b: 0.008
+  dropout_prob: 0.03
+smoother:
+  enabled: true
+  max_steering_rate: 3.5
+  w_speed: 20.0
+  w_steer: 80.0
+  w_accel: 0.002
+  w_steer_rate: 0.001
+reward:
+  k_progress: 10.0
+  k_proximity: 2.0
+  k_smooth: 0.05
+  # Centring shapes the line without dominating: 0.30 m off costs 1.20,
+  # about a quarter of the +5.26 a clean 5.5 m/s step earns.
+  k_center: 4.0
+  collision_penalty: 200.0
+  safe_clearance: 0.35
+  # Brushing a bale, short of a logged collision. Contact must never pay. At v7's values a bale brush at 5.5 m/s still
+  # scored +0.99, because the speed reward outran the penalty; now -9.52.
+  k_touch: 120.0
+  touch_clearance: 0.15
+  # Charges for reversing the steering, which is the left-right sawing.
+  k_steer_reversal: 0.8
+training:
+  total_timesteps: 200000
+  n_steps: 512
+  batch_size: 64
+  gamma: 0.99
+  gae_lambda: 0.95
+  learning_rate: 0.0003
+  ent_coef: 0.0

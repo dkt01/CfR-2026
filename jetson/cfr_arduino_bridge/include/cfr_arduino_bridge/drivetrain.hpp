@@ -23,9 +23,10 @@ namespace cfr_arduino_bridge {
     return spur_to_wheel_ratio > 0.0 ? spur_rpm / spur_to_wheel_ratio : 0.0;
   }
 
-  /// Ground speed in m/s from wheel RPM, assuming no wheel slip.  The hall
-  /// sensor cannot see direction, so this is a magnitude.  Returns zero for a
-  /// non-positive (or NaN) diameter.
+  /// Ground speed in m/s from wheel RPM, assuming no wheel slip.  Sign follows
+  /// wheel_rpm; the hall sensor cannot see direction, so any sign comes from
+  /// the Arduino's direction estimate.  Returns zero for a non-positive (or
+  /// NaN) diameter.
   inline double WheelRpmToSpeed(double wheel_rpm, double tire_diameter_m = kTireDiameterM) {
     return tire_diameter_m > 0.0 ? wheel_rpm * kPi * tire_diameter_m / 60.0 : 0.0;
   }
@@ -35,6 +36,18 @@ namespace cfr_arduino_bridge {
                                double spur_to_wheel_ratio = kSpurToWheelRatio,
                                double tire_diameter_m = kTireDiameterM) {
     return WheelRpmToSpeed(SpurRpmToWheelRpm(spur_rpm, spur_to_wheel_ratio), tire_diameter_m);
+  }
+
+  /// Spur RPM for a ground speed in m/s, the inverse of SpurRpmToSpeed.  Sign
+  /// passes through, so a negative (reverse) speed gives a negative RPM.
+  /// Returns zero for a non-positive (or NaN) ratio or diameter.
+  inline double SpeedToSpurRpm(double speed_mps,
+                               double spur_to_wheel_ratio = kSpurToWheelRatio,
+                               double tire_diameter_m = kTireDiameterM) {
+    if (!(spur_to_wheel_ratio > 0.0) || !(tire_diameter_m > 0.0)) {
+      return 0.0;
+    }
+    return speed_mps * 60.0 * spur_to_wheel_ratio / (kPi * tire_diameter_m);
   }
 
 }  // namespace cfr_arduino_bridge

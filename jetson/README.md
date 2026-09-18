@@ -314,25 +314,31 @@ Behavior:
 * Transmits a frame every cycle at `tx_rate_hz` (50 Hz default). The Arduino
   reverts to neutral after `200 ms` without a valid frame, so the transmit timer
   runs regardless of whether the autonomy stack is producing commands.
-* Holds both axes neutral until the Arduino reports `AUTO_ACTIVE`. The firmware
-  only makes the `AUTO_ARMED -> AUTO_ACTIVE` transition while `AUTO_READY` is set
-  **and** both axis commands sit inside the `127 +/- 5` deadband, so sending real
-  commands early would deadlock the handshake. Set `require_auto_active: false`
-  for bench testing without the arming sequence.
-* Commands revert to neutral when `~/drive_cmd` goes stale (`command_timeout`),
-  when the status link drops (`link_timeout`), or when the Arduino reports
-  E-Stop.
-* Scales throttle by `max_throttle` (0.25 by default) and rate limits it with
-  `throttle_slew_per_s`.
+* Holds steering centered and the speed target at zero until the Arduino
+  reports `AUTO_ACTIVE`. The firmware only makes the `AUTO_ARMED -> AUTO_ACTIVE`
+  transition while `AUTO_READY` is set **and** steering sits inside the
+  `127 +/- 5` deadband with a zero speed target, so sending real commands early
+  would deadlock the handshake. Set `require_auto_active: false` for bench
+  testing without the arming sequence.
+* The speed target reverts to zero when `~/drive_cmd` goes stale
+  (`command_timeout`), when the status link drops (`link_timeout`), or when the
+  Arduino reports E-Stop.
+* Clamps `DriveCommand.velocity` to `max_speed` (m/s), rate limits it with
+  `speed_slew_rate` (m/s per second), and converts it into the target spur RPM
+  tracked by the Arduino's closed loop speed controller.
+* Owns that controller's gains as `speed_*` parameters and keeps the Arduino in
+  step with them, including after an Arduino reset. See
+  [Speed controller tuning](#speed-controller-tuning).
 * Reopens the port automatically if the Arduino is unplugged or reset, waiting
   `boot_delay` seconds after each open for the Uno bootloader.
 
 ### `cmd_vel_to_drive_node`
 
-Translates `geometry_msgs/Twist` on `cmd_vel` into a normalized `DriveCommand`
-using the bicycle model, `delta = atan(wheelbase * yaw_rate / speed)`, and
-republishes at a fixed rate so the bridge always has a fresh command. Sets
-`auto_ready` while `cmd_vel` is fresh.
+Translates `geometry_msgs/Twist` on `cmd_vel` into a `DriveCommand`: `linear.x`
+passes straight through as the velocity target (clamped to `max_speed`), and
+steering comes from the bicycle model, `delta = atan(wheelbase * yaw_rate / speed)`,
+normalized by `max_steering_angle`. Republishes at a fixed rate so the bridge
+always has a fresh command. Sets `auto_ready` while `cmd_vel` is fresh.
 
 Skip this node entirely if the autonomy stack publishes `DriveCommand` directly:
 
@@ -418,8 +424,8 @@ point cancels an in-flight goal before exiting, the same as `q` -- closing the
 TUI should stop the car, not abandon it mid-path.
 
 While a path executes, the TUI shows local current pose, the active segment's
-target pose, pose error, controller velocity/yaw-rate command, and normalized
-throttle/steering from `/drive_cmd`. A turn has a target heading but not a
+target pose, pose error, controller velocity/yaw-rate command, and the velocity
+target and normalized steering from `/drive_cmd`. A turn has a target heading but not a
 target position because its radius is determined by the vehicle steering
 geometry, so its position target and error are shown as `n/a`.
 
@@ -731,54 +737,102 @@ python3 scripts/check_lap_counter.py
 
 ## Wire format
 
-Both directions are ASCII, comma separated, newline terminated at 115200 baud.
+Both directions are ASCII, comma separated, newline terminated, at 115200 baud.
+The field tables are in the [Onboard Protocol](../README.md#onboard-protocol)
+section of the top level README. In brief:
 
-Jetson -> Arduino, always exactly `b,nnn,nnn\n`:
+Jetson -> Arduino is a drive command every cycle, always exactly
+`C,b,sss,+rrrrr\n` (auto ready, steering byte, signed target spur RPM), plus a
+checksummed `G,...` speed gains frame whenever the Arduino is not yet running
+the current gains. Every field is fixed width on purpose: the firmware requires
+the exact frame length, so a byte lost on the link rejects the frame instead of
+shifting a value into a different command.
 
-| Field | Description | Range |
-| ----- | ----------- | ----- |
-| 0 | Auto Ready | `0` or `1` |
-| 1 | Steering command | `[0,255]`, `0` full left, `127` center, `255` full right |
-| 2 | Throttle command | `[0,255]`, `0` full reverse, `127` neutral, `255` full forward |
-
-Integer fields are zero padded to three digits on purpose: the firmware's
-`FromJetson::deSerialize()` rejects payloads shorter than 6 characters, so an
-unpadded frame such as `1,0,0` would be dropped silently. Padding also keeps
-every frame a constant 10 bytes.
-
-Arduino -> Jetson matches the `ToJetson` struct, with a trailing comma before the
-newline:
-
-| Field | Description | Range |
-| ----- | ----------- | ----- |
-| 0 | E-Stop State | `0` or `1`, `1` is active |
-| 1 | Auto Arm | `0` or `1` |
-| 2 | Manual Start | `0` or `1` |
-| 3 | Mode | `[0,4]`, see the run mode table in the top level README |
-| 4 | Battery Level | `[0,255]`, `0` empty, `255` full |
-| 5 | Spur RPM | `[0,65535]` spur gear revolutions per minute |
-
-Unlike the command direction these are *not* zero padded, so field widths vary
-and frames run 12 to 19 bytes. `Deserialize()` requires exactly six fields,
-which means a firmware predating the RPM field is rejected outright rather than
-parsed with a stale speed. Flash both sides together.
+Arduino -> Jetson is
+`estop,auto_arm,manual_start,mode,battery,rpm,target_rpm,throttle_us,gains_seq,`
+at 20 Hz. `Deserialize()` requires exactly nine fields, so a firmware from
+before closed loop speed control is rejected outright rather than misread.
+Flash both sides together. `D,` debug and `T,` controller trace lines share the
+link; the bridge skips them and they land only in `rx_trace_path`.
 
 Spur RPM comes from a hall sensor watching a single trigger magnet in the spur
 gear, so it counts spur revolutions -- not motor and not wheel revolutions.
-`arduino_bridge` converts it into the `wheel_rpm` and `speed` (m/s) fields of
-`ArduinoStatus` using the `spur_to_wheel_ratio` (default `2.85`, the Slash 4X4
-transmission, independent of pinion) and `tire_diameter` (default `0.1143` m,
-the nominal 4.5" Traxxas 6764 Gravix 2.8" tire) parameters. `speed` is a
-magnitude, since the sensor cannot see direction, and assumes no wheel slip.
-Foam tires grow with speed, so calibrate `tire_diameter` with a measured
-roll-out if accuracy matters.
+`arduino_bridge` converts between it and m/s in both directions using the
+`spur_to_wheel_ratio` (default `2.85`, the Slash 4X4 transmission, independent
+of pinion) and `tire_diameter` (default `0.1143` m, the nominal 4.5" Traxxas
+6764 Gravix 2.8" tire) parameters: `DriveCommand.velocity` into the target RPM,
+and the reported RPM into the `wheel_rpm`, `speed` and `target_speed` fields of
+`ArduinoStatus`. 1 m/s is about 476 spur RPM. The sensor cannot see direction,
+so the sign of `rpm` and `speed` is the Arduino controller's estimate: the
+direction it last drove. Speeds assume no wheel slip. Foam tires grow with
+speed, so calibrate `tire_diameter` with a measured roll-out if accuracy
+matters; it scales commanded and reported speed together.
 Zero is ambiguous between stopped, no sensor fitted, and a dead link; check
 `link_ok` on `ArduinoStatus` to rule out the last.
 
-The firmware measures it by polling a pin change flag rather than taking an
-interrupt, which cannot lose an edge but can merge two that fall inside one
-loop stall. Expect a slight undercount at full throttle rather than a clean
-signal; see the Onboard I/O section of the top level README.
+## Speed controller tuning
+
+The Arduino runs a feedforward plus PID loop from target spur RPM to throttle
+pulse every 20 ms. The control law, speed measurement, direction handling and
+braking are described in [Speed Control](../README.md#speed-control). Its gains
+are `arduino_bridge` parameters, and they are the only bridge parameters that
+take effect when changed at runtime:
+
+| Parameter | Units | Meaning |
+| --------- | ----- | ------- |
+| `speed_ks` | us | static feedforward, added whenever the target is nonzero |
+| `speed_kv` | us per m/s | velocity feedforward |
+| `speed_kp` | us per m/s of error | proportional |
+| `speed_ki` | us per m/s of error, per second | integral |
+| `speed_kd` | us per m/s per second | derivative, on measured speed |
+| `speed_i_limit` | us | integrator clamp |
+| `speed_output_limit` | us, at most 500 | largest drive offset from the 1500 us neutral pulse |
+| `speed_brake_limit` | us, at most 440 | braking effort; `0` disables braking so the car coasts |
+| `speed_trace` | bool | have the Arduino emit a `T,` trace line every 20 ms |
+
+"us" is microseconds of throttle pulse. The bridge converts the rate gains into
+the firmware's per-1000-spur-RPM units, sends them tagged with a new sequence
+number, and resends until the Arduino echoes that number; `gains_applied` on
+`ArduinoStatus` is false in between. `ros2 param set` rejects a value the
+firmware would not accept.
+
+The defaults were tuned **with the car on blocks** (see the bench notes under
+[Speed Control](../README.md#speed-control)). Expect to retune on the ground:
+the car adds several times the inertia plus rolling drag, so the feedforward
+terms will need to rise and the loop will respond more slowly than on blocks.
+
+A procedure for the ground, with the E-Stop in hand and plenty of room:
+
+1. Log every controller tick to `rx_trace_path`:
+   `ros2 param set /arduino_bridge speed_trace true`.
+2. Feedforward first. Set `speed_kp` and `speed_ki` to `0`, hold a few constant
+   speeds, and adjust `speed_ks` and `speed_kv` until `speed` settles close to
+   `target_speed` at each. `speed_ks` mostly decides how slowly the car can
+   creep, `speed_kv` the slope above that. On blocks the integral term settled
+   near zero at every speed, which is the thing to aim for.
+3. Raise `speed_kp` until a step in target settles quickly without ringing,
+   then `speed_ki` until steady error disappears. Raise `speed_i_limit` if the
+   integrator pins against it on a grade.
+4. Only then try `speed_brake_limit` for firmer stops: start small, on flat
+   ground, and confirm the car stops rather than rolling back in reverse.
+5. Copy the values into `config/arduino_bridge.yaml`, and ideally into the
+   compiled-in `SpeedGains` defaults in the firmware (converted to per 1000 RPM
+   by multiplying the rate gains by 2.1), then turn the trace back off.
+
+Constant speeds are easiest to hold by publishing `DriveCommand` directly, with
+the bridge launched `use_cmd_vel:=false` so nothing else publishes on the topic.
+The bridge holds zero until the Arduino is `AUTO_ACTIVE`, so this is safe to
+leave running while arming:
+
+```bash
+ros2 topic pub -r 20 /drive_cmd cfr_interfaces/msg/DriveCommand \
+  '{auto_ready: true, steering: 0.0, velocity: 1.0}'
+```
+
+`T,` trace columns are: Arduino milliseconds, tracked RPM, measured RPM, then
+feedforward, proportional, integral, derivative and total output in tenths of a
+microsecond, the requested pulse, the braking flag, and the dither duty out of
+256.
 
 ## Deploy from a development host
 
@@ -865,7 +919,7 @@ the ZED camera together.
 ~/software/scripts/launch.sh --rosboard            # also serve rosboard on :8888
 ~/software/scripts/launch.sh --device /dev/ttyACM1
 ~/software/scripts/launch.sh --no-cmd-vel          # autonomy publishes DriveCommand directly
-~/software/scripts/launch.sh max_throttle:=0.15    # extra args pass to the bridge launch
+~/software/scripts/launch.sh max_speed:=1.0        # extra args pass to the bridge launch
 ```
 
 The bridge starts first so the Arduino is receiving neutral commands while the
@@ -965,13 +1019,17 @@ ros2 topic pub -r 20 /cmd_vel geometry_msgs/msg/Twist \
 ## Bench checklist
 
 1. Car on a stand, wheels clear, offboard E-Stop in hand.
-2. Launch the bridge and confirm `/arduino_bridge/status` shows `link_ok: true`.
+2. Launch the bridge and confirm `/arduino_bridge/status` shows `link_ok: true`
+   and `gains_applied: true`. A bridge log of "dropping malformed status frame"
+   means the firmware and the Jetson packages are from different protocol
+   versions; flash and build them together.
 3. Arm autonomy offboard and confirm mode goes `1 -> 3` (`RC_ARMED` to
    `AUTO_ARMED`), then `-> 4` (`AUTO_ACTIVE`) once commands start flowing.
-4. Publish a small `cmd_vel` and confirm the steering servo and ESC respond in
-   the expected directions. Flip `invert_steering` / `invert_throttle` if not.
-5. Kill the publisher and confirm the car returns to neutral within
-   `command_timeout`.
+4. Publish a small `cmd_vel` and confirm the steering servo and wheels respond
+   in the expected directions, and that `speed` follows `target_speed`. Flip
+   `invert_steering` / `invert_speed` if not.
+5. Kill the publisher and confirm the car coasts to a stop: `target_speed` and
+   `throttle_us` return to `0` and `1500` within `command_timeout`.
 6. For `path_follower_node`: confirm `ros2 topic echo /zed/zed_node/odom` is
    publishing, then send a short single `STRAIGHT` segment on a stand and
    check the wheels turn the right way for the whole segment (not just at the

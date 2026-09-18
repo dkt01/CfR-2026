@@ -1,0 +1,48 @@
+{
+  "env": {
+    "world_name": "cfr_speed_course",
+    "num_lidar_bins": 36,
+    "lidar_fov_deg": 180.0,
+    "lidar_max_range": 6.0,
+    "control_hz": 10.0,
+    "max_speed": 2.0,
+    "straight_speed": 4.5,
+    "reverse_speed": 0.5,
+    "episode_time_limit_s": 60.0,
+    "stuck_window_s": 5.0,
+    "stuck_distance": 0.5,
+    "randomize_start": true,
+    "odom_timeout_s": 2.0,
+    "traction": 0.6,
+    "max_steering_rate": 3.5
+  },
+  "reward": {
+    "k_progress": 10.0,
+    "k_proximity": 1.0,
+    "k_smooth": 0.05,
+    "k_center": 6.0,
+    "collision_penalty": 100.0,
+    "safe_clearance": 0.35,
+    "k_touch": 40.0,
+    "touch_clearance": 0.1,
+    "k_steer_reversal": 0.8
+  },
+  "zed_sim": {
+    "enabled": true,
+    "hfov_deg": 110.0,
+    "noise_a": 0.01,
+    "noise_b": 0.008,
+    "dropout_prob": 0.03
+  },
+  "smoother": {
+    "enabled": true,
+    "max_steering_rate": 3.5,
+    "w_speed": 20.0,
+    "w_steer": 80.0,
+    "w_accel": 0.002,
+    "w_steer_rate": 0.001
+  },
+  "total_timesteps": 179000,
+  "deterministic_distance_m": 139.82378932556432,
+  "at_timesteps": 147456
+}

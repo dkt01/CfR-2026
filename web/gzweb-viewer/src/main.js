@@ -1,5 +1,6 @@
 import { AssetViewer } from "gzweb";
 import { parse } from "protobufjs";
+import { createSpeedometer } from "./speedometer.js";
 import "./style.css";
 
 const status = document.querySelector("#viewer-status");
@@ -70,8 +71,16 @@ const positionInputs = [
   document.querySelector("#teleport-y"),
   document.querySelector("#teleport-heading-degrees"),
 ];
+const speedometer = createSpeedometer(document.querySelector("#speedometer"));
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
+// The pose stream carries position only, so speed is differenced from it.
+// SPEED_TAU smooths the per-message dt jitter; anything above
+// MAX_PLAUSIBLE_SPEED is a teleport or reset rather than travel.
+const SPEED_TAU = 0.08;
+const MAX_PLAUSIBLE_SPEED = 40;
+let previousSpeedSample;
+let filteredSpeed = 0;
 let followSlash = false;
 let latestSlashPose;
 let followTargetOffset;
@@ -197,6 +206,57 @@ function updateSlashFollowView(pose) {
   updatingFollowView = false;
 }
 
+function toNumber(value) {
+  // protobufjs hands back Long objects for the int64 fields in gz.msgs.Time.
+  if (typeof value === "number") {
+    return value;
+  }
+  if (value && typeof value.toNumber === "function") {
+    return value.toNumber();
+  }
+  const converted = Number(value);
+  return Number.isFinite(converted) ? converted : 0;
+}
+
+function poseTimeSeconds(message, pose) {
+  // Simulation time, not wall clock: the sim does not always run at real time,
+  // and differencing against the wall would misreport speed whenever it does not.
+  const stamp = message?.header?.stamp ?? pose?.header?.stamp;
+  if (stamp) {
+    const seconds = toNumber(stamp.sec) + toNumber(stamp.nsec) * 1e-9;
+    if (seconds > 0) {
+      return seconds;
+    }
+  }
+  return performance.now() / 1000;
+}
+
+function updateSpeed(message, pose) {
+  const time = poseTimeSeconds(message, pose);
+  const { x, y, z } = pose.position;
+  const previous = previousSpeedSample;
+  previousSpeedSample = { time, x, y, z };
+  if (!previous) {
+    return;
+  }
+
+  // Rejects dt <= 0 as well, which is what a sim-time reset looks like.
+  const dt = time - previous.time;
+  if (!(dt > 1e-4) || dt > 1) {
+    return;
+  }
+
+  const raw = Math.hypot(x - previous.x, y - previous.y, z - previous.z) / dt;
+  if (raw > MAX_PLAUSIBLE_SPEED) {
+    filteredSpeed = 0;
+    speedometer.report(0);
+    return;
+  }
+
+  filteredSpeed += (raw - filteredSpeed) * (1 - Math.exp(-dt / SPEED_TAU));
+  speedometer.report(filteredSpeed);
+}
+
 // The start signal's arms are the one other thing in either world that moves,
 // and they move on a joint rather than by being teleported, so Gazebo reports
 // them as a link pose within the model.  Looked up once and kept: the scene is
@@ -290,6 +350,9 @@ function updatePoses(message) {
   const scene = viewer["scene"];
   const slashPose = message.pose.find((pose) => pose.name === "slash");
   const slash = scene?.getByName("slash");
+  if (slashPose) {
+    updateSpeed(message, slashPose);
+  }
   if (slashPose && slash) {
     latestSlashPose = slashPose;
     scene.setPose(slash, slashPose.position, slashPose.orientation);
@@ -401,6 +464,11 @@ function resetRobot() {
 
   resetRobotButton.disabled = true;
   status.textContent = "Resetting robot";
+  // The car is about to jump back to spawn; drop the peak and the differencing
+  // history so neither the teleport nor the old run's peak shows on the dial.
+  previousSpeedSample = undefined;
+  filteredSpeed = 0;
+  speedometer.reset();
   const request = worldControlType.encode({ reset: { all: true } }).finish();
   sendRequest(worldControlService, "gz.msgs.WorldControl", request);
 }

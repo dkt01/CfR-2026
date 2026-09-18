@@ -7,6 +7,7 @@
 using cfr_arduino_bridge::kPi;
 using cfr_arduino_bridge::kSpurToWheelRatio;
 using cfr_arduino_bridge::kTireDiameterM;
+using cfr_arduino_bridge::SpeedToSpurRpm;
 using cfr_arduino_bridge::SpurRpmToSpeed;
 using cfr_arduino_bridge::SpurRpmToWheelRpm;
 using cfr_arduino_bridge::WheelRpmToSpeed;
@@ -44,4 +45,29 @@ TEST(SpurRpmToSpeed, MatchesHandCalculation) {
 
 TEST(SpurRpmToSpeed, FullScaleRpmStaysFinite) {
   EXPECT_TRUE(std::isfinite(SpurRpmToSpeed(65535.0)));
+}
+
+TEST(SpurRpmToSpeed, SignFollowsRpm) {
+  EXPECT_LT(SpurRpmToSpeed(-1000.0), 0.0);
+  EXPECT_DOUBLE_EQ(SpurRpmToSpeed(-1000.0), -SpurRpmToSpeed(1000.0));
+}
+
+TEST(SpeedToSpurRpm, OneMetrePerSecond) {
+  EXPECT_NEAR(SpeedToSpurRpm(1.0), 60.0 * 2.85 / (kPi * 0.1143), 1e-9);
+  EXPECT_NEAR(SpeedToSpurRpm(1.0), 476.2, 0.05);
+}
+
+TEST(SpeedToSpurRpm, InvertsSpurRpmToSpeed) {
+  for (const double rpm : {-5000.0, -1.0, 0.0, 1.0, 3502.0, 20000.0}) {
+    EXPECT_NEAR(SpeedToSpurRpm(SpurRpmToSpeed(rpm)), rpm, 1e-9);
+  }
+  EXPECT_NEAR(SpeedToSpurRpm(SpurRpmToSpeed(1234.0, 3.0, 0.1), 3.0, 0.1), 1234.0, 1e-9);
+}
+
+TEST(SpeedToSpurRpm, RejectsNonPositiveGeometry) {
+  EXPECT_DOUBLE_EQ(SpeedToSpurRpm(1.0, 0.0), 0.0);
+  EXPECT_DOUBLE_EQ(SpeedToSpurRpm(1.0, -2.85), 0.0);
+  EXPECT_DOUBLE_EQ(SpeedToSpurRpm(1.0, std::nan("")), 0.0);
+  EXPECT_DOUBLE_EQ(SpeedToSpurRpm(1.0, kSpurToWheelRatio, 0.0), 0.0);
+  EXPECT_DOUBLE_EQ(SpeedToSpurRpm(1.0, kSpurToWheelRatio, std::nan("")), 0.0);
 }
