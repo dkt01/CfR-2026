@@ -266,12 +266,19 @@ class CourseProgress:
         living with rather than re-checking 10 layouts here.
         """
         boxes = _wall_boxes(sdf_path)
-        low, high = self.ground_level_span()
-        high = max(low, high - finish_margin_m)
+        limit = max(0.0, self.lap_length - finish_margin_m)
         arcs: list[float] = []
-        s = low
-        while s <= high:
-            x, y, _z, yaw = self.pose_at(s)
+        # Per point, not per span: the ground-level part of the course is
+        # not one contiguous stretch. Taking a single span after the last
+        # elevated sample threw away the start straight (s 0 -> 3.4), which
+        # is the run-up to the ramp -- so the ramp was only ever practised
+        # by the episodes that started exactly on the line.
+        for (x, y, z), s in zip(self.points, self.arc):
+            if s > limit:
+                break
+            if z > 0.05 or (arcs and s - arcs[-1] < spacing):
+                continue
+            _, _, _, yaw = self.pose_at(s)
             probe_x = x + probe_m * math.cos(yaw)
             probe_y = y + probe_m * math.sin(yaw)
             if not any(
@@ -279,7 +286,6 @@ class CourseProgress:
                 for box in boxes
             ):
                 arcs.append(s)
-            s += spacing
         return arcs
 
     def ground_level_span(self, tolerance: float = 0.05) -> tuple[float, float]:
