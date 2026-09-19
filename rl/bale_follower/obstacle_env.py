@@ -222,7 +222,10 @@ class ObstacleCourseEnv(gymnasium.Env):
         self._prev_pose: Pose2D | None = None
         self._prev_angular_z = 0.0
         self._prev_steer_fraction = 0.0
-        self._stuck_window_travel: list[float] = []
+        # (course progress, sim dt) per step, trimmed to stuck_window_s.
+        self._stuck_window_travel: collections.deque[tuple[float, float]] = (
+            collections.deque()
+        )
         self._cmd_speed = 0.0
         self._cmd_steer_fraction = 0.0
         self._rng = np.random.default_rng()
@@ -618,7 +621,7 @@ class ObstacleCourseEnv(gymnasium.Env):
         self._prev_pose = pose
         self._prev_angular_z = 0.0
         self._prev_steer_fraction = 0.0
-        self._stuck_window_travel = []
+        self._stuck_window_travel.clear()
         self._cmd_speed = 0.0
         self._cmd_steer_fraction = 0.0
 
@@ -704,12 +707,24 @@ class ObstacleCourseEnv(gymnasium.Env):
         # usefully never tripped the detector. This is also the
         # progress-per-time floor -- below stuck_distance per stuck_window_s
         # the episode is not worth finishing.
-        window_steps = max(1, round(self.stuck_window_s * self.control_hz))
-        self._stuck_window_travel.append(progress_s)
-        self._stuck_window_travel = self._stuck_window_travel[-window_steps:]
-        stuck = (
-            len(self._stuck_window_travel) == window_steps
-            and sum(self._stuck_window_travel) < self.stuck_distance
+        # Measured in *sim seconds*, not in steps. A step is only
+        # 1/control_hz seconds if the simulator is keeping up with the wall
+        # clock, and it is not: dt is measured at 0.058 s against the 0.1 s
+        # the loop assumes, because the env paces itself against the wall
+        # clock while Gazebo runs freely (see training.launch.py on why it
+        # cannot be stepped). Counting steps therefore made the detector
+        # 1.7x more aggressive than stuck_window_s says, and its
+        # aggressiveness drift with host load, which is not something a
+        # termination condition should do.
+        self._stuck_window_travel.append((progress_s, dt))
+        window_dt = sum(entry[1] for entry in self._stuck_window_travel)
+        while (
+            len(self._stuck_window_travel) > 1
+            and window_dt - self._stuck_window_travel[0][1] >= self.stuck_window_s
+        ):
+            window_dt -= self._stuck_window_travel.popleft()[1]
+        stuck = window_dt >= self.stuck_window_s and (
+            sum(entry[0] for entry in self._stuck_window_travel) < self.stuck_distance
         )
 
         result = compute_reward(
