@@ -17,8 +17,20 @@ PORT = 9003
 # drops the car onto its wheels on every teleport.  This was 0.12.
 SPAWN_HEIGHT_M = 0.02
 
-MAX_ABS_X = 30.0
-MAX_ABS_Y = 20.0
+# Sanity guard against garbage coordinates, not a course boundary -- it has to
+# contain every course. The Speed Course centerline alone runs to x = 39.98 m,
+# so the old 30.0 refused teleports into its last quarter, which silently
+# capped episode-start randomization to the part of the course nearest spawn.
+MAX_ABS_X = 60.0
+MAX_ABS_Y = 30.0
+# gz service's own wait for Gazebo's reply. 2000ms was fine on a quiet host
+# but timed out routinely with a second training container's Gazebo server
+# sharing the same CPU (observed: "Service call timed out" mid-run). 20000ms,
+# then 40000ms, were each blown past in turn -- the other container's CPU use
+# is spiky (observed 237% mid-spike vs. this one's 20%) rather than a steady
+# load, so no fixed timeout is truly safe, only progressively less likely to
+# lose the race. Tripled from the last value for real margin against a spike.
+GZ_SERVICE_TIMEOUT_MS = 120000
 
 
 class TeleportHandler(BaseHTTPRequestHandler):
@@ -78,13 +90,20 @@ class TeleportHandler(BaseHTTPRequestHandler):
             "--reptype",
             "gz.msgs.Boolean",
             "--timeout",
-            "2000",
+            str(GZ_SERVICE_TIMEOUT_MS),
             "--req",
             request,
         ]
         try:
+            # A couple seconds above --timeout above: gz service should return
+            # on its own within that budget, so this is only a backstop against
+            # gz itself hanging, not the normal path out of a slow response.
             result = subprocess.run(
-                command, capture_output=True, text=True, timeout=3, check=False
+                command,
+                capture_output=True,
+                text=True,
+                timeout=GZ_SERVICE_TIMEOUT_MS / 1000 + 2,
+                check=False,
             )
         except FileNotFoundError:
             self.respond(

@@ -43,6 +43,8 @@ def run_episode(
         smoother.reset()
 
     distance = 0.0
+    elapsed = 0.0
+    laps = 0.0
     speeds: list[float] = []
     clearances: list[float] = []
     steer_jerk: list[float] = []
@@ -62,7 +64,12 @@ def run_episode(
             action = env.encode_action(speed, delta / MAX_STEERING_ANGLE)
         observation, reward, terminated, truncated, info = env.step(action)
 
-        distance += max(0.0, info["progress_distance"])
+        # Arc length along the planned centerline. Not the same as the old
+        # heading-projected sum, which counted circling and running the loop
+        # backwards as distance covered.
+        distance = info["lap_distance"]
+        elapsed = info["elapsed_s"]
+        laps = info["laps"]
         speeds.append(info["speed"])
         clearances.append(info["min_clearance"])
         steer_jerk.append(abs(delta - prev_delta))
@@ -71,13 +78,16 @@ def run_episode(
         steps += 1
         if terminated or truncated:
             collided = info["collided"]
-            stuck = info["stuck"]
+            stuck = info["too_slow"]
             break
 
     return {
         "steps": steps,
-        "duration_s": steps / env.control_hz,
-        "distance_m": round(distance, 2),
+        "duration_s": round(elapsed, 1),
+        "lap_distance_m": round(distance, 2),
+        "laps": round(laps, 3),
+        "lap_pace_m_s": round(distance / elapsed, 2) if elapsed > 0 else 0.0,
+        "lap_time_s": round(elapsed / laps, 1) if laps > 0.05 else None,
         "mean_speed": round(statistics.fmean(speeds), 2) if speeds else 0.0,
         "min_clearance": round(min(clearances), 3) if clearances else None,
         "mean_steer_jerk_rad": round(statistics.fmean(steer_jerk), 4)
@@ -176,11 +186,14 @@ def main() -> None:
                 env, model, smoother, deterministic=not args.stochastic
             )
             episodes.append(result)
+            lap_time = result["lap_time_s"]
             print(
                 f"episode {index + 1}/{args.episodes}: "
-                f"{result['distance_m']:.1f} m in {result['duration_s']:.0f} s, "
-                f"mean {result['mean_speed']:.2f} m/s, "
-                f"{'COLLIDED' if result['collided'] else 'stuck' if result['stuck'] else 'clean'}"
+                f"{result['lap_distance_m']:.1f} m of lap "
+                f"({result['laps']:.2f} laps) in {result['duration_s']:.0f} s, "
+                f"pace {result['lap_pace_m_s']:.2f} m/s, "
+                f"lap {f'{lap_time:.1f} s' if lap_time else 'not completed'}, "
+                f"{'COLLIDED' if result['collided'] else 'too slow' if result['stuck'] else 'clean'}"
             )
     finally:
         env.close()
@@ -196,15 +209,24 @@ def main() -> None:
         "collision_rate": round(
             sum(e["collided"] for e in episodes) / len(episodes), 2
         ),
-        "mean_distance_m": round(
-            statistics.fmean(e["distance_m"] for e in episodes), 2
+        "mean_lap_distance_m": round(
+            statistics.fmean(e["lap_distance_m"] for e in episodes), 2
+        ),
+        "mean_lap_pace_m_s": round(
+            statistics.fmean(e["lap_pace_m_s"] for e in episodes), 2
+        ),
+        "laps_completed": sum(e["laps"] >= 1.0 for e in episodes),
+        "mean_lap_time_s": (
+            round(statistics.fmean(e["lap_time_s"] for e in timed), 1)
+            if (timed := [e for e in episodes if e["lap_time_s"]])
+            else None
         ),
         "mean_speed": round(statistics.fmean(e["mean_speed"] for e in episodes), 2),
         "mean_steer_jerk_rad": round(
             statistics.fmean(e["mean_steer_jerk_rad"] for e in episodes), 4
         ),
-        "clean_episode_mean_distance_m": (
-            round(statistics.fmean(e["distance_m"] for e in clean), 2)
+        "clean_episode_mean_lap_distance_m": (
+            round(statistics.fmean(e["lap_distance_m"] for e in clean), 2)
             if clean
             else None
         ),

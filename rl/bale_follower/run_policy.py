@@ -31,7 +31,6 @@ from std_msgs.msg import Bool
 from tf2_msgs.msg import TFMessage
 
 import bale_geometry
-from speed_boost import BoostConfig, BoostLimiter
 from env import (
     MAX_STEERING_ANGLE,
     WHEELBASE,
@@ -85,17 +84,7 @@ class PolicyRunner(Node):
         self.reverse_speed = env_config.get("reverse_speed", 0.0)
         self.control_hz = env_config["control_hz"]
 
-        # Straight-line boost, from the same module the env trains with, so
-        # the deployed speed envelope is the one the policy learned inside.
-        self.boost = BoostLimiter(
-            BoostConfig(straight_speed=env_config.get("straight_speed", 0.0)),
-            base_speed=self.max_speed,
-            control_hz=self.control_hz,
-            lidar_fov_deg=self.lidar_fov_deg,
-        )
-        self.obs_speed_scale = max(
-            self.max_speed, env_config.get("straight_speed", 0.0)
-        )
+        self.obs_speed_scale = self.max_speed
 
         self._lock = threading.Lock()
         self._pose = None
@@ -333,8 +322,6 @@ class PolicyRunner(Node):
         steer_fraction = float(np.clip(action[1], -1.0, 1.0))
         delta = steer_fraction * MAX_STEERING_ANGLE
 
-        speed = self.boost.apply(speed, scan, steer_fraction)
-
         if self.smoother is not None:
             speed, delta = self.smoother.smooth(speed, delta)
 
@@ -400,15 +387,6 @@ def main() -> None:
         "action decoding and the speed observation scaling, same "
         "as evaluate.py's override",
     )
-    parser.add_argument(
-        "--straight-speed",
-        type=float,
-        default=None,
-        help="speed ceiling (m/s) on clear, straight sections. The "
-        "policy keeps its trained cap everywhere else, so curves "
-        "stay at the speed it was trained to take them. Unset "
-        "leaves the trained cap everywhere.",
-    )
     args = parser.parse_args()
 
     checkpoint = Path(args.checkpoint)
@@ -423,8 +401,6 @@ def main() -> None:
     env_config = metadata["env"]
     if args.max_speed is not None:
         env_config["max_speed"] = args.max_speed
-    if args.straight_speed is not None:
-        env_config["straight_speed"] = args.straight_speed
 
     bales = bale_geometry.parse_bales(args.sdf_path)
     model = PPO.load(str(checkpoint))

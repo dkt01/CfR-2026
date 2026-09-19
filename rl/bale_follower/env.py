@@ -38,8 +38,8 @@ from rosgraph_msgs.msg import Clock
 
 import bale_geometry
 import zed_sim
-from reward import RewardConfig, compute_reward, forward_progress
-from speed_boost import BoostConfig, BoostLimiter
+from course_progress import CourseProgress
+from reward import RewardConfig, compute_reward
 from cloud_scan import points_from_pointcloud2, scan_from_points
 
 WHEELBASE = 0.324
@@ -114,17 +114,18 @@ class BaleFollowerEnv(gymnasium.Env):
         lidar_fov_deg: float = 180.0,
         lidar_max_range: float = 6.0,
         control_hz: float = 10.0,
-        max_speed: float = 4.0,
+        max_speed: float = 3.5,
         reverse_speed: float = 0.0,
-        episode_time_limit_s: float = 60.0,
-        stuck_window_s: float = 5.0,
-        stuck_distance: float = 0.5,
+        episode_time_limit_s: float = 120.0,
+        progress_window_s: float = 5.0,
+        min_progress_speed: float = 1.0,
         randomize_start: bool = True,
         reward_config: RewardConfig | None = None,
         odom_timeout_s: float = 2.0,
+        teleport_timeout_s: float = 150.0,
         traction: float = 0.6,
         max_steering_rate: float = 3.5,
-        straight_speed: float = 0.0,
+        course_path_file: str | None = None,
         scan_source: str = "analytic",
         cloud_topic: str = "/zed/zed_node/point_cloud/cloud_registered",
         zed_config: zed_sim.ZedSimConfig | None = None,
@@ -145,29 +146,22 @@ class BaleFollowerEnv(gymnasium.Env):
         self.control_hz = control_hz
         self.max_speed = max_speed
         self.reverse_speed = reverse_speed
-        # Speed envelope, shared verbatim with run_policy.py. Training inside
-        # the same envelope the car deploys with is the whole point: the
-        # policy learns what the boosted straights feel like instead of
-        # meeting them for the first time at deployment.
-        self.boost = BoostLimiter(
-            BoostConfig(straight_speed=straight_speed),
-            base_speed=max_speed,
-            control_hz=control_hz,
-            lidar_fov_deg=lidar_fov_deg,
-        )
-        # Observation scale for speed. With boosting the car exceeds
-        # max_speed, and normalising by max_speed would clip every boosted
-        # straight to 1.0 -- the policy could not tell 2 m/s from 4.5.
-        self.obs_speed_scale = max(max_speed, straight_speed)
+        self.obs_speed_scale = max_speed
         self.episode_time_limit_s = episode_time_limit_s
-        self.stuck_window_s = stuck_window_s
-        self.stuck_distance = stuck_distance
+        self.progress_window_s = progress_window_s
+        self.min_progress_speed = min_progress_speed
         self.randomize_start = randomize_start
         self.reward_config = reward_config or RewardConfig()
         self.odom_timeout_s = odom_timeout_s
+        self.teleport_timeout_s = teleport_timeout_s
 
         self.bales = bale_geometry.parse_bales(sdf_path)
         self.spawn_pose = bale_geometry.parse_vehicle_spawn(sdf_path)
+        # Arc-length progress along the planned centerline. Privileged, and
+        # deliberately reward-only: it never enters the observation.
+        self.course = (
+            CourseProgress(course_path_file) if course_path_file else CourseProgress()
+        )
 
         # Symmetric and normalized, as SB3 expects: its policy is a
         # zero-centered Gaussian, so an asymmetric range like [0, max_speed]
@@ -188,7 +182,7 @@ class BaleFollowerEnv(gymnasium.Env):
         self._prev_pose: Pose2D | None = None
         self._prev_angular_z = 0.0
         self._prev_steer_fraction = 0.0
-        self._stuck_window_travel: list[float] = []
+        self._progress_window: list[float] = []
         self._cmd_speed = 0.0
         self._cmd_steer_fraction = 0.0
         self._rng = np.random.default_rng()
@@ -320,14 +314,17 @@ class BaleFollowerEnv(gymnasium.Env):
         self, x: float, y: float, heading_deg: float, attempts: int = 3
     ) -> None:
         # teleport_api shells out to `gz service`, which can time out right
-        # after a world reset while Gazebo is still settling.
+        # after a world reset while Gazebo is still settling. This client
+        # timeout has to sit ABOVE teleport_api's own GZ_SERVICE_TIMEOUT_MS,
+        # or the HTTP request gives up first and the server's patience is
+        # wasted -- which is what killed two chunks of the 300k run.
         message = None
         for attempt in range(attempts):
             try:
                 response = requests.post(
                     self.teleport_url,
                     json={"x": x, "y": y, "heading": heading_deg},
-                    timeout=5.0,
+                    timeout=self.teleport_timeout_s,
                 )
                 result = response.json()
                 if response.ok and result.get("success"):
@@ -384,53 +381,32 @@ class BaleFollowerEnv(gymnasium.Env):
         self._cmd_speed = max(-self.reverse_speed, min(speed, self.max_speed))
         return self._cmd_speed
 
-    def _center_error(self, pose: Pose2D) -> float:
-        """Imbalance (m) between the nearest bale to the left and to the right.
-
-        Zero when the car is centered between the corridor walls. Reward-only
-        privileged signal (like progress), so it may look sideways beyond the
-        ZED's forward FOV: a narrow ground-truth ray fan is cast at +/-90 deg.
-        Side distances are clipped to 1.5 m -- past a hairpin or a wall gap
-        one side sees far, and an uncapped difference would punish the car
-        for the course's geometry rather than its own line.
-        """
-        cap = 1.5
-        left = bale_geometry.lidar_scan(
-            self.bales,
-            pose.x,
-            pose.y,
-            pose.yaw + math.pi / 2,
-            5,
-            60.0,
-            self.lidar_max_range,
-        ).min()
-        right = bale_geometry.lidar_scan(
-            self.bales,
-            pose.x,
-            pose.y,
-            pose.yaw - math.pi / 2,
-            5,
-            60.0,
-            self.lidar_max_range,
-        ).min()
-        return abs(min(left, cap) - min(right, cap))
-
     def _pick_start_pose(self) -> tuple[float, float, float]:
-        """Jitter around the SDF spawn pose.
+        """Start anywhere on the planned centerline, facing along it.
 
-        Deliberately not sampled along the bale line: those indices are DXF
-        drawing order, so neighbouring indices are often on opposite walls or
-        metres apart, and interpolating between them lands inside bales.
+        Sampling the whole loop rather than jittering the SDF spawn matters
+        now that episodes are cut short for slow progress: starting every
+        episode in the same place would teach the policy only the first few
+        metres of course, because that is all a short episode ever sees.
+
+        An earlier version could not do this -- it had only the bale list,
+        whose indices are DXF drawing order, so interpolating between
+        neighbours landed inside bales. The centerline removes that problem:
+        every sample on it is drivable by construction.
         """
         if not self.randomize_start:
             return self.spawn_pose
 
-        x, y, yaw = self.spawn_pose
         for _ in range(20):
+            index = int(self._rng.integers(len(self.course.x)))
+            yaw = float(self.course.heading[index])
+            # Small lateral jitter so the policy sees off-line recoveries,
+            # not just the perfect line.
+            offset = float(self._rng.uniform(-0.15, 0.15))
             candidate = (
-                x + self._rng.uniform(-2.0, 2.0),
-                y + self._rng.uniform(-0.2, 0.2),
-                yaw + self._rng.uniform(-0.15, 0.15),
+                float(self.course.x[index]) - offset * math.sin(yaw),
+                float(self.course.y[index]) + offset * math.cos(yaw),
+                yaw + float(self._rng.uniform(-0.15, 0.15)),
             )
             if not bale_geometry.check_collision(self.bales, *candidate):
                 return candidate
@@ -513,10 +489,12 @@ class BaleFollowerEnv(gymnasium.Env):
         self._prev_pose = pose
         self._prev_angular_z = 0.0
         self._prev_steer_fraction = 0.0
-        self._stuck_window_travel = []
+        self._progress_window = []
         self._cmd_speed = 0.0
         self._cmd_steer_fraction = 0.0
-        self.boost.reset()
+        # Re-acquire the loop from the pose the car actually landed at, not
+        # the one requested: the teleport settles and can shift it slightly.
+        self.course.reset(pose.x, pose.y, pose.yaw)
 
         observation = self._build_observation(pose, speed=0.0, yaw_rate=0.0)
         return observation, {}
@@ -539,19 +517,6 @@ class BaleFollowerEnv(gymnasium.Env):
             )
         )
         self._cmd_steer_fraction = steer_fraction
-        # Raise the ceiling on clear straights, before the traction limit --
-        # the friction circle still has the last word on what the tires allow.
-        if self.boost.enabled:
-            ground_truth = bale_geometry.lidar_scan(
-                self.bales,
-                self._prev_pose.x,
-                self._prev_pose.y,
-                self._prev_pose.yaw,
-                self.num_lidar_bins,
-                self.lidar_fov_deg,
-                self.lidar_max_range,
-            )
-            speed = self.boost.apply(speed, ground_truth, steer_fraction)
         speed = self._apply_traction(speed, steer_fraction)
         angular_z = 0.0
         if abs(speed) > 1e-3:
@@ -580,9 +545,7 @@ class BaleFollowerEnv(gymnasium.Env):
             self.lidar_fov_deg,
             self.lidar_max_range,
         )
-        progress_distance = forward_progress(
-            self._prev_pose.x, self._prev_pose.y, self._prev_pose.yaw, pose.x, pose.y
-        )
+        course_s, arc_progress, lateral_error = self.course.update(pose.x, pose.y)
 
         # The pose stream carries no twist, and the Ackermann plugin's
         # odometry is dead-reckoned (it ignores teleports), so velocities come
@@ -603,15 +566,13 @@ class BaleFollowerEnv(gymnasium.Env):
         )
         measured_yaw_rate = _wrap_to_pi(pose.yaw - self._prev_pose.yaw) / dt
 
-        center_error = self._center_error(pose)
         result = compute_reward(
             self.reward_config,
-            progress_distance=progress_distance,
+            arc_progress=arc_progress,
             min_clearance=float(scan.min()),
             angular_z=measured_yaw_rate,
             prev_angular_z=self._prev_angular_z,
             collided=collided,
-            center_error=center_error,
             steer_fraction=self._cmd_steer_fraction,
             prev_steer_fraction=self._prev_steer_fraction,
         )
@@ -622,26 +583,36 @@ class BaleFollowerEnv(gymnasium.Env):
         self._episode_step += 1
         self._episode_time += dt
 
-        window_steps = max(1, round(self.stuck_window_s * self.control_hz))
-        self._stuck_window_travel.append(abs(progress_distance))
-        self._stuck_window_travel = self._stuck_window_travel[-window_steps:]
-        stuck = (
-            len(self._stuck_window_travel) == window_steps
-            and sum(self._stuck_window_travel) < self.stuck_distance
+        # Progress/time ratio, measured along the lap rather than along the
+        # car's nose: circling, sawing in place and running the loop backwards
+        # all fail it, and none of them used to. Cutting these episodes early
+        # is most of the point -- a 120 s episode spent crawling is 1200 steps
+        # of rollout that taught the policy nothing.
+        window_steps = max(1, round(self.progress_window_s * self.control_hz))
+        self._progress_window.append(arc_progress)
+        self._progress_window = self._progress_window[-window_steps:]
+        too_slow = (
+            len(self._progress_window) == window_steps
+            and sum(self._progress_window)
+            < self.min_progress_speed * self.progress_window_s
         )
 
         terminated = collided
-        truncated = self._episode_time >= self.episode_time_limit_s or stuck
+        truncated = self._episode_time >= self.episode_time_limit_s or too_slow
 
         observation = self._build_observation(
             pose, measured_speed, measured_yaw_rate, scan
         )
         info = {
             "collided": collided,
-            "stuck": stuck,
-            "progress_distance": progress_distance,
+            "too_slow": too_slow,
+            "arc_progress": arc_progress,
+            "course_s": course_s,
+            "lap_distance": self.course.travelled,
+            "laps": self.course.laps,
+            "elapsed_s": self._episode_time,
+            "lateral_error": lateral_error,
             "min_clearance": float(scan.min()),
-            "center_error": center_error,
             "speed": measured_speed,
         }
         return observation, result.total, terminated, truncated, info

@@ -91,23 +91,34 @@ class DeterministicEvalCallback(BaseCallback):
         if self.rollouts % self.every_rollouts != 0:
             return
 
+        # Arc length along the planned centerline, not displacement along the
+        # car's nose: the old metric counted circling and running the loop
+        # backwards as progress, so it could not tell a lap from a doughnut.
         distances = []
+        paces = []
         for _ in range(self.episodes):
             observation, _ = self.raw_env.reset()
             distance = 0.0
+            elapsed = 0.0
             while True:
                 action, _ = self.model.predict(observation, deterministic=True)
                 observation, _, terminated, truncated, info = self.raw_env.step(action)
-                distance += max(0.0, info["progress_distance"])
+                distance = info["lap_distance"]
+                elapsed = info["elapsed_s"]
                 if terminated or truncated:
                     break
             distances.append(distance)
+            paces.append(distance / elapsed if elapsed > 0 else 0.0)
 
         mean_distance = sum(distances) / len(distances)
+        mean_pace = sum(paces) / len(paces)
         self.logger.record("eval/deterministic_distance_m", mean_distance)
+        self.logger.record("eval/lap_pace_m_s", mean_pace)
         print(
             f"[deterministic eval] {self.num_timesteps} steps: "
             f"mean {mean_distance:.1f} m over {self.episodes} episodes "
+            f"({mean_pace:.2f} m/s lap pace, "
+            f"{mean_distance / self.raw_env.course.length:.2f} laps) "
             f"(best {max(self.best_distance, mean_distance):.1f})"
         )
         if mean_distance > self.best_distance:
