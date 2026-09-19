@@ -64,7 +64,7 @@ reward:
   k_smooth: 0.05
   k_steer_reversal: 0.8
 training:
-  total_timesteps: 200000
+  total_timesteps: 300000
   n_steps: 512
   batch_size: 64
   gamma: 0.99
