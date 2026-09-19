@@ -37,6 +37,25 @@ REW_RE = re.compile(r"\|\s+ep_rew_mean\s+\|\s+([-\d.e+]+)\s+\|")
 STEPS_RE = re.compile(r"bale_follower_(\d+)_steps\.zip")
 
 
+RESTART_MARKER = "Wrapping the env in a DummyVecEnv."
+
+
+def own_attempt_text(path):
+    """This chunk log's own content, stripped of any leftover prior attempt.
+
+    train_chunk_N.log is opened in append mode and the filename is reused
+    across separate runs (and across a crash-restart within a run), so a
+    fresh attempt's output can land after a previous, unrelated attempt's
+    full log -- including that attempt's own eval lines and traceback. SB3
+    prints RESTART_MARKER exactly once, when the model is constructed, so the
+    text after its LAST occurrence is always this attempt's own and only its
+    own.
+    """
+    text = path.read_text(errors="replace")
+    index = text.rfind(RESTART_MARKER)
+    return text if index == -1 else text[index:]
+
+
 def chunk_offsets(resilient_log, run_name):
     """Cumulative step offset at the start of each chunk, plus restart notes.
 
@@ -90,7 +109,7 @@ def collect_evals(log_dir, run_name):
         match = re.search(r"train_chunk_(\d+)", path.name)
         chunk = int(match.group(1)) if match else 1
         offset = offsets.get(chunk, 0)
-        for line in path.read_text(errors="replace").splitlines():
+        for line in own_attempt_text(path).splitlines():
             found = EVAL_RE.search(line)
             if found:
                 in_chunk, distance, episodes = found.groups()
@@ -113,9 +132,7 @@ def recent_rewards(log_dir, valid_chunks, count=3):
         if int(re.search(r"(\d+)", p.name).group(1)) in valid_chunks
     ) or list(log_dir.glob("rl_run.log"))
     for path in logs:
-        values.extend(
-            float(value) for value in REW_RE.findall(path.read_text(errors="replace"))
-        )
+        values.extend(float(value) for value in REW_RE.findall(own_attempt_text(path)))
     return values[-count:]
 
 
