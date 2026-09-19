@@ -43,7 +43,10 @@ env:
   # `gz service` calls inside obstacle_randomizer_node, whose own latency
   # already nears 8 s on a quiet host and blew past it when another training
   # run's Gazebo server shared the same CPU (observed TimeoutError).
-  randomize_timeout_s: 30.0
+  # 30 s was itself blown past once CPU contention got heavy enough to push
+  # several of those dozen calls each toward their own multi-second cap
+  # (observed: "/obstacle_randomizer/randomize timed out" after 30 s).
+  randomize_timeout_s: 60.0
   # Same host-CPU-contention failure mode as randomize_timeout_s, hitting the
   # teleport HTTP call instead: default 5 s (x3 retries) timed out mid-run
   # when the other training container's Gazebo server spiked to 225% CPU.

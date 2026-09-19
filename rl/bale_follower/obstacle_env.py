@@ -114,7 +114,7 @@ class ObstacleCourseEnv(gymnasium.Env):
         episodes_per_layout: int = 5,
         randomizer_node: str = "/obstacle_randomizer",
         hoop_monitor_node: str = "/hoop_monitor",
-        randomize_timeout_s: float = 30.0,
+        randomize_timeout_s: float = 60.0,
         teleport_timeout_s: float = 5.0,
     ) -> None:
         super().__init__()
