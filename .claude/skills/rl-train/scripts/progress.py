@@ -25,8 +25,14 @@ import re
 import time
 from pathlib import Path
 
+# The distance is signed. It is arc length along the course centerline, so a
+# policy that runs the loop backwards scores negative -- and an early policy
+# that mostly circles scores either side of zero. An unsigned pattern here
+# does not fail loudly, it just drops those evals, which reads as "the eval
+# callback stopped running" and hides exactly the readings that say the
+# policy is going the wrong way.
 EVAL_RE = re.compile(
-    r"\[deterministic eval\] (\d+) steps: mean ([\d.]+) m over (\d+) episodes"
+    r"\[deterministic eval\] (\d+) steps: mean (-?[\d.]+) m over (\d+) episodes"
 )
 CHUNK_RE = re.compile(
     r"chunk (\d+) (?:finished cleanly|died with status (\d+)) "
