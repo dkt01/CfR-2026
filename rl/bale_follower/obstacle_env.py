@@ -480,14 +480,19 @@ class ObstacleCourseEnv(gymnasium.Env):
             time.sleep(0.02)
 
     def _teleport(
-        self, x: float, y: float, heading_deg: float, attempts: int = 3
+        self,
+        x: float,
+        y: float,
+        heading_deg: float,
+        ground_z: float = 0.0,
+        attempts: int = 3,
     ) -> None:
         message = None
         for attempt in range(attempts):
             try:
                 response = requests.post(
                     self.teleport_url,
-                    json={"x": x, "y": y, "heading": heading_deg},
+                    json={"x": x, "y": y, "heading": heading_deg, "z": ground_z},
                     timeout=self.teleport_timeout_s,
                 )
                 result = response.json()
@@ -590,11 +595,12 @@ class ObstacleCourseEnv(gymnasium.Env):
         start_s = (options or {}).get("start_s")
         if start_s is None:
             start_s = self._pick_start_s()
+        ground_z = 0.0
         if start_s > 0.0:
-            x, y, _z, yaw = self._course.pose_at(start_s)
+            x, y, ground_z, yaw = self._course.pose_at(start_s)
         else:
             x, y, yaw = self._pick_start_pose()
-        self._teleport(x, y, math.degrees(yaw))
+        self._teleport(x, y, math.degrees(yaw), ground_z)
         self._settle(0.3)
 
         before = time.monotonic()

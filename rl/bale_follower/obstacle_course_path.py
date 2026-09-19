@@ -211,6 +211,19 @@ class CourseProgress:
         self.lap_length = self.arc[-1]
         self.window = max(2, int(window_m / spacing))
         self._index = 0
+        # Where the helical ramp runs, so the curriculum can deal starts on
+        # the straight ramp and the deck (both raised, both simple) while
+        # staying off the spiral, which is 1.2 m in radius with a drop
+        # either side and would need the spawn height to be right to within
+        # a few centimetres.
+        self.helix_start_s = self.arc[self._nearest_index(DECK_END)]
+        self.helix_end_s = self.arc[self._nearest_index(TUNNEL_MOUTH)]
+
+    def _nearest_index(self, point: tuple[float, float, float]) -> int:
+        return min(
+            range(len(self.points)),
+            key=lambda i: math.dist(self.points[i], point),
+        )
 
     def reset(self, start_s: float = 0.0) -> float:
         """Rewind to the start line, or to `start_s` metres round the lap."""
@@ -276,7 +289,17 @@ class CourseProgress:
         for (x, y, z), s in zip(self.points, self.arc):
             if s > limit:
                 break
-            if z > 0.05 or (arcs and s - arcs[-1] < spacing):
+            if arcs and s - arcs[-1] < spacing:
+                continue
+            # Raised ground is fine to be dealt onto now that the teleport
+            # takes a height -- the ramp and the deck are a straight 11%
+            # climb and a flat bridge. The helix is not: a 1.2 m spiral
+            # with a drop either side, where being a few centimetres out
+            # puts the car over the edge. It still gets practised, by the
+            # episodes dealt onto the deck that lead straight into it.
+            if self.helix_start_s < s < self.helix_end_s:
+                continue
+            if z > 0.05 and not s <= self.helix_start_s:
                 continue
             _, _, _, yaw = self.pose_at(s)
             probe_x = x + probe_m * math.cos(yaw)
