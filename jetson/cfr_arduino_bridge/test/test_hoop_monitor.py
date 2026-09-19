@@ -119,6 +119,56 @@ def test_multiple_hoops_track_independently():
     assert not monitor.all_passed
 
 
+def test_crossing_the_plane_far_from_the_hoop_resolves_nothing():
+    """The plane through a hoop is infinite; the course is not.
+
+    Driving somewhere else entirely that happens to lie on the same plane
+    is not an attempt at this hoop, so it must resolve neither way.
+    """
+    monitor = HoopMonitor([HOOP_0])
+    far_y = HOOP_0.y - 7.9  # the gravel-run-to-bank turn, see hoop_monitor
+    feed(monitor, line((HOOP_0.x + 2.0, far_y), (HOOP_0.x - 2.0, far_y)))
+    assert not monitor.state["hoop_0"].resolved
+    assert not monitor.any_missed
+
+
+def test_the_real_lane_does_not_trip_hoop_0():
+    """Regression: the actual course centerline through the gravel run.
+
+    These are the anchors obstacle_course_path.py drives between, and they
+    cross hoop_0's plane 7.9 m south of it. Before the attempt gate this
+    marked hoop_0 missed and made a clean lap impossible.
+    """
+    monitor = HoopMonitor([HOOP_0])
+    feed(monitor, line((-2.60, -9.88), (-4.15, -9.30)))
+    assert not monitor.state["hoop_0"].resolved
+
+
+def test_the_real_lane_does_not_trip_hoop_2():
+    """Regression: the car wash run back to the finish line.
+
+    hoop_2 sits at yaw 0, so its plane is y = 0.1489, which the start
+    straight crosses about 7.2 m east of the hoop.
+    """
+    hoop_2 = Hoop(name="hoop_2", x=-8.1350, y=0.1489, yaw=0.0, half_width=0.275)
+    monitor = HoopMonitor([hoop_2])
+    feed(monitor, line((-1.65, 0.18), (0.00, 0.10)))
+    assert not monitor.state["hoop_2"].resolved
+
+
+def test_swerving_around_a_hoop_still_misses():
+    """The gate must not become a way to skip hoops for free.
+
+    Just outside the opening, and a metre out, both still count as missed --
+    only crossings far enough away to be unrelated are ignored.
+    """
+    for offset in (0.5, 1.0, 1.4):
+        monitor = HoopMonitor([HOOP_0])
+        wide_y = HOOP_0.y + offset
+        feed(monitor, line((HOOP_0.x + 2.0, wide_y), (HOOP_0.x - 2.0, wide_y)))
+        assert monitor.state["hoop_0"].missed, f"{offset} m out should be a miss"
+
+
 def test_update_hoop_repositions_without_losing_yaw():
     monitor = HoopMonitor([HOOP_0])
     monitor.update_hoop("hoop_0", x=HOOP_0.x - 1.0, y=HOOP_0.y)

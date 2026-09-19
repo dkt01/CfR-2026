@@ -18,6 +18,11 @@ hoop the car visibly drove through is not recognized as passed, look here
 first -- see test_hoop_monitor.py for the traces this was reasoned out
 against.
 
+A crossing only resolves a hoop if it happens near that hoop. The plane
+through a hoop is infinite and the lane crosses two of them metres away
+from the hoop itself, so without that gate driving the course correctly
+marks hoops as missed -- see DEFAULT_ATTEMPT_HALF_WIDTH.
+
 Missing even one hoop fails the whole run per the rules, so once a hoop is
 marked missed it stays missed, and `any_missed` latches for the rest of the
 run -- nothing here clears it short of `HoopMonitor.reset()`.
@@ -33,6 +38,19 @@ from dataclasses import dataclass, field
 # inner edges is +/-(0.292 - 0.017) m. A car that crosses the gate's plane
 # further out than this hit an upright, not the opening.
 DEFAULT_GATE_HALF_WIDTH = 0.292 - 0.017
+
+# How far either side of a hoop still counts as *attempting* it. The plane
+# through a hoop is infinite, and the lane crosses two of them a long way
+# from the hoop itself: the gravel-run-to-bank turn crosses hoop_0's plane
+# 7.9 m south of hoop_0, and the car wash run back to the finish crosses
+# hoop_2's plane 7.2 m east of hoop_2. Without this, driving the course
+# correctly marks both as missed, and no clean lap is possible -- which is
+# what a training run showed, as a 0.43 hoop-miss rate among cars that had
+# never been near a hoop. Beyond this distance the car is not interacting
+# with that hoop at all, so the crossing resolves nothing; inside it, the
+# old pass/miss test applies unchanged. Generous next to the 0.275 m gate
+# so that genuinely swerving around a hoop still counts as missing it.
+DEFAULT_ATTEMPT_HALF_WIDTH = 1.5
 
 
 @dataclass(frozen=True)
@@ -68,6 +86,7 @@ class Hoop:
     y: float
     yaw: float  # the SDF model's own pose yaw -- the uprights' axis, not travel
     half_width: float = DEFAULT_GATE_HALF_WIDTH
+    attempt_half_width: float = DEFAULT_ATTEMPT_HALF_WIDTH
 
     def travel_frame(self) -> Pose2D:
         """Reference frame whose local +x is the direction of travel through the gate."""
@@ -153,8 +172,11 @@ class HoopMonitor:
                 if abs(local.y) <= hoop.half_width:
                     state.passed = True
                     newly_passed.append(name)
-                else:
+                elif abs(local.y) <= hoop.attempt_half_width:
                     state.missed = True
                     newly_missed.append(name)
+                # Further out than that and the car is simply somewhere else
+                # on the course that happens to lie on this hoop's infinite
+                # plane -- see DEFAULT_ATTEMPT_HALF_WIDTH. Resolve nothing.
             state._previous_local_x = local.x
         return {"passed": newly_passed, "missed": newly_missed}
