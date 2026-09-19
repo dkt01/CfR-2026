@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import collections
 import math
 import threading
 from pathlib import Path
@@ -55,7 +56,7 @@ from env import (
     _wrap_to_pi,
     _yaw_from_quaternion,
 )
-from speed_boost import BoostConfig, BoostLimiter
+from obstacle_env import YAW_RATE_SCALE
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SDF = REPO_ROOT / "jetson/cfr_arduino_bridge/worlds/obstacle_course.sdf"
@@ -92,15 +93,16 @@ class ObstaclePolicyRunner(Node):
         self.reverse_speed = env_config.get("reverse_speed", 0.0)
         self.control_hz = env_config["control_hz"]
 
-        self.boost = BoostLimiter(
-            BoostConfig(straight_speed=env_config.get("straight_speed", 0.0)),
-            base_speed=self.max_speed,
-            control_hz=self.control_hz,
-            lidar_fov_deg=self.lidar_fov_deg,
+        self.obs_speed_scale = self.max_speed
+        self.traction = env_config.get("traction", 0.6)
+        # Must match ObstacleCourseEnv exactly. A policy fed a differently
+        # shaped or differently scaled observation than it trained on is not
+        # the policy that was trained.
+        self.frame_stack = int(env_config.get("frame_stack", 1))
+        self._frames: collections.deque[np.ndarray] = collections.deque(
+            maxlen=self.frame_stack
         )
-        self.obs_speed_scale = max(
-            self.max_speed, env_config.get("straight_speed", 0.0)
-        )
+        self._cmd_speed = 0.0
 
         self._pose_lock = threading.Lock()
         self._pose = None
@@ -159,6 +161,19 @@ class ObstaclePolicyRunner(Node):
         with self._cloud_lock:
             self._latest_cloud = msg
 
+    def _apply_traction(self, speed: float, steer_fraction: float) -> float:
+        a_max = self.traction * 9.81
+        dt = 1.0 / self.control_hz
+        speed = self._cmd_speed + min(
+            max(speed - self._cmd_speed, -a_max * dt), a_max * dt
+        )
+        tan_delta = abs(math.tan(steer_fraction * MAX_STEERING_ANGLE))
+        if tan_delta > 1e-6:
+            grip_speed = math.sqrt(a_max * WHEELBASE / tan_delta)
+            speed = min(max(speed, -grip_speed), grip_speed)
+        self._cmd_speed = max(-self.reverse_speed, min(speed, self.max_speed))
+        return self._cmd_speed
+
     def _scan(self) -> np.ndarray:
         with self._cloud_lock:
             msg = self._latest_cloud
@@ -197,20 +212,27 @@ class ObstaclePolicyRunner(Node):
             linear_x, angular_z = 0.0, 0.0
         else:
             px, py, pyaw = self._prev_pose
-            linear_x = math.hypot(x - px, y - py) / dt
+            # Signed longitudinal travel, matching the env. A magnitude here
+            # would make reversing look like standing still.
+            linear_x = ((x - px) * math.cos(pyaw) + (y - py) * math.sin(pyaw)) / dt
             angular_z = _wrap_to_pi(yaw - pyaw) / dt
         self._prev_pose = pose
 
         scan = self._scan()
-        observation = np.concatenate(
+        frame = np.concatenate(
             [
                 (scan / self.lidar_max_range),
                 [
-                    np.clip(linear_x / self.obs_speed_scale, 0.0, 1.0),
-                    np.clip((angular_z + 1.0) / 2.0, 0.0, 1.0),
+                    np.clip((linear_x / self.obs_speed_scale + 1.0) / 2.0, 0.0, 1.0),
+                    np.clip((angular_z / YAW_RATE_SCALE + 1.0) / 2.0, 0.0, 1.0),
                 ],
             ]
         ).astype(np.float32)
+        if not self._frames:
+            self._frames.extend([frame] * self.frame_stack)
+        else:
+            self._frames.append(frame)
+        observation = np.concatenate(self._frames).astype(np.float32)
 
         action, _ = self.model.predict(observation, deterministic=True)
         fraction = (float(np.clip(action[0], -1.0, 1.0)) + 1.0) / 2.0
@@ -218,7 +240,10 @@ class ObstaclePolicyRunner(Node):
         steer_fraction = float(np.clip(action[1], -1.0, 1.0))
         delta = steer_fraction * MAX_STEERING_ANGLE
 
-        speed = self.boost.apply(speed, scan, steer_fraction)
+        # The same acceleration and cornering-grip clamp the env applies.
+        # Publishing an unclamped speed here is what split train from deploy
+        # on the Speed Course: trained at one speed, driven at another.
+        speed = self._apply_traction(speed, steer_fraction)
 
         twist = Twist()
         twist.linear.x = speed

@@ -11,16 +11,34 @@ env:
   lidar_fov_deg: 110.0
   lidar_max_range: 6.0
   control_hz: 10.0
-  max_speed: 2.0
-  straight_speed: 0.0
+  # Set by braking distance against scan range, not by power. The car has no
+  # usable braking authority (docs/characterization-results.md 3: every
+  # non-zero brake limit stops it *slower* than coasting) so it sheds speed
+  # on coast drag alone, ~1.1 m/s^2. Slowing to the ~1.9 m/s a tight corner
+  # allows, including the measured 0.19 s dead time, needs 5.1 m from
+  # 3.5 m/s but 7.0 m from 4.0 -- and lidar_max_range is 6.0. Above this the
+  # car cannot slow for a corner it has not yet seen, so it just crashes.
+  # lidar_max_range is the lever if this needs to go up; the two move
+  # together. The old 2.0 gave away most of the usable range.
+  max_speed: 3.5
   reverse_speed: 0.5
   # A single training attempt's cap, not the competition's full 2-lap run --
   # see obstacle_env.py's module docstring on why training resets far more
   # often than a real run would. Tune once early runs show how far a
   # reasonable policy gets in this much time.
   episode_time_limit_s: 90.0
+  # Net progress *round the course* required per window, so spinning and
+  # reversing no longer count as getting somewhere (they used to, via an
+  # abs()). This doubles as the progress-per-time floor: below 0.1 m/s of
+  # course progress the episode is not worth finishing.
   stuck_window_s: 5.0
   stuck_distance: 0.5
+  # Counted as a finished lap this far short of the centerline's full
+  # length, so a car that crosses the line wide still gets its bonus.
+  lap_finish_tolerance_m: 0.5
+  # One 110 degree depth scan cannot say which way the car is moving through
+  # it, and much of this course looks alike from one. See obstacle_env.py.
+  frame_stack: 4
   # Off by default: unlike the Speed Course's bale corridor, there is no
   # course geometry here to validate a jittered start pose against, so a
   # jitter that happens to land inside something would go unnoticed until
@@ -63,8 +81,16 @@ zed_sim:
   noise_b: 0.008
   dropout_prob: 0.03
 reward:
-  k_time: 20.0
-  k_progress: 2.0
+  # See obstacle_reward.py. The headline numbers: the lap is ~75 m, so
+  # finishing one banks ~750 in progress plus a 300 bonus, against ~-185 of
+  # time cost for a 37 s lap. Standing still until the stuck detector fires
+  # scores -225. The previous tuning had those the other way round, which is
+  # why the last run learned to stand still -- run `python obstacle_reward.py`
+  # for the whole-episode ordering check that now guards this.
+  k_progress: 10.0
+  k_time: 5.0
+  lap_bonus: 300.0
+  stuck_penalty: 200.0
   k_proximity: 1.0
   safe_clearance: 0.35
   k_touch: 80.0
@@ -82,4 +108,7 @@ training:
   gamma: 0.99
   gae_lambda: 0.95
   learning_rate: 0.0003
-  ent_coef: 0.0
+  # Was 0.0, and the policy's log std duly collapsed (0.67 -> 0.47) as it
+  # grew more and more certain about standing still. Some entropy pressure
+  # keeps it exploring long enough to find that driving pays.
+  ent_coef: 0.01

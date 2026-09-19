@@ -38,6 +38,7 @@ while still preventing the policy from overfitting to one arrangement -- see
 
 from __future__ import annotations
 
+import collections
 import math
 import threading
 import time
@@ -66,11 +67,33 @@ from env import (
     _wrap_to_pi,
     _yaw_from_quaternion,
 )
+from obstacle_course_path import CourseProgress
 from obstacle_reward import ObstacleRewardConfig, compute_reward
-from reward import forward_progress
-from speed_boost import BoostConfig, BoostLimiter
 
 GRAVITY = 9.81
+
+
+def _forward_travel(
+    prev_x: float, prev_y: float, prev_yaw: float, x: float, y: float
+) -> float:
+    """Displacement projected onto the heading the step started with.
+
+    Local rather than imported: `reward.forward_progress` is removed on the
+    branch that reworks the Speed Course, and this is the only use left.
+    Note what it is and is not -- it is longitudinal travel, which the car's
+    own tachometer measures, so it may inform the observation. It is *not*
+    course progress; see obstacle_course_path.py.
+    """
+    return (x - prev_x) * math.cos(prev_yaw) + (y - prev_y) * math.sin(prev_yaw)
+
+
+# Full scale for the observed yaw rate, in rad/s. The car cannot exceed
+# roughly 2.8 rad/s -- grip caps it to ~2.1 m/s at full lock, and
+# (2.1 / WHEELBASE) * tan(MAX_STEERING_ANGLE) is 2.77 -- so this covers the
+# whole achievable range with a little headroom. The previous +-1.0 rad/s
+# saturated through every tight corner, hiding exactly the information the
+# policy needed there.
+YAW_RATE_SCALE = 3.0
 
 
 @dataclass
@@ -80,6 +103,9 @@ class Pose2D:
     yaw: float
     stamp: float
     sim_stamp: float = 0.0
+    # Only used to tell the bridge deck from the tunnel running underneath
+    # it, which are the same (x, y) -- see obstacle_course_path.Z_WEIGHT.
+    z: float = 0.0
 
 
 class ObstacleCourseEnv(gymnasium.Env):
@@ -95,7 +121,7 @@ class ObstacleCourseEnv(gymnasium.Env):
         lidar_fov_deg: float = 110.0,
         lidar_max_range: float = 6.0,
         control_hz: float = 10.0,
-        max_speed: float = 2.0,
+        max_speed: float = 3.5,
         reverse_speed: float = 0.5,
         episode_time_limit_s: float = 90.0,
         stuck_window_s: float = 5.0,
@@ -105,7 +131,6 @@ class ObstacleCourseEnv(gymnasium.Env):
         odom_timeout_s: float = 2.0,
         traction: float = 0.6,
         max_steering_rate: float = 3.5,
-        straight_speed: float = 0.0,
         scan_source: str = "cloud",
         cloud_topic: str = "/zed/zed_node/point_cloud/cloud_registered",
         zed_config: zed_sim.ZedSimConfig | None = None,
@@ -116,6 +141,8 @@ class ObstacleCourseEnv(gymnasium.Env):
         hoop_monitor_node: str = "/hoop_monitor",
         randomize_timeout_s: float = 60.0,
         teleport_timeout_s: float = 5.0,
+        lap_finish_tolerance_m: float = 0.5,
+        frame_stack: int = 4,
     ) -> None:
         super().__init__()
         self.traction = traction
@@ -132,19 +159,14 @@ class ObstacleCourseEnv(gymnasium.Env):
         self.control_hz = control_hz
         self.max_speed = max_speed
         self.reverse_speed = reverse_speed
-        self.boost = BoostLimiter(
-            BoostConfig(straight_speed=straight_speed),
-            base_speed=max_speed,
-            control_hz=control_hz,
-            lidar_fov_deg=lidar_fov_deg,
-        )
-        self.obs_speed_scale = max(max_speed, straight_speed)
+        self.obs_speed_scale = max_speed
         self.episode_time_limit_s = episode_time_limit_s
         self.stuck_window_s = stuck_window_s
         self.stuck_distance = stuck_distance
         self.randomize_start = randomize_start
         self.reward_config = reward_config or ObstacleRewardConfig()
         self.odom_timeout_s = odom_timeout_s
+        self.lap_finish_tolerance_m = lap_finish_tolerance_m
 
         # Generic XML lookup by model name -- no course-shape assumptions --
         # so this works against the Obstacle Course's "slash" model exactly
@@ -171,9 +193,21 @@ class ObstacleCourseEnv(gymnasium.Env):
         self.action_space = gymnasium.spaces.Box(
             low=-1.0, high=1.0, shape=(2,), dtype=np.float32
         )
-        obs_dim = num_lidar_bins + 2
+        # Stacked frames, because one is not a state. A single forward depth
+        # profile cannot tell which way the car is moving through it, and
+        # plenty of spots on this course look alike from a 110 degree scan --
+        # an open bucket room especially. With a feed-forward policy the only
+        # way to recover that is to show it several frames at once.
+        self.frame_stack = max(1, frame_stack)
+        self._frame_dim = num_lidar_bins + 2
+        self._frames: collections.deque[np.ndarray] = collections.deque(
+            maxlen=self.frame_stack
+        )
         self.observation_space = gymnasium.spaces.Box(
-            low=0.0, high=1.0, shape=(obs_dim,), dtype=np.float32
+            low=0.0,
+            high=1.0,
+            shape=(self._frame_dim * self.frame_stack,),
+            dtype=np.float32,
         )
 
         self._pose_lock = threading.Lock()
@@ -187,6 +221,13 @@ class ObstacleCourseEnv(gymnasium.Env):
         self._cmd_speed = 0.0
         self._cmd_steer_fraction = 0.0
         self._rng = np.random.default_rng()
+
+        # Course progress, for the reward only -- never for the observation.
+        # See obstacle_course_path.py on why measuring progress against the
+        # course rather than against the car's own heading is the whole point.
+        self._course = CourseProgress()
+        self._prev_s = 0.0
+        self._lap_completed = False
 
         # Course layout randomization -- see the module docstring for why
         # this cycles a small pool of seeds instead of redrawing every reset.
@@ -261,6 +302,7 @@ class ObstacleCourseEnv(gymnasium.Env):
             yaw=_yaw_from_quaternion(q.x, q.y, q.z, q.w),
             stamp=time.monotonic(),
             sim_stamp=self._sim_time,
+            z=p.z,
         )
         sin_pitch = max(-1.0, min(1.0, 2.0 * (q.w * q.y - q.z * q.x)))
         pitch = math.asin(sin_pitch)
@@ -328,11 +370,22 @@ class ObstacleCourseEnv(gymnasium.Env):
             scan.copy(), self.zed_config, self.lidar_max_range, self._rng
         )
         normalized_scan = (noisy / self.lidar_max_range).astype(np.float32)
-        normalized_speed = np.clip(speed / self.obs_speed_scale, 0.0, 1.0)
-        normalized_yaw_rate = np.clip((yaw_rate + 1.0) / 2.0, 0.0, 1.0)
-        return np.concatenate(
+        # Both of these are signed and centred on 0.5. Speed used to be a
+        # magnitude clipped at zero, which made reversing indistinguishable
+        # from standing still, and yaw rate used to saturate at +-1 rad/s,
+        # which is most of a tight corner (see YAW_RATE_SCALE).
+        normalized_speed = np.clip((speed / self.obs_speed_scale + 1.0) / 2.0, 0.0, 1.0)
+        normalized_yaw_rate = np.clip((yaw_rate / YAW_RATE_SCALE + 1.0) / 2.0, 0.0, 1.0)
+        frame = np.concatenate(
             [normalized_scan, [normalized_speed, normalized_yaw_rate]]
         ).astype(np.float32)
+        if not self._frames:
+            # First frame of an episode: repeat it, so the stack never
+            # contains anything from the episode before.
+            self._frames.extend([frame] * self.frame_stack)
+        else:
+            self._frames.append(frame)
+        return np.concatenate(self._frames).astype(np.float32)
 
     # ----------------------------------------------------------- ROS helpers
 
@@ -514,7 +567,11 @@ class ObstacleCourseEnv(gymnasium.Env):
         self._stuck_window_travel = []
         self._cmd_speed = 0.0
         self._cmd_steer_fraction = 0.0
-        self.boost.reset()
+
+        self._course.reset()
+        self._prev_s = self._course.update(pose.x, pose.y, pose.z)
+        self._lap_completed = False
+        self._frames.clear()
 
         scan = self._ground_truth_scan()
         observation = self._build_observation(scan, speed=0.0, yaw_rate=0.0)
@@ -531,9 +588,6 @@ class ObstacleCourseEnv(gymnasium.Env):
             )
         )
         self._cmd_steer_fraction = steer_fraction
-        if self.boost.enabled:
-            ground_truth = self._ground_truth_scan()
-            speed = self.boost.apply(speed, ground_truth, steer_fraction)
         speed = self._apply_traction(speed, steer_fraction)
         angular_z = 0.0
         if abs(speed) > 1e-3:
@@ -554,17 +608,25 @@ class ObstacleCourseEnv(gymnasium.Env):
         min_clearance = float(scan.min())
         collided = min_clearance < self.reward_config.collision_clearance
 
-        progress_distance = forward_progress(
+        # Longitudinal displacement, signed: what the car's own tachometer
+        # plus direction estimate would report, so it is fair game for the
+        # observation. Distinct from progress_s below, which is measured
+        # against the course and is reward-only.
+        travel = _forward_travel(
             self._prev_pose.x, self._prev_pose.y, self._prev_pose.yaw, pose.x, pose.y
         )
 
         dt = pose.sim_stamp - self._prev_pose.sim_stamp
         if not (1e-4 < dt < 1.0):
             dt = 1.0 / self.control_hz
-        measured_speed = (
-            math.hypot(pose.x - self._prev_pose.x, pose.y - self._prev_pose.y) / dt
-        )
+        measured_speed = travel / dt
         measured_yaw_rate = _wrap_to_pi(pose.yaw - self._prev_pose.yaw) / dt
+
+        s_now = self._course.update(pose.x, pose.y, pose.z)
+        progress_s = s_now - self._prev_s
+        self._prev_s = s_now
+        if s_now >= self._course.lap_length - self.lap_finish_tolerance_m:
+            self._lap_completed = True
 
         with self._hoop_status_lock:
             hoop_status = self._hoop_status
@@ -578,10 +640,24 @@ class ObstacleCourseEnv(gymnasium.Env):
             self._prev_any_missed = any_missed
             self._prev_passed_count = passed_count
 
+        # Net progress *round the course* over the window, not distance
+        # travelled: the old `abs(...)` here counted spinning on the spot and
+        # driving backwards as getting somewhere, so a car doing neither
+        # usefully never tripped the detector. This is also the
+        # progress-per-time floor -- below stuck_distance per stuck_window_s
+        # the episode is not worth finishing.
+        window_steps = max(1, round(self.stuck_window_s * self.control_hz))
+        self._stuck_window_travel.append(progress_s)
+        self._stuck_window_travel = self._stuck_window_travel[-window_steps:]
+        stuck = (
+            len(self._stuck_window_travel) == window_steps
+            and sum(self._stuck_window_travel) < self.stuck_distance
+        )
+
         result = compute_reward(
             self.reward_config,
             dt=dt,
-            progress_distance=progress_distance,
+            progress_s=progress_s,
             min_clearance=min_clearance,
             angular_z=measured_yaw_rate,
             prev_angular_z=self._prev_angular_z,
@@ -590,6 +666,8 @@ class ObstacleCourseEnv(gymnasium.Env):
             hoops_passed_this_step=hoops_passed_now,
             steer_fraction=self._cmd_steer_fraction,
             prev_steer_fraction=self._prev_steer_fraction,
+            lap_completed=self._lap_completed,
+            stuck=stuck,
         )
 
         self._prev_pose = pose
@@ -598,18 +676,10 @@ class ObstacleCourseEnv(gymnasium.Env):
         self._episode_step += 1
         self._episode_time += dt
 
-        window_steps = max(1, round(self.stuck_window_s * self.control_hz))
-        self._stuck_window_travel.append(abs(progress_distance))
-        self._stuck_window_travel = self._stuck_window_travel[-window_steps:]
-        stuck = (
-            len(self._stuck_window_travel) == window_steps
-            and sum(self._stuck_window_travel) < self.stuck_distance
-        )
-
-        # A missed hoop fails the run outright per the rules -- no point
-        # spending the rest of the episode's rollout driving a run that is
-        # already lost.
-        terminated = collided or hoop_missed_now
+        # A missed hoop fails the run outright per the rules, and a finished
+        # lap is the goal -- no point spending the rest of the rollout in
+        # either case.
+        terminated = collided or hoop_missed_now or self._lap_completed
         truncated = self._episode_time >= self.episode_time_limit_s or stuck
 
         observation = self._build_observation(scan, measured_speed, measured_yaw_rate)
@@ -618,7 +688,9 @@ class ObstacleCourseEnv(gymnasium.Env):
             "hoop_missed": hoop_missed_now,
             "hoops_passed": hoops_passed_now,
             "stuck": stuck,
-            "progress_distance": progress_distance,
+            "lap_completed": self._lap_completed,
+            "progress_distance": progress_s,
+            "course_s": s_now,
             "min_clearance": min_clearance,
             "speed": measured_speed,
         }

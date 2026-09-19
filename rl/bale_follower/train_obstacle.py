@@ -92,27 +92,34 @@ class DeterministicEvalCallback(BaseCallback):
 
         distances = []
         hoops_missed = 0
+        laps = 0
         for _ in range(self.episodes):
             observation, _ = self.raw_env.reset()
-            distance = 0.0
+            reached = 0.0
             while True:
                 action, _ = self.model.predict(observation, deterministic=True)
                 observation, _, terminated, truncated, info = self.raw_env.step(action)
-                distance += max(0.0, info["progress_distance"])
+                # How far round the course it got, not how far it drove:
+                # summing displacement rewarded a policy for wandering.
+                reached = max(reached, info["course_s"])
                 if info.get("hoop_missed"):
                     hoops_missed += 1
+                if info.get("lap_completed"):
+                    laps += 1
                 if terminated or truncated:
                     break
-            distances.append(distance)
+            distances.append(reached)
 
         mean_distance = sum(distances) / len(distances)
         self.logger.record("eval/deterministic_distance_m", mean_distance)
         self.logger.record("eval/hoops_missed", hoops_missed)
+        self.logger.record("eval/laps_completed", laps)
         print(
             f"[deterministic eval] {self.num_timesteps} steps: "
-            f"mean {mean_distance:.1f} m over {self.episodes} episodes "
+            f"reached {mean_distance:.1f} m round the course over "
+            f"{self.episodes} episodes "
             f"(best {max(self.best_distance, mean_distance):.1f}), "
-            f"{hoops_missed} hoop miss(es)"
+            f"{laps} lap(s), {hoops_missed} hoop miss(es)"
         )
         if mean_distance > self.best_distance:
             self.best_distance = mean_distance
