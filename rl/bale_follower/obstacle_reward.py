@@ -98,12 +98,19 @@ class ObstacleRewardConfig:
     # collision detector, not just a shaping cutoff -- tune it against actual
     # sensor noise before trusting it, not just against these defaults.
     collision_clearance: float = 0.06
-    # ~30 m of course progress. Steep enough to matter on a 75 m lap without
-    # making the car so timid it will not pass a bucket.
-    collision_penalty: float = 300.0
+    # 5 m of course progress -- deliberately modest, because it is not the
+    # real deterrent. A collision *ends the episode*, so it already forfeits
+    # every metre the car would have gone on to bank plus the lap bonus and
+    # the finish-speed bonus; that is what stops a trained policy ramming
+    # through. Charging 300 on top double-counted it, and with the per-step
+    # floor now at 0 that made freezing the optimal policy: sitting still
+    # scored 0 while attempting the course and crashing scored -300. The
+    # first rollout after the curriculum went in duly came back at -296.
+    # See assert_attempting_beats_freezing.
+    collision_penalty: float = 50.0
     # Heavier than a collision: missing a hoop fails the run outright by the
-    # rules, a collision does not.
-    hoop_miss_penalty: float = 500.0
+    # rules, a collision does not. Scaled down with it for the same reason.
+    hoop_miss_penalty: float = 150.0
     hoop_pass_bonus: float = 30.0
     k_smooth: float = 0.05
     k_steer_reversal: float = 0.8
@@ -226,6 +233,27 @@ def assert_no_quit_incentive(config: ObstacleRewardConfig) -> None:
     )
 
 
+def assert_attempting_beats_freezing(config: ObstacleRewardConfig) -> None:
+    """The mirror image of the quit trap.
+
+    Once an idle car scores 0 a step, any large terminal penalty makes doing
+    nothing the safest policy available: a car that tries the course and
+    crashes must not end up behind one that never moved, or PPO learns to
+    freeze instead of to drive. The real deterrent against crashing is that
+    it ends the episode and forfeits the rest of the lap, not the penalty
+    itself.
+
+    The bar: a car that gets a few metres in before hitting something must
+    already be ahead of one that sat on the line.
+    """
+    attempt_m = config.collision_penalty / config.k_progress
+    assert attempt_m <= 10.0, (
+        f"a crash costs {attempt_m:.0f} m of progress, so the car must cover "
+        f"{attempt_m:.0f} m before trying beats sitting still -- too far to "
+        "find by exploration; lower collision_penalty or raise k_progress"
+    )
+
+
 if __name__ == "__main__":
     cfg = ObstacleRewardConfig()
     dt = 0.1
@@ -304,8 +332,9 @@ if __name__ == "__main__":
         f"{fast.total - threading.total:.3f} of {fast.total:.3f}"
     )
 
-    # --- the quit check ------------------------------------------------
+    # --- the two degenerate-strategy checks -----------------------------
     assert_no_quit_incentive(cfg)
+    assert_attempting_beats_freezing(cfg)
 
     # --- episode level -------------------------------------------------
     # Per-step ordering above is necessary and nowhere near sufficient:
@@ -337,6 +366,7 @@ if __name__ == "__main__":
 
     quit_early = episode(0.0, 0.0, finished=False, ended_stuck=True)
     wander_full = episode(0.0, 0.0, finished=False, seconds=time_limit)
+    try_and_crash = episode(8.0, 2.0, finished=False, hit=True)
     lap_2ms = episode(lap_length, 2.0, finished=True)
     lap_3ms = episode(lap_length, 3.0, finished=True)
     half_lap = episode(lap_length / 2, 2.0, finished=False)
@@ -347,6 +377,7 @@ if __name__ == "__main__":
         ("quit at the stuck window", quit_early),
         ("wander the full 90 s cap", wander_full),
         ("crash 5 m in", early_crash),
+        ("try, crash 8 m in", try_and_crash),
         ("half a lap, then time out", half_lap),
         ("finish the lap at 2.0 m/s", lap_2ms),
         ("finish the lap at 3.0 m/s", lap_3ms),
@@ -357,6 +388,13 @@ if __name__ == "__main__":
     assert lap_2ms > half_lap, "finishing must beat stopping half way"
     assert half_lap > wander_full, "partial progress must beat none"
     assert half_lap > early_crash, "getting somewhere must beat crashing early"
+    # The freeze trap: trying the course and failing part way must already
+    # beat never having moved, or doing nothing is the safest policy there
+    # is. The first curriculum rollout came back at -296 for exactly this.
+    assert try_and_crash > wander_full, (
+        f"attempting the course and crashing 8 m in scores {try_and_crash:+.1f} "
+        f"against {wander_full:+.1f} for never moving -- PPO will learn to freeze"
+    )
     # The one that matters: run 2 had quit_early (-225) against wander_full
     # (-450) and converged straight onto that +225.
     #

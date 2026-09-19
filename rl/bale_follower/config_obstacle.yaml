@@ -116,8 +116,13 @@ reward:
   k_touch: 30.0
   touch_clearance: 0.08
   collision_clearance: 0.06
-  collision_penalty: 300.0
-  hoop_miss_penalty: 500.0
+  # Modest on purpose. A collision ends the episode, which already forfeits
+  # the rest of the lap plus both finish bonuses -- that is the real
+  # deterrent. At 300 on top, sitting still (0) beat attempting the course
+  # and crashing (-300), and the first rollout after dealt starts went in
+  # came back at -296. See assert_attempting_beats_freezing.
+  collision_penalty: 50.0
+  hoop_miss_penalty: 150.0
   hoop_pass_bonus: 30.0
   k_smooth: 0.05
   k_steer_reversal: 0.8

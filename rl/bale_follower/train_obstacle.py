@@ -47,6 +47,70 @@ def build_env(config: dict, sdf_path: str, teleport_url: str) -> Monitor:
     return Monitor(env)
 
 
+class EpisodeOutcomeCallback(BaseCallback):
+    """Log *why* episodes end, not just how long they lasted.
+
+    `ep_len_mean` and `ep_rew_mean` alone cannot tell a policy that is
+    learning to drive from one that is learning to quit -- two runs died
+    that way, and both were diagnosable only after the fact by reasoning
+    about what the numbers had to mean. These counters make the failure
+    modes legible while the run is going:
+
+    - `outcome/collision_rate` climbing towards 1.0: the car is crashing,
+      not driving.
+    - `outcome/stuck_rate` climbing towards 1.0 with `ep_len_mean` pinned
+      at the stuck window: the quit trap. This is the one to watch.
+    - `outcome/timeout_rate` at 1.0 with `outcome/course_advance_mean`
+      near zero: the opposite failure -- the car has learned that sitting
+      still is safer than trying, which a big collision_penalty can cause
+      once the per-step floor is zero.
+    - `outcome/course_advance_mean` is the number that should go up. It is
+      metres gained *from wherever the episode was dealt in*, so it stays
+      comparable across dealt starts, unlike raw course_s.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.reset_counts()
+
+    def reset_counts(self) -> None:
+        self.episodes = 0
+        self.collisions = 0
+        self.stuck = 0
+        self.hoop_misses = 0
+        self.laps = 0
+        self.advances: list[float] = []
+
+    def _on_step(self) -> bool:
+        for info, done in zip(self.locals["infos"], self.locals["dones"]):
+            if not done:
+                continue
+            self.episodes += 1
+            self.collisions += bool(info.get("collided"))
+            self.stuck += bool(info.get("stuck"))
+            self.hoop_misses += bool(info.get("hoop_missed"))
+            self.laps += bool(info.get("lap_completed"))
+            self.advances.append(float(info.get("course_advance", 0.0)))
+        return True
+
+    def _on_rollout_end(self) -> None:
+        if not self.episodes:
+            return
+        done = self.episodes
+        ended = self.collisions + self.stuck + self.hoop_misses + self.laps
+        self.logger.record("outcome/collision_rate", self.collisions / done)
+        self.logger.record("outcome/stuck_rate", self.stuck / done)
+        self.logger.record("outcome/hoop_miss_rate", self.hoop_misses / done)
+        self.logger.record("outcome/lap_rate", self.laps / done)
+        # Whatever is left ran out the clock.
+        self.logger.record("outcome/timeout_rate", max(0, done - ended) / done)
+        self.logger.record(
+            "outcome/course_advance_mean", sum(self.advances) / len(self.advances)
+        )
+        self.logger.record("outcome/course_advance_max", max(self.advances))
+        self.reset_counts()
+
+
 class DeterministicEvalCallback(BaseCallback):
     """Periodically evaluate the *deterministic* policy and keep the best.
 
@@ -193,6 +257,7 @@ def main() -> None:
                 save_path=str(checkpoint_dir),
                 name_prefix="obstacle_course",
             ),
+            EpisodeOutcomeCallback(),
             DeterministicEvalCallback(
                 raw_env=env.unwrapped, metadata=metadata, save_dir=checkpoint_dir
             ),
