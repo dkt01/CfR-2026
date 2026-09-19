@@ -212,9 +212,88 @@ class CourseProgress:
         self.window = max(2, int(window_m / spacing))
         self._index = 0
 
-    def reset(self) -> float:
-        self._index = 0
-        return 0.0
+    def reset(self, start_s: float = 0.0) -> float:
+        """Rewind to the start line, or to `start_s` metres round the lap."""
+        self._index = self.index_at(start_s)
+        return self.arc[self._index]
+
+    def index_at(self, s: float) -> int:
+        """Index of the centerline sample nearest arc length `s`."""
+        s = min(max(s, 0.0), self.lap_length)
+        return min(range(len(self.arc)), key=lambda i: abs(self.arc[i] - s))
+
+    def pose_at(self, s: float) -> tuple[float, float, float, float]:
+        """(x, y, z, yaw) on the centerline at arc length `s`.
+
+        Yaw is the forward tangent, so a car placed here is already pointing
+        the way round the course. Used to start training episodes part-way
+        round the lap (see ObstacleCourseEnv's `start_anywhere_prob`): the
+        centerline is validated to clear the bale walls by > 0.15 m at every
+        ground-level sample, which is what makes it safe to spawn on.
+        """
+        index = self.index_at(s)
+        x, y, z = self.points[index]
+        # Aim at a point a little way down the course rather than along the
+        # local tangent. At a sharp corner the tangent points across the
+        # turn -- measured up to 69 degrees off the direction the car
+        # actually has to travel -- which is a bad way to be dealt into one.
+        ahead = self.points[self.index_at(min(s + 0.75, self.lap_length))]
+        if (ahead[0] - x) ** 2 + (ahead[1] - y) ** 2 < 1e-9:
+            ahead = self.points[min(index + 1, len(self.points) - 1)]
+        yaw = math.atan2(ahead[1] - y, ahead[0] - x)
+        return x, y, z, yaw
+
+    def safe_start_arcs(
+        self,
+        sdf_path: str,
+        spacing: float = 0.25,
+        margin: float = 0.15,
+        probe_m: float = 1.0,
+        finish_margin_m: float = 8.0,
+    ) -> list[float]:
+        """Arc lengths it is safe to deal a training episode in at.
+
+        Checked, not assumed: the point itself must clear every bale wall by
+        the car's half-width, and so must a point `probe_m` straight ahead
+        along the spawn heading -- a pose aimed across a tight corner passes
+        the first test and fails the second. Elevated samples are excluded
+        (see ground_level_span) and so is the run-in to the finish, so a
+        dealt start can never be a free lap.
+
+        Only the *static* bale walls are known here; buckets and hoops move
+        every layout, so a dealt start can still land on a bucket. That
+        costs a truncated episode and nothing else, which is why it is worth
+        living with rather than re-checking 10 layouts here.
+        """
+        boxes = _wall_boxes(sdf_path)
+        low, high = self.ground_level_span()
+        high = max(low, high - finish_margin_m)
+        arcs: list[float] = []
+        s = low
+        while s <= high:
+            x, y, _z, yaw = self.pose_at(s)
+            probe_x = x + probe_m * math.cos(yaw)
+            probe_y = y + probe_m * math.sin(yaw)
+            if not any(
+                _inside(box, x, y, margin) or _inside(box, probe_x, probe_y, margin)
+                for box in boxes
+            ):
+                arcs.append(s)
+            s += spacing
+        return arcs
+
+    def ground_level_span(self, tolerance: float = 0.05) -> tuple[float, float]:
+        """Arc-length range after the last elevated (ramp/deck/helix) sample.
+
+        Spawning is only safe where the centerline sits on the ground: the
+        elevated section is a narrow deck with a drop either side, and the
+        car would have to be placed on it to within a few centimetres.
+        """
+        last_elevated = 0
+        for index, (_, _, z) in enumerate(self.points):
+            if z > tolerance:
+                last_elevated = index
+        return self.arc[min(last_elevated + 1, len(self.arc) - 1)], self.lap_length
 
     def _cost(self, index: int, x: float, y: float, z: float) -> float:
         px, py, pz = self.points[index]

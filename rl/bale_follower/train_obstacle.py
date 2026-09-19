@@ -94,7 +94,11 @@ class DeterministicEvalCallback(BaseCallback):
         hoops_missed = 0
         laps = 0
         for _ in range(self.episodes):
-            observation, _ = self.raw_env.reset()
+            # Always from the start line, never a dealt start: training
+            # deals episodes in all round the lap (start_anywhere_prob), and
+            # an eval that inherited that would measure the draw, not the
+            # policy.
+            observation, _ = self.raw_env.reset(options={"start_s": 0.0})
             reached = 0.0
             while True:
                 action, _ = self.model.predict(observation, deterministic=True)

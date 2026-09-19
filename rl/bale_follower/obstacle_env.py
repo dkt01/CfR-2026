@@ -143,6 +143,8 @@ class ObstacleCourseEnv(gymnasium.Env):
         teleport_timeout_s: float = 5.0,
         lap_finish_tolerance_m: float = 0.5,
         frame_stack: int = 4,
+        start_anywhere_prob: float = 0.8,
+        start_anywhere_margin_m: float = 8.0,
     ) -> None:
         super().__init__()
         self.traction = traction
@@ -167,6 +169,9 @@ class ObstacleCourseEnv(gymnasium.Env):
         self.reward_config = reward_config or ObstacleRewardConfig()
         self.odom_timeout_s = odom_timeout_s
         self.lap_finish_tolerance_m = lap_finish_tolerance_m
+        self.start_anywhere_prob = start_anywhere_prob
+        self.start_anywhere_margin_m = start_anywhere_margin_m
+        self._start_s = 0.0
 
         # Generic XML lookup by model name -- no course-shape assumptions --
         # so this works against the Obstacle Course's "slash" model exactly
@@ -228,6 +233,15 @@ class ObstacleCourseEnv(gymnasium.Env):
         self._course = CourseProgress()
         self._prev_s = 0.0
         self._lap_completed = False
+        # Verified once here rather than sampled blind every reset -- see
+        # CourseProgress.safe_start_arcs for what "safe" is checked against.
+        self._start_arcs = (
+            self._course.safe_start_arcs(
+                sdf_path, finish_margin_m=start_anywhere_margin_m
+            )
+            if start_anywhere_prob > 0.0
+            else []
+        )
 
         # Course layout randomization -- see the module docstring for why
         # this cycles a small pool of seeds instead of redrawing every reset.
@@ -533,6 +547,32 @@ class ObstacleCourseEnv(gymnasium.Env):
             yaw + self._rng.uniform(-0.1, 0.1),
         )
 
+    def _pick_start_s(self) -> float:
+        """Where round the lap this episode begins.
+
+        The course is ~75 m of tunnel, gravel, bank, buckets and hoops, and
+        a run that always starts on the line only ever sees the first few
+        metres of it: the car has to solve section N before it can even
+        observe section N+1. At the ~350 episodes a 300k-step run affords,
+        that is not enough to reach the back half of the course, let alone
+        learn it.
+
+        Starting most episodes somewhere along the centerline turns that
+        sequential problem into a parallel one -- every section gets
+        practised from the first rollout. The remaining `1 - prob` start on
+        the line so the policy still trains on the real thing, and
+        evaluation always does (see `reset`'s `start_s` option).
+
+        Only the ground-level span is drawn from: the ramp/deck/helix is a
+        narrow raised deck with a drop either side, and the teleport places
+        the car at a fixed height, so a spawn there would drop it off the
+        edge. The car still drives that section -- it just is not dealt into
+        the middle of it.
+        """
+        if not self._start_arcs or self._rng.random() >= self.start_anywhere_prob:
+            return 0.0
+        return float(self._start_arcs[self._rng.integers(len(self._start_arcs))])
+
     # ----------------------------------------------------------------- gym
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
@@ -552,7 +592,13 @@ class ObstacleCourseEnv(gymnasium.Env):
         self._episode_count += 1
 
         self._settle(0.3)
-        x, y, yaw = self._pick_start_pose()
+        start_s = (options or {}).get("start_s")
+        if start_s is None:
+            start_s = self._pick_start_s()
+        if start_s > 0.0:
+            x, y, _z, yaw = self._course.pose_at(start_s)
+        else:
+            x, y, yaw = self._pick_start_pose()
         self._teleport(x, y, math.degrees(yaw))
         self._settle(0.3)
 
@@ -568,8 +614,12 @@ class ObstacleCourseEnv(gymnasium.Env):
         self._cmd_speed = 0.0
         self._cmd_steer_fraction = 0.0
 
-        self._course.reset()
+        # Seed the projection window at the dealt start, not at the line:
+        # the search is deliberately local (see CourseProgress) so it cannot
+        # find the car 40 m away on its own.
+        self._course.reset(start_s)
         self._prev_s = self._course.update(pose.x, pose.y, pose.z)
+        self._start_s = self._prev_s
         self._lap_completed = False
         self._frames.clear()
 
@@ -656,8 +706,8 @@ class ObstacleCourseEnv(gymnasium.Env):
 
         result = compute_reward(
             self.reward_config,
-            dt=dt,
             progress_s=progress_s,
+            time_remaining_s=self.episode_time_limit_s - self._episode_time,
             min_clearance=min_clearance,
             angular_z=measured_yaw_rate,
             prev_angular_z=self._prev_angular_z,
@@ -691,6 +741,11 @@ class ObstacleCourseEnv(gymnasium.Env):
             "lap_completed": self._lap_completed,
             "progress_distance": progress_s,
             "course_s": s_now,
+            # Where this episode was dealt in, and how far it has got from
+            # there -- with start_anywhere_prob on, raw course_s says more
+            # about the draw than about the policy.
+            "start_s": self._start_s,
+            "course_advance": s_now - self._start_s,
             "min_clearance": min_clearance,
             "speed": measured_speed,
         }

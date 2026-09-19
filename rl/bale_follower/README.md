@@ -297,9 +297,21 @@ yet -- this is the scaffolding, not a checkpoint.
 
 What's different from the Speed Course, and why:
 
-- **Objective is lap time, not "stay in the corridor."** The reward is
-  dominated by a flat per-step time cost (`k_time`); see
-  `obstacle_reward.py`'s docstring.
+- **Objective is lap time, not "stay in the corridor."** The reward pays for
+  signed progress along a validated course centerline
+  (`obstacle_course_path.py`), plus a finish bonus scaled by how much of the
+  episode cap is left unused. There is deliberately **no per-step time
+  cost**: two runs died because a negative per-step floor made ending the
+  episode worth more than playing it out, and PPO duly learned to stand
+  still, then to quit. `python obstacle_reward.py` asserts an idle car
+  scores exactly 0 a step; see that file's docstring for the full
+  post-mortem.
+- **Most training episodes are dealt in part-way round the lap**
+  (`start_anywhere_prob`). A 300k-step run is only ~350 episodes, and a car
+  that always starts on the line has to solve section N before it can even
+  see section N+1 -- it would never reach the back half of a 75 m course.
+  Evaluation always starts on the line, so the reported distance stays
+  honest.
 - **Perception is the ZED point cloud, not analytic geometry.** The course's
   ramps, tunnel and helix are 3D in a way BaleFollowerEnv's top-down bale-box
   model cannot represent, so `scan_source: cloud` is mandatory here, which
