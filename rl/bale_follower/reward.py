@@ -146,3 +146,54 @@ if __name__ == "__main__":
     # bounded well inside the collision penalty.
     assert crashed.total < -100.0, "collision has to dominate the shaping terms"
     print("\nordering: fast > slow > circling > backwards > crashed")
+
+    # Per-step ordering is not enough. An Obstacle Course run converged on
+    # "stand perfectly still" for 182k steps while its own per-step check
+    # passed the whole time: a per-step time cost made every episode a pure
+    # cost, and the stuck truncation was the cheapest way out. So compare
+    # whole-episode returns for the strategies a policy can actually find.
+    LOOP_M, LIMIT_S, HZ = 110.096, 120.0, 10.0
+    FLOOR_S = 5.0  # progress_window_s: how fast a hopeless episode is cut
+
+    def episode(pace_m_s, crash_after_s=None):
+        """Return for driving at a steady pace, optionally ending in a wall."""
+        duration = (
+            crash_after_s
+            if crash_after_s
+            else (LIMIT_S if pace_m_s * FLOOR_S >= 1.0 * FLOOR_S else FLOOR_S)
+        )
+        steps = duration * HZ
+        total = steps * step(arc_progress=pace_m_s / HZ).total
+        if crash_after_s:
+            total -= cfg.collision_penalty
+        return total
+
+    still = episode(0.0)
+    crash_early = episode(2.5, crash_after_s=2.0)
+    crawl = episode(0.5)
+    steady = episode(2.5)
+    quick = episode(3.2)
+
+    print("\nepisode return over a %.0f s limit (loop is %.1f m):" % (LIMIT_S, LOOP_M))
+    print(f"  stand still (cut at {FLOOR_S:.0f} s): {still:+9.1f}")
+    print(f"  crash after 2 s:                 {crash_early:+9.1f}")
+    print(f"  crawl 0.5 m/s (cut):             {crawl:+9.1f}")
+    print(
+        f"  steady 2.5 m/s:                  {steady:+9.1f}  "
+        f"({steady / LOOP_M / 10:.2f} laps)"
+    )
+    print(
+        f"  quick 3.2 m/s:                   {quick:+9.1f}  "
+        f"({quick / LOOP_M / 10:.2f} laps)"
+    )
+
+    assert quick > steady > still, "going faster must pay more than going slow"
+    assert still > crash_early, "crashing must never be cheaper than doing nothing"
+    assert crawl < steady, "being cut for slow progress must cost the episode"
+    # The real trap: a negative-sum reward makes doing nothing the best play.
+    assert still >= -1.0, (
+        "standing still must not be profitable relative to driving -- if this "
+        "goes negative, every episode is a pure cost and the progress floor "
+        "becomes an escape hatch"
+    )
+    print("\nepisode-level: quick > steady > still > crash. No escape hatch.")
