@@ -36,6 +36,76 @@ import math
 import numpy as np
 
 
+def _scan_tracking_the_ground(
+    ranges: np.ndarray,
+    bearings: np.ndarray,
+    heights: np.ndarray,
+    num_bins: int,
+    fov_deg: float,
+    max_range: float,
+    min_range: float,
+    ground_step: float,
+    cell_m: float,
+) -> np.ndarray:
+    """Nearest *obstacle* per bearing, following the ground as it climbs.
+
+    A fixed height band cannot do this course. The ramp climbs 0.635 m in
+    3.3 m, so 2 m ahead its surface is 0.38 m above the car's own ground --
+    higher than the top of a 0.356 m bale at the same range. Any threshold
+    that lets the ramp through lets the bales through with it. Measured
+    against `min_height` alone, the ramp read as a wall 2.18 m ahead and was
+    indistinguishable from a bale at 3.0 m, so climbing it looked exactly
+    like driving into one.
+
+    Height does not separate them; *shape* does. Ground and ramp rise
+    smoothly with range, a bale or a bucket is a step. So walk outward along
+    each bearing carrying an estimate of where the drivable surface is: a
+    return that continues it (within `ground_step`) updates the estimate and
+    is not an obstacle, and the first return standing higher than that is
+    the obstacle for that bearing. A bale standing *on* the ramp is still
+    found, because it steps above the ramp the walk has been tracking.
+
+    Deliberately a rule about the world rather than about the simulator: the
+    real car climbs the same ramp with the same camera and needs the same
+    distinction.
+    """
+    scan = np.full(num_bins, max_range, dtype=np.float32)
+    half = fov_deg / 2.0
+    edges = np.linspace(-half, half, num_bins + 1)
+    index = np.clip(np.digitize(bearings, edges) - 1, 0, num_bins - 1)
+
+    for current in range(num_bins):
+        in_bin = index == current
+        if not in_bin.any():
+            continue
+        bin_ranges = ranges[in_bin]
+        bin_heights = heights[in_bin]
+        order = np.argsort(bin_ranges)
+        bin_ranges = bin_ranges[order]
+        bin_heights = bin_heights[order]
+
+        # Seed on the closest returns, which are the ground the car is
+        # standing on; if the near field dropped out, the first cell seeds
+        # it instead.
+        surface = float(bin_heights[: max(1, min(8, bin_heights.size))].min())
+        start = float(bin_ranges[0])
+        cells = np.floor((bin_ranges - start) / cell_m).astype(np.int64)
+        for cell in range(int(cells[-1]) + 1):
+            here = cells == cell
+            if not here.any():
+                continue  # a gap in the cloud is not a step
+            cell_heights = bin_heights[here]
+            above = cell_heights > surface + ground_step
+            if above.any():
+                scan[current] = max(min_range, float(bin_ranges[here][above].min()))
+                break
+            # Everything in this cell continues the drivable surface, so
+            # follow it -- this is what lets the walk climb the ramp and
+            # descend the helix without either reading as a wall.
+            surface = float(cell_heights.min())
+    return scan
+
+
 def scan_from_points(
     points: np.ndarray,
     num_bins: int,
@@ -46,6 +116,8 @@ def scan_from_points(
     min_range: float = 0.15,
     pitch: float = 0.0,
     roll: float = 0.0,
+    ground_step: float | None = None,
+    cell_m: float = 0.25,
 ) -> np.ndarray:
     """Reduce an (N, 3) cloud in the body frame to a bearing-binned scan.
 
@@ -81,9 +153,36 @@ def scan_from_points(
 
     x, y, z = points[:, 0], points[:, 1], points[:, 2]
     finite = np.isfinite(x) & np.isfinite(y) & np.isfinite(z)
-    keep = finite & (x > 0.0) & (z > min_height) & (z < max_height)
+    keep = finite & (x > 0.0) & (z < max_height)
+    # The ground-tracking walk needs the ground returns the height band is
+    # there to throw away, so it does its own rejection further down.
+    if ground_step is None:
+        keep &= z > min_height
     if not keep.any():
         return scan
+
+    if ground_step is not None:
+        kx, ky, kz = x[keep], y[keep], z[keep]
+        kranges = np.hypot(kx, ky)
+        kbearings = np.degrees(np.arctan2(ky, kx))
+        window = (
+            (kranges <= max_range)
+            & (kbearings >= -fov_deg / 2.0)
+            & (kbearings <= fov_deg / 2.0)
+        )
+        if not window.any():
+            return scan
+        return _scan_tracking_the_ground(
+            kranges[window],
+            kbearings[window],
+            kz[window],
+            num_bins,
+            fov_deg,
+            max_range,
+            min_range,
+            ground_step,
+            cell_m,
+        )
 
     x, y = x[keep], y[keep]
     # Ground-plane range and bearing. Bearing is positive to the LEFT, to

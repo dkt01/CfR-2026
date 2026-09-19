@@ -51,6 +51,15 @@ env:
   # One 110 degree depth scan cannot say which way the car is moving through
   # it, and much of this course looks alike from one. See obstacle_env.py.
   frame_stack: 4
+  # A return has to stand this far above the drivable surface the scan has
+  # been tracking to count as an obstacle. Without it the scan is a plain
+  # height band, and the ramp -- which climbs 0.635 m in 3.3 m -- reads as a
+  # wall 2.18 m ahead, indistinguishable from a bale. The car was then
+  # penalised for proximity and touch for driving the course as intended,
+  # which is why the eval never got past the deck edge at ~8 m however long
+  # it trained. See cloud_scan._scan_tracking_the_ground; `python
+  # cloud_scan.py` is not the check, the synthetic ramp/bale cases are.
+  ground_step: 0.15
   # Off by default: unlike the Speed Course's bale corridor, there is no
   # course geometry here to validate a jittered start pose against, so a
   # jitter that happens to land inside something would go unnoticed until

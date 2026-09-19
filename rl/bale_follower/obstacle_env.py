@@ -145,6 +145,7 @@ class ObstacleCourseEnv(gymnasium.Env):
         frame_stack: int = 4,
         start_anywhere_prob: float = 0.8,
         start_anywhere_margin_m: float = 8.0,
+        ground_step: float | None = 0.15,
     ) -> None:
         super().__init__()
         self.traction = traction
@@ -171,6 +172,9 @@ class ObstacleCourseEnv(gymnasium.Env):
         self.lap_finish_tolerance_m = lap_finish_tolerance_m
         self.start_anywhere_prob = start_anywhere_prob
         self.start_anywhere_margin_m = start_anywhere_margin_m
+        # Without this the ramp reads as a wall 2.18 m ahead and the car is
+        # penalised for climbing it -- see cloud_scan._scan_tracking_the_ground.
+        self.ground_step = ground_step
         self._start_s = 0.0
 
         # Generic XML lookup by model name -- no course-shape assumptions --
@@ -354,6 +358,7 @@ class ObstacleCourseEnv(gymnasium.Env):
             self.lidar_max_range,
             pitch=pitch,
             roll=roll,
+            ground_step=self.ground_step,
         )
 
     def _ground_truth_scan(self) -> np.ndarray:

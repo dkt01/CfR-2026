@@ -99,6 +99,10 @@ class ObstaclePolicyRunner(Node):
         # shaped or differently scaled observation than it trained on is not
         # the policy that was trained.
         self.frame_stack = int(env_config.get("frame_stack", 1))
+        # Read from the checkpoint's own metadata, so a policy trained
+        # before ground tracking existed still deploys the way it was
+        # trained rather than silently getting a different scan.
+        self.ground_step = env_config.get("ground_step", None)
         self._frames: collections.deque[np.ndarray] = collections.deque(
             maxlen=self.frame_stack
         )
@@ -188,6 +192,10 @@ class ObstaclePolicyRunner(Node):
             self.lidar_max_range,
             pitch=pitch,
             roll=roll,
+            # Must match training exactly: the policy was trained on scans
+            # where the ramp is drivable, and would read a plain height-band
+            # scan as a wall across it. See obstacle_env.ground_step.
+            ground_step=self.ground_step,
         )
 
     # --------------------------------------------------------------- control
