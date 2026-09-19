@@ -32,6 +32,7 @@ CHUNK_RE = re.compile(
     r"chunk (\d+) (?:finished cleanly|died with status (\d+)) "
     r"\(\+(\d+) steps, (\d+)/(\d+)\)"
 )
+TARGET_RE = re.compile(r"target \d+ steps into (\S+)")
 REW_RE = re.compile(r"\|\s+ep_rew_mean\s+\|\s+([-\d.e+]+)\s+\|")
 STEPS_RE = re.compile(r"_(\d+)_steps\.zip$")
 
@@ -55,18 +56,31 @@ def log_names(checkpoint_dir):
     return "train_resilient.log", "train_chunk_*.log", "rl_run.log"
 
 
-def chunk_offsets(resilient_log):
+def chunk_offsets(resilient_log, run_name):
     """Cumulative step offset at the start of each chunk, plus restart notes.
 
     SB3 restarts its own step counter on every resume, so a chunk's eval lines
     report in-chunk steps. train_resilient.sh logs the cumulative total after
     each chunk, and that is what makes the per-chunk numbers comparable.
+
+    train_resilient.log and train_chunk_*.log are shared filenames across every
+    run in the checkpoint parent dir -- a later run (or a restart of the same
+    run with a different --total-timesteps) reuses "train_chunk_1.log" etc. So
+    only lines logged after THIS run's own "target N steps into <run_name>"
+    marker count; anything before it belongs to a previous run/attempt and
+    must not leak into this run's offsets or restart notes.
     """
     offsets = {1: 0}
     notes = []
     if not resilient_log.exists():
         return offsets, notes
-    for line in resilient_log.read_text(errors="replace").splitlines():
+    lines = resilient_log.read_text(errors="replace").splitlines()
+    start = 0
+    for index, line in enumerate(lines):
+        match = TARGET_RE.search(line)
+        if match and match.group(1) == run_name:
+            start = index
+    for line in lines[start:]:
         match = CHUNK_RE.search(line)
         if not match:
             continue
@@ -81,10 +95,14 @@ def chunk_offsets(resilient_log):
 
 def collect_evals(log_dir, checkpoint_dir):
     resilient_log, chunk_glob, run_log = log_names(checkpoint_dir)
-    offsets, notes = chunk_offsets(log_dir / resilient_log)
+    offsets, notes = chunk_offsets(log_dir / resilient_log, checkpoint_dir.name)
     evals = []
     chunk_logs = sorted(
-        log_dir.glob(chunk_glob),
+        (
+            p
+            for p in log_dir.glob(chunk_glob)
+            if int(re.search(r"(\d+)", p.name).group(1)) in offsets
+        ),
         key=lambda p: int(re.search(r"(\d+)", p.name).group(1)),
     )
     if not chunk_logs:
@@ -108,10 +126,14 @@ def collect_evals(log_dir, checkpoint_dir):
     return evals, notes
 
 
-def recent_rewards(log_dir, checkpoint_dir, count=3):
+def recent_rewards(log_dir, checkpoint_dir, valid_chunks, count=3):
     _, chunk_glob, run_log = log_names(checkpoint_dir)
     values = []
-    logs = sorted(log_dir.glob(chunk_glob)) or list(log_dir.glob(run_log))
+    logs = sorted(
+        p
+        for p in log_dir.glob(chunk_glob)
+        if int(re.search(r"(\d+)", p.name).group(1)) in valid_chunks
+    ) or list(log_dir.glob(run_log))
     for path in logs:
         values.extend(
             float(value) for value in REW_RE.findall(path.read_text(errors="replace"))
@@ -238,12 +260,14 @@ def main():
     log_dir = Path(args.logs).resolve() if args.logs else checkpoint_dir.parent
 
     evals, notes = collect_evals(log_dir, checkpoint_dir)
+    resilient_log_name, _, _ = log_names(checkpoint_dir)
+    valid_chunks, _ = chunk_offsets(log_dir / resilient_log_name, checkpoint_dir.name)
     state = checkpoint_state(checkpoint_dir)
     result = {
         "checkpoints": state,
         "evals": evals,
         "restarts": notes,
-        "recent_ep_rew_mean": recent_rewards(log_dir, checkpoint_dir),
+        "recent_ep_rew_mean": recent_rewards(log_dir, checkpoint_dir, valid_chunks),
         "slope_m_per_10k_steps": slope_per_10k(evals),
     }
     result.update(verdict(evals, args.patience, args.min_evals, args.threshold))

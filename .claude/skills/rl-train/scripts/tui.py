@@ -30,6 +30,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import progress  # noqa: E402  (needs sys.path set first)
 
+# Windows' native python.exe defaults stdout to the console codepage (cp1252),
+# which can't encode the block-drawing chars in SPARK_LEVELS/bar() below --
+# reconfigure to utf-8 regardless of platform so this never depends on the
+# host's codepage.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 CONTAINER = "cfr-rl"
 CLEAR = "\x1b[2J\x1b[H"
 BOLD = "\x1b[1m"
@@ -135,18 +142,29 @@ def run_target_steps(log_dir, checkpoint_dir):
     Logged once at start ("target N steps into DIR"); unlike CHUNK_RE's
     per-chunk "/target" it exists from the first second, before any chunk
     has finished or died.
+
+    train_resilient.log is shared across every run in log_dir, so this must
+    match run_name and take the LAST such line -- otherwise it picks up an
+    earlier run's target (and possibly a different --steps value) instead of
+    the run actually being displayed.
     """
     resilient_log_name, _, _ = progress.log_names(checkpoint_dir)
     resilient_log = log_dir / resilient_log_name
     if not resilient_log.exists():
         return None
+    run_name = checkpoint_dir.name
+    target = None
     for line in resilient_log.read_text(errors="replace").splitlines():
-        if "target" in line and "steps into" in line:
+        if (
+            "target" in line
+            and "steps into" in line
+            and line.rstrip().endswith(run_name)
+        ):
             try:
-                return int(line.split("target", 1)[1].split("steps", 1)[0].strip())
+                target = int(line.split("target", 1)[1].split("steps", 1)[0].strip())
             except ValueError:
                 continue
-    return None
+    return target
 
 
 def current_cumulative_steps(log_dir, state, checkpoint_dir):
@@ -158,9 +176,14 @@ def current_cumulative_steps(log_dir, state, checkpoint_dir):
     last eval line does.
     """
     resilient_log_name, chunk_glob, _ = progress.log_names(checkpoint_dir)
-    offsets, _ = progress.chunk_offsets(log_dir / resilient_log_name)
+    run_name = Path(state["dir"]).name if state.get("dir") else checkpoint_dir.name
+    offsets, _ = progress.chunk_offsets(log_dir / resilient_log_name, run_name)
     chunk_logs = sorted(
-        log_dir.glob(chunk_glob),
+        (
+            p
+            for p in log_dir.glob(chunk_glob)
+            if int(progress.re.search(r"(\d+)", p.name).group(1)) in offsets
+        ),
         key=lambda p: int(progress.re.search(r"(\d+)", p.name).group(1)),
     )
     current_chunk = 1
