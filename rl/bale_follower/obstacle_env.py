@@ -581,14 +581,6 @@ class ObstacleCourseEnv(gymnasium.Env):
             self._rng = np.random.default_rng(seed)
 
         self._maybe_randomize_layout()
-        # Cheap (no gz service calls, just clears hoop_monitor_node's Python
-        # state) -- always run, independent of whether the layout itself
-        # changed, so "missed a hoop" always means "this episode."
-        self._call_service(self._hoop_reset_client, Trigger.Request())
-        with self._hoop_status_lock:
-            self._hoop_status = None
-        self._prev_any_missed = False
-        self._prev_passed_count = 0
         self._episode_count += 1
 
         self._settle(0.3)
@@ -604,6 +596,22 @@ class ObstacleCourseEnv(gymnasium.Env):
 
         before = time.monotonic()
         pose = self._wait_for_pose(since=before)
+
+        # Clear hoop_monitor_node AFTER the teleport, never before it.
+        # Teleporting is a jump, and a jump across a hoop's plane outside
+        # its gate is exactly what that node is built to report as a miss.
+        # Resetting first therefore charges the new episode for the *move
+        # into* its own start pose. Harmless while every episode started on
+        # the line, 0.7 m from the spawn and nowhere near a hoop; fatal once
+        # starts are dealt round the course, where the jump routinely flies
+        # past one. It read as hoop_miss_rate 0.75 in episodes that had
+        # travelled 0.4 m -- the outcome counters are what made it visible.
+        # Cheap (no gz service calls, just clears that node's Python state).
+        self._call_service(self._hoop_reset_client, Trigger.Request())
+        with self._hoop_status_lock:
+            self._hoop_status = None
+        self._prev_any_missed = False
+        self._prev_passed_count = 0
 
         self._episode_step = 0
         self._episode_time = 0.0
