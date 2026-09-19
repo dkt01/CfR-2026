@@ -56,6 +56,28 @@ def own_attempt_text(path):
     return text if index == -1 else text[index:]
 
 
+def default_log_dir(checkpoint_dir):
+    """Where this run's logs are, old layout or new.
+
+    train_resilient.sh writes its logs into the checkpoint directory now, so
+    each run's logs cannot collide with another's. Runs from before that
+    change left theirs in the parent, under shared filenames -- so fall back
+    there only when the parent's log actually mentions this run. Falling back
+    unconditionally is what let a directory with no logs of its own (a run
+    that has not started yet, say) display the last run's entire eval history
+    as if it were its own.
+    """
+    if (checkpoint_dir / "train_resilient.log").exists():
+        return checkpoint_dir
+    legacy = checkpoint_dir.parent / "train_resilient.log"
+    if legacy.exists():
+        for line in legacy.read_text(errors="replace").splitlines():
+            match = TARGET_RE.search(line)
+            if match and match.group(1) == checkpoint_dir.name:
+                return checkpoint_dir.parent
+    return checkpoint_dir
+
+
 def chunk_offsets(resilient_log, run_name):
     """Cumulative step offset at the start of each chunk, plus restart notes.
 
@@ -232,8 +254,8 @@ def main():
         "--logs",
         default=None,
         help="directory holding train_resilient.log and train_chunk_*.log "
-        "(defaults to the checkpoint directory's parent, which is where "
-        "train_resilient.sh writes them)",
+        "(defaults to the checkpoint directory, or its parent for runs "
+        "started before the logs moved there)",
     )
     parser.add_argument(
         "--patience",
@@ -252,7 +274,9 @@ def main():
     args = parser.parse_args()
 
     checkpoint_dir = Path(args.dir).resolve()
-    log_dir = Path(args.logs).resolve() if args.logs else checkpoint_dir.parent
+    log_dir = (
+        Path(args.logs).resolve() if args.logs else default_log_dir(checkpoint_dir)
+    )
 
     evals, notes = collect_evals(log_dir, checkpoint_dir.name)
     valid_chunks, _ = chunk_offsets(

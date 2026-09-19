@@ -198,8 +198,11 @@ start() {
     local resume_args=""
     [ -n "$resume" ] && resume_args="--resume-from $resume"
 
-    local env_prefix="LOG_DIR=$RL_IN_CONTAINER"
-    [ "$sensors" = true ] && env_prefix="$env_prefix CFR_SENSORS=1"
+    # LOG_DIR is deliberately not set: train_resilient.sh defaults it to the
+    # checkpoint directory, which keeps each run's logs with its own
+    # checkpoints instead of appending them all into one shared file.
+    local env_prefix=""
+    [ "$sensors" = true ] && env_prefix="CFR_SENSORS=1 "
 
     local command
     if [ "$curriculum" = true ]; then
@@ -272,7 +275,9 @@ status() {
     fi
 
     echo
-    "$PYTHON_BIN" "$(winpath "$SCRIPT_DIR/progress.py")" --dir "$(winpath "$dir")" --logs "$(winpath "$RL_DIR")"
+    # No --logs: progress.py defaults to the run's own checkpoint directory,
+    # falling back to $RL_DIR for runs started before the logs moved there.
+    "$PYTHON_BIN" "$(winpath "$SCRIPT_DIR/progress.py")" --dir "$(winpath "$dir")"
 }
 
 # ---- tui ------------------------------------------------------------------
@@ -295,8 +300,11 @@ tui() {
         dir="$RL_DIR/$dir"
     fi
 
+    # --logs is left to tui.py's own default (the run's checkpoint directory,
+    # falling back to its parent for runs started before the logs moved
+    # there). --root stays $RL_DIR: that one scans across runs on purpose.
     "$PYTHON_BIN" "$(winpath "$SCRIPT_DIR/tui.py")" --dir "$(winpath "$dir")" \
-        --logs "$(winpath "$RL_DIR")" --root "$(winpath "$RL_DIR")" \
+        --root "$(winpath "$RL_DIR")" \
         --container "$CONTAINER" --interval "$interval" "${extra[@]}"
 }
 
@@ -310,7 +318,9 @@ logs() {
             *) die "unknown logs option '$1'" ;;
         esac
     done
-    in_container "tail -n $lines \$(ls -t $RL_IN_CONTAINER/train_chunk_*.log 2>/dev/null | head -1) 2>/dev/null || tail -n $lines $RL_IN_CONTAINER/rl_run.log"
+    # Chunk logs live inside the checkpoint directory now; the bare
+    # $RL_IN_CONTAINER glob still matches runs started before that change.
+    in_container "tail -n $lines \$(ls -t $RL_IN_CONTAINER/*/train_chunk_*.log $RL_IN_CONTAINER/train_chunk_*.log 2>/dev/null | head -1) 2>/dev/null || tail -n $lines $RL_IN_CONTAINER/rl_run.log"
 }
 
 # ---- eval -----------------------------------------------------------------

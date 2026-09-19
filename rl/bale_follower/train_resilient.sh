@@ -22,7 +22,14 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TOTAL="${1:?usage: train_resilient.sh <total_timesteps> <checkpoint_dir> [extra train.py args]}"
 CKPT_DIR="${2:?usage: train_resilient.sh <total_timesteps> <checkpoint_dir> [extra train.py args]}"
 shift 2
-LOG_DIR="${LOG_DIR:-$SCRIPT_DIR}"
+# Logs live beside the checkpoints they describe. They used to share one set
+# of filenames in SCRIPT_DIR, which meant every run appended to the previous
+# run's train_resilient.log and train_chunk_N.log -- the monitors then read one
+# run's evals as another's, and reported a stopped run's numbers as a fresh
+# run's progress. Scoping them to CKPT_DIR removes the collision at the source
+# rather than parsing around it. LOG_DIR is still honoured if set explicitly.
+LOG_DIR="${LOG_DIR:-$CKPT_DIR}"
+mkdir -p "$LOG_DIR"
 RUN_LOG="$LOG_DIR/train_resilient.log"
 
 log() { echo "[$(date '+%H:%M:%S')] $*" | tee -a "$RUN_LOG"; }

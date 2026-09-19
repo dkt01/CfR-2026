@@ -360,7 +360,8 @@ def main():
         "--logs",
         default=None,
         help="directory holding train_resilient.log and train_chunk_*.log "
-        "(defaults to the checkpoint directory's parent)",
+        "(defaults to the checkpoint directory, or its parent for runs "
+        "started before the logs moved there)",
     )
     parser.add_argument(
         "--root",
@@ -381,7 +382,11 @@ def main():
     args = parser.parse_args()
 
     checkpoint_dir = Path(args.dir).resolve()
-    log_dir = Path(args.logs).resolve() if args.logs else checkpoint_dir.parent
+    log_dir = (
+        Path(args.logs).resolve()
+        if args.logs
+        else progress.default_log_dir(checkpoint_dir)
+    )
     root = Path(args.root).resolve() if args.root else checkpoint_dir.parent
 
     try:
