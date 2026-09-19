@@ -45,6 +45,10 @@ STEPS_RE = re.compile(r"bale_follower_(\d+)_steps\.zip")
 
 RESTART_MARKER = "Wrapping the env in a DummyVecEnv."
 
+# Smallest change in eval distance worth reading as a change at all. The course
+# is 110 m around, so a window-to-window move of under a metre is noise.
+MEANINGFUL_M = 1.0
+
 
 def own_attempt_text(path):
     """This chunk log's own content, stripped of any leftover prior attempt.
@@ -196,22 +200,31 @@ def verdict(evals, patience, min_evals, threshold):
     recent = distances[-window:]
     previous = distances[-2 * window : -window]
     gain = None
+    delta = None
     if previous:
         previous_mean = sum(previous) / len(previous)
         recent_mean = sum(recent) / len(recent)
-        gain = (recent_mean - previous_mean) / max(previous_mean, 1e-6)
+        delta = recent_mean - previous_mean
+        # Divide by the magnitude, floored at MEANINGFUL_M. The distance is
+        # signed now, so a raw ratio against a mean near zero -- or a negative
+        # one -- produces nonsense: a window sitting at -0.23 m reported
+        # "-15000000%" and flipped the sign of every comparison.
+        gain = delta / max(abs(previous_mean), MEANINGFUL_M)
 
     common = {"evals_since_best": since_best, "steps_since_best": steps_since_best}
-    if gain is not None and gain < -0.10:
+    # A regression has to be a real loss of distance, not noise: two windows
+    # either side of zero on a 110 m course differ by centimetres, and calling
+    # that "regressing" buries an actual collapse when one happens.
+    if gain is not None and gain < -0.10 and delta < -MEANINGFUL_M:
         return {
             "verdict": "regressing",
-            "reason": f"last {window} evals average {gain * 100:+.0f}% against the "
+            "reason": f"last {window} evals average {delta:+.1f} m against the "
             f"{window} before them; best was {distances[best_index]:.1f} m at "
             f"{evals[best_index]['steps']} steps",
             **common,
         }
     if since_best >= patience and (gain is None or gain < threshold):
-        drift = "unknown" if gain is None else f"{abs(gain) * 100:.1f}%"
+        drift = "unknown" if gain is None else f"{abs(delta):.1f} m"
         return {
             "verdict": "plateau",
             "reason": f"no new best in {since_best} evals ({steps_since_best} steps); "
