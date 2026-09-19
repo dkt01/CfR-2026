@@ -92,6 +92,9 @@ class EpisodeOutcomeCallback(BaseCallback):
         self.clearance_sum = 0.0
         self.cmd_speed_sum = 0.0
         self.dt_sum = 0.0
+        self.reward_parts = dict.fromkeys(
+            ("r_progress", "r_proximity", "r_touch", "r_smoothness"), 0.0
+        )
 
     def _on_step(self) -> bool:
         for info, done in zip(self.locals["infos"], self.locals["dones"]):
@@ -106,6 +109,8 @@ class EpisodeOutcomeCallback(BaseCallback):
                 self.clearance_sum += float(info.get("min_clearance", 0.0))
                 self.cmd_speed_sum += float(info.get("cmd_speed", 0.0))
                 self.dt_sum += float(info.get("dt", 0.0))
+                for part in self.reward_parts:
+                    self.reward_parts[part] += float(info.get(part, 0.0))
             if not done:
                 continue
             self.episodes += 1
@@ -145,6 +150,10 @@ class EpisodeOutcomeCallback(BaseCallback):
                 "outcome/cmd_speed_mean", self.cmd_speed_sum / self.steps
             )
             self.logger.record("outcome/dt_mean", self.dt_sum / self.steps)
+            # Per episode, so they add up to roughly ep_rew_mean and can be
+            # read against each other directly.
+            for part, total in self.reward_parts.items():
+                self.logger.record(f"reward/{part}", total / done)
         self.reset_counts()
 
 

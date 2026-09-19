@@ -778,6 +778,14 @@ class ObstacleCourseEnv(gymnasium.Env):
             # and they need different fixes.
             "cmd_speed": speed,
             "dt": dt,
+            # Where the return actually went. An episode's total can sit
+            # near zero either because nothing happened or because a large
+            # progress reward was cancelled by a large penalty, and those
+            # want opposite fixes.
+            "r_progress": result.progress,
+            "r_proximity": result.proximity,
+            "r_touch": result.touch,
+            "r_smoothness": result.smoothness,
         }
         return observation, result.total, terminated, truncated, info
 
