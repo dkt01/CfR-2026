@@ -44,6 +44,10 @@ env:
   # already nears 8 s on a quiet host and blew past it when another training
   # run's Gazebo server shared the same CPU (observed TimeoutError).
   randomize_timeout_s: 30.0
+  # Same host-CPU-contention failure mode as randomize_timeout_s, hitting the
+  # teleport HTTP call instead: default 5 s (x3 retries) timed out mid-run
+  # when the other training container's Gazebo server spiked to 225% CPU.
+  teleport_timeout_s: 20.0
 zed_sim:
   enabled: true
   hfov_deg: 110.0

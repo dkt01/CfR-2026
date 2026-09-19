@@ -115,6 +115,7 @@ class ObstacleCourseEnv(gymnasium.Env):
         randomizer_node: str = "/obstacle_randomizer",
         hoop_monitor_node: str = "/hoop_monitor",
         randomize_timeout_s: float = 30.0,
+        teleport_timeout_s: float = 5.0,
     ) -> None:
         super().__init__()
         self.traction = traction
@@ -124,6 +125,7 @@ class ObstacleCourseEnv(gymnasium.Env):
             lidar_fov_deg = min(lidar_fov_deg, self.zed_config.hfov_deg)
         self.world_name = world_name
         self.teleport_url = teleport_url
+        self.teleport_timeout_s = teleport_timeout_s
         self.num_lidar_bins = num_lidar_bins
         self.lidar_fov_deg = lidar_fov_deg
         self.lidar_max_range = lidar_max_range
@@ -416,7 +418,7 @@ class ObstacleCourseEnv(gymnasium.Env):
                 response = requests.post(
                     self.teleport_url,
                     json={"x": x, "y": y, "heading": heading_deg},
-                    timeout=5.0,
+                    timeout=self.teleport_timeout_s,
                 )
                 result = response.json()
                 if response.ok and result.get("success"):
