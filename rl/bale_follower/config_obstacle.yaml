@@ -50,15 +50,12 @@ env:
   # Same host-CPU-contention failure mode as randomize_timeout_s, hitting the
   # teleport HTTP call instead: default 5 s (x3 retries) timed out mid-run
   # when the other training container's Gazebo server spiked to 225% CPU.
-  # 20 s was still too tight: it equaled teleport_api.py's own `gz service
-  # --timeout`, so under contention both sides hit their deadline at once and
-  # every one of the 3 retries lost the race (observed: "Read timed out
-  # (read timeout=20.0)"). Set above that server's worst case (its 22 s
-  # subprocess wrapper), so the client only gives up after the server would
-  # already have responded with its own error. teleport_api.py's own timeout
-  # has since doubled to 40 s (worst case 42 s) as contention got heavier
-  # still, so this needs to stay above that too.
-  teleport_timeout_s: 60.0
+  # 20 s, then 60 s, were each still too tight -- the other container's CPU
+  # use is spiky (observed 237% mid-spike vs. this one's 20%), not steady, so
+  # keep this comfortably above teleport_api.py's own `gz service --timeout`
+  # (now 120 s, worst case 122 s) rather than matching it, or a spike puts
+  # both sides at their deadline together and every retry loses the race.
+  teleport_timeout_s: 150.0
 zed_sim:
   enabled: true
   hfov_deg: 110.0

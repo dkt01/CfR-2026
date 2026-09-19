@@ -21,10 +21,12 @@ MAX_ABS_X = 30.0
 MAX_ABS_Y = 20.0
 # gz service's own wait for Gazebo's reply. 2000ms was fine on a quiet host
 # but timed out routinely with a second training container's Gazebo server
-# sharing the same CPU (observed: "Service call timed out" mid-run). 20000ms
-# was itself blown past as that contention got heavier still (same failure,
-# same message, hours later) -- doubled again for real margin.
-GZ_SERVICE_TIMEOUT_MS = 40000
+# sharing the same CPU (observed: "Service call timed out" mid-run). 20000ms,
+# then 40000ms, were each blown past in turn -- the other container's CPU use
+# is spiky (observed 237% mid-spike vs. this one's 20%) rather than a steady
+# load, so no fixed timeout is truly safe, only progressively less likely to
+# lose the race. Tripled from the last value for real margin against a spike.
+GZ_SERVICE_TIMEOUT_MS = 120000
 
 
 class TeleportHandler(BaseHTTPRequestHandler):
