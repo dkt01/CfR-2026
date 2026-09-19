@@ -55,8 +55,10 @@ env:
   # every one of the 3 retries lost the race (observed: "Read timed out
   # (read timeout=20.0)"). Set above that server's worst case (its 22 s
   # subprocess wrapper), so the client only gives up after the server would
-  # already have responded with its own error.
-  teleport_timeout_s: 35.0
+  # already have responded with its own error. teleport_api.py's own timeout
+  # has since doubled to 40 s (worst case 42 s) as contention got heavier
+  # still, so this needs to stay above that too.
+  teleport_timeout_s: 60.0
 zed_sim:
   enabled: true
   hfov_deg: 110.0
