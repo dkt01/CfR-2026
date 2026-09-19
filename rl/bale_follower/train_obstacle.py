@@ -6,12 +6,18 @@ the deterministic-eval callback, always closing the env). This one wires up
 ObstacleCourseEnv/ObstacleRewardConfig instead of the Speed Course's, and
 needs a different launch:
 
-    ros2 launch cfr_arduino_bridge obstacle_course.launch.py sensors:=true
+    ros2 launch cfr_arduino_bridge obstacle_course.launch.py \
+        sensors:=true autonomy:=false
     python train_obstacle.py
 
 `sensors:=true` is not optional here: ObstacleCourseEnv perceives entirely
 through the ZED's simulated point cloud (see obstacle_env.py's module
 docstring for why), and that topic publishes nothing without it.
+
+`autonomy:=false` is not optional either: without it that launch starts
+path_follower_node, which publishes zeros on the same command topic this
+environment drives, and the car ends up doing about a tenth of what the
+policy asks for. See train_resilient_obstacle.sh.
 """
 
 from __future__ import annotations
@@ -80,9 +86,26 @@ class EpisodeOutcomeCallback(BaseCallback):
         self.hoop_misses = 0
         self.laps = 0
         self.advances: list[float] = []
+        self.steps = 0
+        self.speed_sum = 0.0
+        self.abs_speed_sum = 0.0
+        self.clearance_sum = 0.0
+        self.cmd_speed_sum = 0.0
+        self.dt_sum = 0.0
 
     def _on_step(self) -> bool:
         for info, done in zip(self.locals["infos"], self.locals["dones"]):
+            # Every step, not just terminal ones: "the car is barely
+            # advancing round the course" has two very different causes --
+            # it is not moving, or it is moving and not getting anywhere --
+            # and only the raw speed separates them.
+            if "speed" in info:
+                self.steps += 1
+                self.speed_sum += float(info["speed"])
+                self.abs_speed_sum += abs(float(info["speed"]))
+                self.clearance_sum += float(info.get("min_clearance", 0.0))
+                self.cmd_speed_sum += float(info.get("cmd_speed", 0.0))
+                self.dt_sum += float(info.get("dt", 0.0))
             if not done:
                 continue
             self.episodes += 1
@@ -108,19 +131,35 @@ class EpisodeOutcomeCallback(BaseCallback):
             "outcome/course_advance_mean", sum(self.advances) / len(self.advances)
         )
         self.logger.record("outcome/course_advance_max", max(self.advances))
+        if self.steps:
+            # speed_mean near zero with abs_speed_mean well above it means
+            # the car is driving back and forth, not sitting still.
+            self.logger.record("outcome/speed_mean", self.speed_sum / self.steps)
+            self.logger.record(
+                "outcome/abs_speed_mean", self.abs_speed_sum / self.steps
+            )
+            self.logger.record(
+                "outcome/clearance_mean", self.clearance_sum / self.steps
+            )
+            self.logger.record(
+                "outcome/cmd_speed_mean", self.cmd_speed_sum / self.steps
+            )
+            self.logger.record("outcome/dt_mean", self.dt_sum / self.steps)
         self.reset_counts()
 
 
 class DeterministicEvalCallback(BaseCallback):
     """Periodically evaluate the *deterministic* policy and keep the best.
 
-    Same rationale as train.py's -- see there. Tracks mean distance covered
-    per deterministic episode as the selection metric, same as the Speed
-    Course: with a per-step time penalty dominating the reward (see
-    obstacle_reward.py), a policy that reliably covers more ground per fixed
-    episode cap is also the faster one, and distance is a steadier signal
+    Same rationale as train.py's -- see there. Tracks how far round the
+    course the policy gets per deterministic episode as the selection
+    metric: under a fixed episode cap, a policy that reliably covers more
+    of the lap is also the faster one, and distance is a steadier signal
     this early than raw reward, which a single missed hoop can swing by
     hundreds of points.
+
+    Always evaluates from the start line, never a dealt start -- see the
+    `start_s` option in the episode loop below.
     """
 
     def __init__(

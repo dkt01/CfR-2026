@@ -756,6 +756,13 @@ class ObstacleCourseEnv(gymnasium.Env):
             "course_advance": s_now - self._start_s,
             "min_clearance": min_clearance,
             "speed": measured_speed,
+            # Commanded vs achieved, and the sim-time step they are measured
+            # over. "the car is barely advancing" has three different causes
+            # -- the policy is asking for little, the car is not delivering
+            # what is asked, or dt is not what the control loop assumes --
+            # and they need different fixes.
+            "cmd_speed": speed,
+            "dt": dt,
         }
         return observation, result.total, terminated, truncated, info
 

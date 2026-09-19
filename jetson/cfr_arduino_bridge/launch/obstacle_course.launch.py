@@ -32,6 +32,15 @@ def generate_launch_description():
             default_value="false",
             description="Start gzweb-compatible WebSocket server on port 9002",
         ),
+        DeclareLaunchArgument(
+            "autonomy",
+            default_value="true",
+            description=(
+                "Start path_follower_node. RL training must pass "
+                "autonomy:=false -- path_follower publishes zeros on "
+                "/cmd_vel while idle and fights the policy for the topic"
+            ),
+        ),
     ]
 
     simulation = IncludeLaunchDescription(
@@ -45,6 +54,7 @@ def generate_launch_description():
             "gui": LaunchConfiguration("gui"),
             "websocket": LaunchConfiguration("websocket"),
             "sensors": LaunchConfiguration("sensors"),
+            "autonomy": LaunchConfiguration("autonomy"),
             "world_name": "cfr_obstacle_course",
             "randomizer": "true",
             "laps": "2",

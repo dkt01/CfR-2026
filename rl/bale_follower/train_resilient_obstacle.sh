@@ -14,6 +14,16 @@
 #   bridge (see the obstacle-course-dynamic-pose-bridge-bug project note).
 # - obstacle_course.launch.py also starts the randomizer and hoop_monitor,
 #   which train_obstacle.py needs for layout cycling and hoop pass/fail.
+# - `autonomy:=false` is mandatory, and was missing until now. That launch
+#   file brings up the full stack including path_follower_node, which
+#   publishes zeros on /cmd_vel while idle -- the same topic the RL env
+#   drives. Two publishers on one topic meant the vehicle saw the policy's
+#   commands interleaved with path_follower's zeros and achieved about a
+#   tenth of what was asked (measured: commanded 1.47 m/s, achieved 0.15).
+#   training.launch.py exists for exactly this reason on the Speed Course
+#   ("minus path_follower_node ... would fight the policy for control");
+#   the Obstacle Course cannot use it because it needs the randomizer and
+#   hoop_monitor, so simulation.launch.py now takes an `autonomy` argument.
 #
 #   ./train_resilient_obstacle.sh 200000 checkpoints_obstacle_v1
 #   ./train_resilient_obstacle.sh 200000 checkpoints_obstacle_v1 --resume-from checkpoints_obstacle_v1/best_model.zip
@@ -43,7 +53,7 @@ start_sim() {
     kill_sim
     ros2 daemon stop >/dev/null 2>&1 || true
     setsid nohup ros2 launch cfr_arduino_bridge obstacle_course.launch.py \
-        sensors:=true \
+        sensors:=true autonomy:=false \
         > "$LOG_DIR/resilient_sim.log" 2>&1 &
     for _ in $(seq 1 60); do
         if (exec 3<>/dev/tcp/localhost/9003) 2>/dev/null; then
