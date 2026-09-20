@@ -10,10 +10,16 @@
 #   rl.sh start [--course speed|obstacle] [--steps N] [--dir NAME]
 #               [--resume-from PATH] [--sensors|--no-sensors] [--curriculum] [--force]
 #   rl.sh status [--dir NAME]
-#   rl.sh tui [--dir NAME] [--interval SECONDS] [--once]  # live full-screen dashboard
+#   rl.sh tui [--dir NAME] [--interval SECONDS] [--container NAME] [--once]
+#                                                 # live full-screen dashboard
 #   rl.sh logs [--lines N]
 #   rl.sh eval --checkpoint PATH [--episodes N]
 #   rl.sh stop
+#
+# Every subcommand acts on the container named by $CFR_RL_CONTAINER (default
+# cfr-rl). Set it when a run has been parked in a container of its own:
+#
+#   CFR_RL_CONTAINER=cfr-rl-obstacle rl.sh tui --dir checkpoints_obstacle_v5
 #
 # This drives the repo's own wrappers (train_resilient.sh, test_policy.sh)
 # rather than reimplementing them: their chunked auto-resume exists because
@@ -31,9 +37,13 @@ set -euo pipefail
 export MSYS_NO_PATHCONV=1
 export MSYS2_ARG_CONV_EXCL="*"
 
-CONTAINER=cfr-rl
+# Overridable because a second run can be parked in its own container -- e.g.
+# an obstacle-course run in cfr-rl-obstacle while the speed course holds
+# cfr-rl. Without this, `status`/`tui`/`logs` quietly report on the wrong
+# container, or on none, while the run they were asked about is training fine.
+CONTAINER="${CFR_RL_CONTAINER:-cfr-rl}"
 IMAGE="unfrobotics/docker-ros2-jazzy-gz-rviz2:latest"
-VENV_VOLUME=cfr-rl-venv
+VENV_VOLUME="${CFR_RL_VENV_VOLUME:-cfr-rl-venv}"
 RL_IN_CONTAINER=/repo/rl/bale_follower
 # A separate ROS domain and Gazebo partition from the cfr-sim viewer container.
 # Two Gazebo servers reachable from each other publish onto one pose topic and
@@ -283,6 +293,7 @@ tui() {
         case "$1" in
             --dir) dir="$2"; shift 2 ;;
             --interval) interval="$2"; shift 2 ;;
+            --container) CONTAINER="$2"; shift 2 ;;
             --once) extra+=("--once"); shift ;;
             *) die "unknown tui option '$1'" ;;
         esac

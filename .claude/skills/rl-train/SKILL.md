@@ -106,6 +106,16 @@ shells out to `docker` directly (not through `docker exec` inside a bash
 string), so it is not subject to the MSYS path-mangling note below. Leave it
 running in its own terminal; `Ctrl+C` to stop it, `--once` for a single frame.
 
+Every subcommand talks to the container named by `$CFR_RL_CONTAINER`, default
+`cfr-rl`. A run parked in a container of its own — an obstacle-course run in
+`cfr-rl-obstacle` while the speed course holds `cfr-rl` — needs that named, or
+the dashboard reports "docker unreachable" over a run that is training fine:
+
+```bash
+rl.sh tui --dir checkpoints_obstacle_v5 --container cfr-rl-obstacle
+CFR_RL_CONTAINER=cfr-rl-obstacle rl.sh status --dir checkpoints_obstacle_v5
+```
+
 **Only the deterministic eval counts as progress.** `ep_rew_mean` is the
 stochastic sampled policy; deployment runs the Gaussian mean, and the two come
 apart — the v3 run had a healthy training curve while the mean action floored

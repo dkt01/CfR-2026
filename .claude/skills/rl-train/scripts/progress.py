@@ -25,8 +25,15 @@ import re
 import time
 from pathlib import Path
 
+# Two wordings, because the two courses measure different things. The speed
+# course reports "mean 12.3 m over 5 episodes" (distance driven); the obstacle
+# course reports "reached 5.6 m round the course over 3 episodes", which is
+# arc length along the centerline, and trails laps/hoop misses this does not
+# need. Both put steps, metres and episode count in the same order, so one
+# pattern with an alternation keeps every consumer of collect_evals unchanged.
 EVAL_RE = re.compile(
-    r"\[deterministic eval\] (\d+) steps: mean ([\d.]+) m over (\d+) episodes"
+    r"\[deterministic eval\] (\d+) steps: "
+    r"(?:mean|reached) ([\d.]+) m(?: round the course)? over (\d+) episodes"
 )
 CHUNK_RE = re.compile(
     r"chunk (\d+) (?:finished cleanly|died with status (\d+)) "
