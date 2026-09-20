@@ -36,6 +36,30 @@ from obstacle_env import ObstacleCourseEnv
 from obstacle_reward import ObstacleRewardConfig
 from zed_sim import ZedSimConfig
 
+# Named stretches of the lap, by arc length, so "where does it stop" is a
+# readable answer instead of a number. Boundaries follow the course's own
+# features (see obstacle_course_path.py): the ramp and deck run to the
+# helix at 9.1 m, the helix to 14.8, then the tunnel and the long south
+# corridor, the gravel and the bank, the potholes and the climb north, and
+# finally the buckets and hoops back to the line.
+ZONES = (
+    ("start_ramp_deck", 0.0, 9.1),
+    ("helix", 9.1, 14.8),
+    ("tunnel_south", 14.8, 26.0),
+    ("gravel_bank", 26.0, 40.0),
+    ("potholes_north", 40.0, 52.0),
+    ("buckets_hoops", 52.0, 75.0),
+)
+ZONE_NAMES = tuple(name for name, _, _ in ZONES)
+
+
+def zone_of(course_s: float) -> str:
+    for name, low, high in ZONES:
+        if low <= course_s < high:
+            return name
+    return ZONES[-1][0]
+
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SDF = REPO_ROOT / "jetson/cfr_arduino_bridge/worlds/obstacle_course.sdf"
 DEFAULT_CONFIG = Path(__file__).resolve().parent / "config_obstacle.yaml"
@@ -95,6 +119,14 @@ class EpisodeOutcomeCallback(BaseCallback):
         self.reward_parts = dict.fromkeys(
             ("r_progress", "r_proximity", "r_touch", "r_smoothness"), 0.0
         )
+        self.steer_abs_sum = 0.0
+        self.yaw_abs_sum = 0.0
+        # Where round the course episodes end. "The car stalls after 3 m"
+        # is a different problem depending on whether it stalls in the same
+        # place every time (one feature is blocking it) or all over the
+        # course (it cannot drive at all), and the mean alone cannot tell
+        # those apart. See ZONES.
+        self.zone_ends = dict.fromkeys(ZONE_NAMES, 0)
 
     def _on_step(self) -> bool:
         for info, done in zip(self.locals["infos"], self.locals["dones"]):
@@ -111,6 +143,8 @@ class EpisodeOutcomeCallback(BaseCallback):
                 self.dt_sum += float(info.get("dt", 0.0))
                 for part in self.reward_parts:
                     self.reward_parts[part] += float(info.get(part, 0.0))
+                self.steer_abs_sum += abs(float(info.get("steer", 0.0)))
+                self.yaw_abs_sum += abs(float(info.get("yaw_rate", 0.0)))
             if not done:
                 continue
             self.episodes += 1
@@ -119,6 +153,7 @@ class EpisodeOutcomeCallback(BaseCallback):
             self.hoop_misses += bool(info.get("hoop_missed"))
             self.laps += bool(info.get("lap_completed"))
             self.advances.append(float(info.get("course_advance", 0.0)))
+            self.zone_ends[zone_of(float(info.get("course_s", 0.0)))] += 1
         return True
 
     def _on_rollout_end(self) -> None:
@@ -154,6 +189,12 @@ class EpisodeOutcomeCallback(BaseCallback):
             # read against each other directly.
             for part, total in self.reward_parts.items():
                 self.logger.record(f"reward/{part}", total / done)
+            self.logger.record(
+                "outcome/steer_abs_mean", self.steer_abs_sum / self.steps
+            )
+            self.logger.record("outcome/yaw_abs_mean", self.yaw_abs_sum / self.steps)
+        for name, count in self.zone_ends.items():
+            self.logger.record(f"zone_end/{name}", count / done)
         self.reset_counts()
 
 

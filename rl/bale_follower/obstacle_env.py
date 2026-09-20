@@ -793,6 +793,8 @@ class ObstacleCourseEnv(gymnasium.Env):
             # near zero either because nothing happened or because a large
             # progress reward was cancelled by a large penalty, and those
             # want opposite fixes.
+            "steer": self._cmd_steer_fraction,
+            "yaw_rate": measured_yaw_rate,
             "r_progress": result.progress,
             "r_proximity": result.proximity,
             "r_touch": result.touch,
