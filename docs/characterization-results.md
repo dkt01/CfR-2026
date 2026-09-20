@@ -118,6 +118,15 @@ drag, not a friction limit.
 
 ## 4. Lateral
 
+**Direction correction (2026-09-20):** the recorded positive commands labelled
+"left" produced negative ZED yaw, and negative commands labelled "right"
+produced positive yaw. Thus the left/right labels in the original analysis
+below describe commanded labels, not physical turn directions. Physical left
+was the stronger side (0.256 rad at half command), and physical right was
+0.191 rad. The bridge now inverts steering, and the simulator's effective
+angle table swaps the side magnitudes accordingly. Full-lock values remain
+extrapolations and require a new car run.
+
 From three independent `skidpad` runs (tach speed + ZED yaw), which agree
 closely:
 
