@@ -128,10 +128,16 @@ def chunk_offsets(resilient_log, run_name):
     running = 0
     pending = None
 
-    def commit(chunk, gained):
+    def commit(chunk, gained, status=None):
         nonlocal running
         running += gained
         offsets[chunk + 1] = running
+        if status:
+            # Reported here, not where the death is parsed, so the note quotes
+            # the corrected step count rather than the log's understated one.
+            notes.append(
+                f"chunk {chunk} died with status {status} after +{gained} steps"
+            )
 
     for line in lines[start:]:
         if pending is not None and "resuming from" in line:
@@ -139,26 +145,31 @@ def chunk_offsets(resilient_log, run_name):
             if resumed:
                 # The checkpoint a chunk resumes from states what that chunk
                 # actually reached, and outranks a smaller logged gain.
-                commit(pending["chunk"], max(pending["gained"], int(resumed.group(1))))
+                commit(
+                    pending["chunk"],
+                    max(pending["gained"], int(resumed.group(1))),
+                    pending["status"],
+                )
                 pending = None
                 continue
         match = CHUNK_RE.search(line)
         if not match:
             continue
         if pending is not None:  # died with no resume line to correct it
-            commit(pending["chunk"], pending["gained"])
+            commit(pending["chunk"], pending["gained"], pending["status"])
             pending = None
         chunk, status, gained, _cumulative, _target = match.groups()
         if status:
-            notes.append(
-                f"chunk {chunk} died with status {status} after +{gained} steps"
-            )
             # Hold it open: the next line may correct its step count.
-            pending = {"chunk": int(chunk), "gained": int(gained)}
+            pending = {
+                "chunk": int(chunk),
+                "gained": int(gained),
+                "status": status,
+            }
         else:
             commit(int(chunk), int(gained))
     if pending is not None:
-        commit(pending["chunk"], pending["gained"])
+        commit(pending["chunk"], pending["gained"], pending["status"])
     return offsets, notes
 
 
