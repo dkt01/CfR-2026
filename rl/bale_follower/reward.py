@@ -36,7 +36,20 @@ class RewardConfig:
     k_progress: float = 10.0
     k_proximity: float = 2.0
     k_smooth: float = 0.05
-    collision_penalty: float = 200.0
+    # A crash already forfeits every metre left in the episode: `terminated`
+    # zeroes the value bootstrap, so ending at 100 s of a 120 s limit gives up
+    # ~500 of progress on its own, and that deterrent grows as the policy gets
+    # faster. This penalty only has to stop a crash being an ESCAPE from a bad
+    # episode, and 50 does that (an episode cut by the progress floor is worth
+    # ~0, so crashing is still strictly worse).
+    #
+    # It was 200, which the policy could not get past. Driving only beats
+    # circling once the car survives collision_penalty / k_progress metres --
+    # 20 m at 200, against the ~8 m a fresh policy manages. So circling at 0
+    # dominated driving at -120, and a 61k-step run sat at zero progress for
+    # six straight evals. At 50 the break-even is 5 m, inside what the policy
+    # can already do, so the gradient points at driving instead of away.
+    collision_penalty: float = 50.0
     # Wall clearance below which the proximity penalty starts biting. The
     # corridors are ~0.95 m wide and the car is 0.30 m wide, so this has to
     # stay well under half a corridor width or every pose is penalized.
@@ -142,9 +155,16 @@ if __name__ == "__main__":
     assert near_miss.total > scraping.total, "clearance should be preferred"
     assert fast.total > sawing.total, "steady steering should beat sawing"
     assert crashed.total < backwards.total, "anything should beat crashing"
-    # A crash must never be an escape from a bad episode: every other term is
-    # bounded well inside the collision penalty.
-    assert crashed.total < -100.0, "collision has to dominate the shaping terms"
+    # A crash must never be an escape from a bad episode. The test is not that
+    # the penalty is large in absolute terms -- it is that no single step of
+    # shaping can pay for one, so the only way to profit from a crash would be
+    # to earn the penalty back before hitting the wall.
+    assert crashed.total < -cfg.collision_penalty / 2.0, (
+        "collision has to dominate the shaping terms"
+    )
+    assert crashed.total < min(
+        fast.total, slow.total, circling.total, backwards.total, scraping.total
+    ), "no shaping term may outweigh a collision on a single step"
     print("\nordering: fast > slow > circling > backwards > crashed")
 
     # Per-step ordering is not enough. An Obstacle Course run converged on
@@ -188,12 +208,64 @@ if __name__ == "__main__":
     )
 
     assert quick > steady > still, "going faster must pay more than going slow"
-    assert still > crash_early, "crashing must never be cheaper than doing nothing"
     assert crawl < steady, "being cut for slow progress must cost the episode"
+
+    # This used to assert `still > crash_early` -- that crashing must be worth
+    # less than standing still. That cannot hold at the same time as the
+    # break-even check below, because both are the same quantity: a crash
+    # after d metres returns k_progress * d - collision_penalty, and standing
+    # still returns ~0, so crashing beats standing still exactly when
+    # d > collision_penalty / k_progress -- the break-even distance. One of
+    # the two has to give.
+    #
+    # The break-even check is the one that matters. The old assertion was
+    # guarding against crash-as-escape, which is a real failure only when a
+    # per-step time cost makes an episode negative-sum and ending it early is
+    # itself the prize. There is deliberately no time cost here (see the
+    # module docstring), so continuing an episode is free and there is nothing
+    # to escape. What actually deters a crash is the progress it forfeits,
+    # which is checked directly below and, unlike a flat penalty, grows as the
+    # policy gets faster.
+    crash_at_60s = episode(2.5, crash_after_s=60.0)
+    assert crash_at_60s < steady, (
+        "crashing must cost the rest of the episode's progress"
+    )
+    assert steady - crash_at_60s > cfg.collision_penalty, (
+        "forfeited progress, not the flat penalty, has to be the main deterrent"
+    )
+
+    # The trap that actually cost a run. A policy learns wall avoidance long
+    # before it learns to lap, so for thousands of steps its best episode is
+    # "drive a few seconds, then hit something". If that is worth less than
+    # circling until the progress floor cuts the episode (~0), the gradient
+    # points at circling and the policy never gets the practice it needs to
+    # improve. Break-even is collision_penalty / k_progress metres, so this
+    # asserts that distance stays inside what an unskilled policy manages.
+    REACHABLE_M = 8.0  # measured: ~4 s at ~2 m/s, from the 61k-step run
+    breakeven_m = cfg.collision_penalty / cfg.k_progress
+    early_learner = episode(2.0, crash_after_s=4.0)
+    print(
+        f"\nbreak-even survival before a crash beats circling: {breakeven_m:.1f} m"
+        f"  (an early policy reaches ~{REACHABLE_M:.0f} m)"
+    )
+    print(f"  drive 2.0 m/s for 4 s, then a wall:  {early_learner:+9.1f}")
+    assert breakeven_m < REACHABLE_M, (
+        f"a crash costs {cfg.collision_penalty} and progress pays "
+        f"{cfg.k_progress}/m, so driving only beats circling after "
+        f"{breakeven_m:.1f} m -- further than a learning policy gets, which "
+        "makes circling the optimum and stalls the run at zero progress"
+    )
+    assert early_learner > still, (
+        "trying and crashing must beat circling, or the policy never practises"
+    )
     # The real trap: a negative-sum reward makes doing nothing the best play.
     assert still >= -1.0, (
         "standing still must not be profitable relative to driving -- if this "
         "goes negative, every episode is a pure cost and the progress floor "
         "becomes an escape hatch"
     )
-    print("\nepisode-level: quick > steady > still > crash. No escape hatch.")
+    print(
+        "\nepisode-level: quick > steady > crawl > still. Trying and crashing "
+        f"(+{early_learner:.0f}) beats circling ({still:+.0f}), and a crash at "
+        f"60 s forfeits {steady - crash_at_60s:.0f} against finishing."
+    )

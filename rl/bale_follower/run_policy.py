@@ -84,8 +84,6 @@ class PolicyRunner(Node):
         self.reverse_speed = env_config.get("reverse_speed", 0.0)
         self.control_hz = env_config["control_hz"]
 
-        self.obs_speed_scale = self.max_speed
-
         self._lock = threading.Lock()
         self._pose = None
         self._prev_pose = None
@@ -308,7 +306,15 @@ class PolicyRunner(Node):
             [
                 (scan / self.lidar_max_range),
                 [
-                    np.clip(linear_x / self.obs_speed_scale, 0.0, 1.0),
+                    # Signed, matching env._build_observation exactly: the
+                    # speed channel spans [-reverse_speed, max_speed], so a
+                    # reversing car does not read as a stationary one.
+                    np.clip(
+                        (linear_x + self.reverse_speed)
+                        / (self.max_speed + self.reverse_speed),
+                        0.0,
+                        1.0,
+                    ),
                     np.clip((angular_z + 1.0) / 2.0, 0.0, 1.0),
                 ],
             ]

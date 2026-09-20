@@ -146,7 +146,6 @@ class BaleFollowerEnv(gymnasium.Env):
         self.control_hz = control_hz
         self.max_speed = max_speed
         self.reverse_speed = reverse_speed
-        self.obs_speed_scale = max_speed
         self.episode_time_limit_s = episode_time_limit_s
         self.progress_window_s = progress_window_s
         self.min_progress_speed = min_progress_speed
@@ -462,7 +461,18 @@ class BaleFollowerEnv(gymnasium.Env):
             scan.copy(), self.zed_config, self.lidar_max_range, self._rng
         )
         normalized_scan = (scan / self.lidar_max_range).astype(np.float32)
-        normalized_speed = np.clip(speed / self.obs_speed_scale, 0.0, 1.0)
+        # Signed, spanning the same [-reverse_speed, max_speed] range the
+        # action does -- this is encode_action's mapping. Dividing by max_speed
+        # and clipping at 0.0 made every reverse speed read as exactly 0.0,
+        # identical to standing still, and the forward-facing scan cannot see
+        # behind the car either. The policy could therefore drive backwards
+        # with nothing in its observation to say so, and a 61k-step run sat at
+        # persistently negative lap progress doing just that.
+        normalized_speed = np.clip(
+            (speed + self.reverse_speed) / (self.max_speed + self.reverse_speed),
+            0.0,
+            1.0,
+        )
         normalized_yaw_rate = np.clip((yaw_rate + 1.0) / 2.0, 0.0, 1.0)
         return np.concatenate(
             [normalized_scan, [normalized_speed, normalized_yaw_rate]]
