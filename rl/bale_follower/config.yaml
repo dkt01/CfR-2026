@@ -57,7 +57,15 @@ reward:
   k_progress: 10.0
   k_proximity: 2.0
   k_smooth: 0.05
-  collision_penalty: 200.0
+  # A crash already forfeits every metre left in the episode -- `terminated`
+  # zeroes the value bootstrap -- so this only has to stop a crash being an
+  # escape from a bad episode. See reward.py for the full argument.
+  #
+  # It was 200, which the policy could not get past: driving only beats
+  # circling once the car survives collision_penalty / k_progress metres, and
+  # at 200 that is 20 m against the ~8 m a fresh policy manages. At 50 the
+  # break-even is 5 m, inside what the policy can already do.
+  collision_penalty: 50.0
   safe_clearance: 0.35
   k_touch: 120.0
   touch_clearance: 0.15

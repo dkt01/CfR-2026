@@ -26,6 +26,7 @@ Coefficients live in a dataclass so they're easy to sweep from config.yaml.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass
@@ -119,7 +120,20 @@ def compute_reward(
 
 
 if __name__ == "__main__":
-    cfg = RewardConfig()
+    # Audit the coefficients TRAINING will actually use, not this file's
+    # defaults. train.py builds its config with RewardConfig(**config["reward"])
+    # from config.yaml, so every key present there wins and the dataclass
+    # defaults below are only a fallback. That divergence is not theoretical:
+    # collision_penalty was lowered here to 50 while config.yaml still said
+    # 200, this audit passed on the 50, and a whole training run went out under
+    # the 200 -- the exact value the change existed to remove. Loading the same
+    # file train.py loads is what makes a pass here mean anything.
+    import yaml
+
+    config_path = Path(__file__).resolve().parent / "config.yaml"
+    overrides = yaml.safe_load(config_path.read_text()).get("reward", {})
+    cfg = RewardConfig(**overrides)
+    print(f"auditing {config_path.name}: {overrides}\n")
 
     def step(**kwargs):
         base = {
