@@ -381,6 +381,34 @@ def _wall_boxes(sdf_path: str) -> list[tuple[float, float, float, float, float]]
     return boxes
 
 
+def wall_boxes(sdf_path: str) -> list[tuple[float, float, float, float, float]]:
+    """Public handle on the bale walls, for diagnostics."""
+    return _wall_boxes(sdf_path)
+
+
+def nearest_wall_distance(boxes, x: float, y: float) -> float:
+    """Ground-truth distance from (x, y) to the nearest bale wall.
+
+    Privileged and strictly diagnostic -- never an observation and never a
+    reward term. It exists to answer one question the car's own scan cannot:
+    the scan looks 110 degrees forward, so a wall *alongside* the car is
+    invisible to it, and a car wedged against one reports a clear view while
+    going nowhere. Comparing this against the scan's own min_clearance says
+    whether that is what keeps happening.
+    """
+    best = float("inf")
+    for bx, by, byaw, sx, sy in boxes:
+        dx, dy = x - bx, y - by
+        cos_yaw, sin_yaw = math.cos(byaw), math.sin(byaw)
+        local_x = dx * cos_yaw + dy * sin_yaw
+        local_y = -dx * sin_yaw + dy * cos_yaw
+        # Distance from a point to an axis-aligned rectangle, in its frame.
+        gap_x = max(abs(local_x) - sx / 2.0, 0.0)
+        gap_y = max(abs(local_y) - sy / 2.0, 0.0)
+        best = min(best, math.hypot(gap_x, gap_y))
+    return best
+
+
 def _inside(box, x: float, y: float, margin: float) -> bool:
     bx, by, byaw, sx, sy = box
     dx, dy = x - bx, y - by

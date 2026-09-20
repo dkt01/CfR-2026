@@ -67,7 +67,7 @@ from env import (
     _wrap_to_pi,
     _yaw_from_quaternion,
 )
-from obstacle_course_path import CourseProgress
+from obstacle_course_path import CourseProgress, nearest_wall_distance, wall_boxes
 from obstacle_reward import ObstacleRewardConfig, compute_reward
 
 GRAVITY = 9.81
@@ -175,6 +175,10 @@ class ObstacleCourseEnv(gymnasium.Env):
         # Without this the ramp reads as a wall 2.18 m ahead and the car is
         # penalised for climbing it -- see cloud_scan._scan_tracking_the_ground.
         self.ground_step = ground_step
+        # Diagnostic only, never observed and never rewarded: the scan looks
+        # 110 degrees forward, so it cannot see a wall the car is scraping
+        # alongside it. See nearest_wall_distance.
+        self._wall_boxes = wall_boxes(sdf_path)
         self._start_s = 0.0
 
         # Generic XML lookup by model name -- no course-shape assumptions --
@@ -795,6 +799,10 @@ class ObstacleCourseEnv(gymnasium.Env):
             # want opposite fixes.
             "steer": self._cmd_steer_fraction,
             "yaw_rate": measured_yaw_rate,
+            # Privileged, diagnostic only. If this is near zero while
+            # min_clearance above is metres, the car is wedged against
+            # something its forward-only scan cannot see.
+            "true_wall_gap": nearest_wall_distance(self._wall_boxes, pose.x, pose.y),
             "r_progress": result.progress,
             "r_proximity": result.proximity,
             "r_touch": result.touch,

@@ -137,12 +137,25 @@ reward:
   k_steer_reversal: 0.8
 training:
   total_timesteps: 300000
-  n_steps: 512
+  # Was 512, which is only about five episodes of this course per update --
+  # a small, high-variance batch for a single environment whose episodes end
+  # anywhere from 2 to 15 m in. Four times the rollout buys a gradient
+  # estimate that is not dominated by which handful of dealt starts came up.
+  n_steps: 2048
   batch_size: 64
   gamma: 0.99
   gae_lambda: 0.95
   learning_rate: 0.0003
-  # Was 0.0, and the policy's log std duly collapsed (0.67 -> 0.47) as it
-  # grew more and more certain about standing still. Some entropy pressure
-  # keeps it exploring long enough to find that driving pays.
-  ent_coef: 0.01
+  # 0.01 was set after run 1's log std collapsed (0.67 -> 0.47) while the
+  # policy grew certain about standing still. That collapse was the
+  # *inverted reward* doing its work, not too little exploration -- standing
+  # still genuinely was optimal then. The reward no longer pays for that and
+  # obstacle_reward.py asserts it cannot, so the entropy floor is now
+  # solving a problem that does not exist, and it costs: 50k steps in, std
+  # is still 0.995, essentially where it started. The policy never commits,
+  # and a car whose steering is redrawn from a unit normal every control
+  # step cannot make progress -- measured on the open start straight, that
+  # noise alone costs 36% of speed and half the net displacement against
+  # driving straight. Lowered rather than removed: some pressure is still
+  # wanted, just not enough to pin the policy at its initialisation.
+  ent_coef: 0.002

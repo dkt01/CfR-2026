@@ -121,6 +121,8 @@ class EpisodeOutcomeCallback(BaseCallback):
         )
         self.steer_abs_sum = 0.0
         self.yaw_abs_sum = 0.0
+        self.true_gap_sum = 0.0
+        self.wedged_steps = 0
         # Where round the course episodes end. "The car stalls after 3 m"
         # is a different problem depending on whether it stalls in the same
         # place every time (one feature is blocking it) or all over the
@@ -145,6 +147,12 @@ class EpisodeOutcomeCallback(BaseCallback):
                     self.reward_parts[part] += float(info.get(part, 0.0))
                 self.steer_abs_sum += abs(float(info.get("steer", 0.0)))
                 self.yaw_abs_sum += abs(float(info.get("yaw_rate", 0.0)))
+                true_gap = float(info.get("true_wall_gap", 99.0))
+                self.true_gap_sum += true_gap
+                # Touching a wall the forward scan says is not there: the
+                # car's half-width is 0.15 m, so under 0.2 m is scraping.
+                if true_gap < 0.2 and float(info.get("min_clearance", 0.0)) > 0.5:
+                    self.wedged_steps += 1
             if not done:
                 continue
             self.episodes += 1
@@ -193,6 +201,13 @@ class EpisodeOutcomeCallback(BaseCallback):
                 "outcome/steer_abs_mean", self.steer_abs_sum / self.steps
             )
             self.logger.record("outcome/yaw_abs_mean", self.yaw_abs_sum / self.steps)
+            self.logger.record("outcome/true_gap_mean", self.true_gap_sum / self.steps)
+            # The share of steps spent scraping a wall the scan reports as
+            # clear. If this is large, the car is being stopped by something
+            # it has no way to perceive, and no amount of training fixes it.
+            self.logger.record(
+                "outcome/wedged_unseen_frac", self.wedged_steps / self.steps
+            )
         for name, count in self.zone_ends.items():
             self.logger.record(f"zone_end/{name}", count / done)
         self.reset_counts()
@@ -217,7 +232,9 @@ class DeterministicEvalCallback(BaseCallback):
         raw_env: ObstacleCourseEnv,
         metadata: dict,
         save_dir: Path,
-        every_rollouts: int = 16,
+        # Halved when n_steps went 512 -> 2048, so evaluation still lands
+        # about every 16k steps instead of every 33k.
+        every_rollouts: int = 8,
         episodes: int = 3,
     ) -> None:
         super().__init__()
