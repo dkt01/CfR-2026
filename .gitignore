@@ -64,6 +64,7 @@ node_modules/
 
 # Vite build output
 web/gzweb-viewer/dist/
+web/gzweb-viewer/vite.*.log
 
 # Python bytecode caches
 __pycache__/

@@ -259,7 +259,7 @@ def build_model(vehicle, spawn_pose):
         "         rear carrying the different rates of the stock GTR long and",
         "         XX-long shocks.  gz-sim 8 / dartsim does honour spring_stiffness",
         "         (checked on a one-joint world: 1 kg on 100 N/m settles at",
-        "         -98 mm), and spring_reference is NEGATIVE here on purpose --",
+        "         -98 mm), and spring_reference is NEGATIVE here on purpose;",
         "         see the derivation in generate_vehicle_model.py. -->",
         '    <model name="slash">',
         # Wheel centres sit at exactly one radius, so model-frame z = 0 IS ground

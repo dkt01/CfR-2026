@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small HTTP bridge for setting the simulated robot pose."""
+"""Small HTTP bridge for simulated robot pose and start signal."""
 
 import json
 import math
@@ -30,6 +30,9 @@ class TeleportHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_POST(self):
+        if self.path == "/api/sim/start-signal":
+            self.set_start_signal()
+            return
         if self.path != "/api/sim/teleport":
             self.respond(404, {"success": False, "message": "not found"})
             return
@@ -106,6 +109,53 @@ class TeleportHandler(BaseHTTPRequestHandler):
             return
 
         self.respond(200, {"success": True})
+
+    def set_start_signal(self):
+        try:
+            content_length = int(self.headers["Content-Length"])
+            payload = json.loads(self.rfile.read(content_length))
+            go = payload["go"]
+            if type(go) is not bool:
+                raise ValueError("go must be a boolean")
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+            self.respond(400, {"success": False, "message": str(error)})
+            return
+
+        def call(service, timeout):
+            command = [
+                "ros2",
+                "service",
+                "call",
+                service,
+                "std_srvs/srv/SetBool",
+                "{data: " + ("true" if go else "false") + "}",
+            ]
+            result = subprocess.run(
+                command, capture_output=True, text=True, timeout=timeout, check=False
+            )
+            if result.returncode != 0 or "success=True" not in result.stdout:
+                raise RuntimeError(
+                    result.stderr.strip()
+                    or result.stdout.strip()
+                    or f"{service} failed"
+                )
+
+        try:
+            # Drive immediately on a manual Go, even if the camera misses the
+            # visual transition. Manual Stop also takes effect immediately.
+            if WORLD == "cfr_speed_course":
+                call("/left_wall_follower/manual_start", 10)
+            call("/obstacle_randomizer/start_signal", 45)
+        except FileNotFoundError:
+            self.respond(502, {"success": False, "message": "ROS 2 CLI is unavailable"})
+            return
+        except subprocess.TimeoutExpired:
+            self.respond(504, {"success": False, "message": "Signal service timed out"})
+            return
+        except RuntimeError as error:
+            self.respond(502, {"success": False, "message": str(error)})
+            return
+        self.respond(200, {"success": True, "go": go})
 
     def respond(self, status, payload):
         body = json.dumps(payload).encode()

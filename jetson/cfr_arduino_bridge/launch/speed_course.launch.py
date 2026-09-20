@@ -34,6 +34,7 @@ def generate_launch_description():
             default_value="false",
             description="Start gzweb-compatible WebSocket server on port 9002",
         ),
+        DeclareLaunchArgument("path_follower", default_value="true"),
     ]
 
     simulation = IncludeLaunchDescription(
@@ -46,6 +47,7 @@ def generate_launch_description():
             ),
             "gui": LaunchConfiguration("gui"),
             "websocket": LaunchConfiguration("websocket"),
+            "path_follower": LaunchConfiguration("path_follower"),
             "sensors": LaunchConfiguration("sensors"),
             "world_name": "cfr_speed_course",
             "randomizer": "true",

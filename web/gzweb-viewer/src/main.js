@@ -61,6 +61,9 @@ const LAYOUT_SAMPLE_MS = 3000;
 const LAYOUT_SAMPLE_TIMEOUT_MS = 15000;
 const worldControlService = `/world/${course.world}/control`;
 const teleportApiUrl = `http://${window.location.hostname}:9003/api/sim/teleport`;
+const signalApiUrl = `http://${window.location.hostname}:9003/api/sim/start-signal`;
+const signalButton = document.querySelector("#start-signal");
+let signalGo = false;
 const followButton = document.querySelector("#follow-slash");
 const resetRobotButton = document.querySelector("#reset-slash");
 const capturePoseButton = document.querySelector("#capture-teleport-pose");
@@ -504,6 +507,30 @@ function teleportRobot() {
     });
 }
 
+async function toggleStartSignal() {
+  signalButton.disabled = true;
+  const go = !signalGo;
+  status.textContent = go ? "Turning signal green" : "Turning signal red";
+  try {
+    const response = await fetch(signalApiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ go }),
+    });
+    const result = await response.json();
+    if (!response.ok || !result.success) {
+      throw new Error(result.message || "Signal command failed");
+    }
+    signalGo = go;
+    signalButton.textContent = go ? "Set signal: Stop" : "Set signal: Go";
+    status.textContent = go ? "Signal turning green" : "Signal turning red";
+  } catch (error) {
+    status.textContent = error.message;
+  } finally {
+    signalButton.disabled = simulationSocket?.readyState !== WebSocket.OPEN;
+  }
+}
+
 function connectPoseStream() {
   const socket = new WebSocket(`${websocketProtocol}://${window.location.hostname}:9002`);
   simulationSocket = socket;
@@ -513,6 +540,7 @@ function connectPoseStream() {
     status.textContent = "Simulation disconnected";
     statusIndicator.classList.remove("ready");
     resetRobotButton.disabled = true;
+    signalButton.disabled = true;
     capturePoseButton.disabled = true;
     previewButton.disabled = true;
     teleportButton.disabled = true;
@@ -521,6 +549,7 @@ function connectPoseStream() {
     status.textContent = "Unable to connect to simulation";
     statusIndicator.classList.remove("ready");
     resetRobotButton.disabled = true;
+    signalButton.disabled = true;
     capturePoseButton.disabled = true;
     previewButton.disabled = true;
     teleportButton.disabled = true;
@@ -543,6 +572,7 @@ function connectPoseStream() {
       status.textContent = "Live simulation connected";
       statusIndicator.classList.add("ready");
       resetRobotButton.disabled = false;
+      signalButton.disabled = false;
       capturePoseButton.disabled = false;
       previewButton.disabled = false;
       positionInputs.forEach((input) => { input.disabled = false; });
@@ -615,6 +645,7 @@ document.querySelector("#reset-view").addEventListener("click", () => {
   showCourseOverview();
 });
 resetRobotButton.addEventListener("click", resetRobot);
+signalButton.addEventListener("click", toggleStartSignal);
 capturePoseButton.addEventListener("click", captureRobotPosition);
 previewButton.addEventListener("click", previewTeleportPosition);
 teleportButton.addEventListener("click", teleportRobot);

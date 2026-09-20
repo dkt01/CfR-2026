@@ -89,6 +89,11 @@ def generate_launch_description():
         default_value="3",
         description="Laps before lap_counter latches ~/done; 3 speed, 2 obstacle",
     )
+    path_follower_arg = DeclareLaunchArgument(
+        "path_follower",
+        default_value="true",
+        description="Start the DrivePath action controller",
+    )
 
     # Mesh URIs in the worlds are model://cfr_arduino_bridge/meshes/..., which
     # Gazebo resolves by looking for a directory called cfr_arduino_bridge on
@@ -251,6 +256,7 @@ def generate_launch_description():
         output="screen",
         parameters=[LaunchConfiguration("params_file"), {"use_sim_time": True}],
         remappings=[("~/odom", "/zed/zed_node/odom"), ("cmd_vel", "/cmd_vel")],
+        condition=IfCondition(LaunchConfiguration("path_follower")),
     )
 
     lap_counter = Node(
@@ -287,6 +293,7 @@ def generate_launch_description():
             randomizer_arg,
             layout_arg,
             laps_arg,
+            path_follower_arg,
             resource_path,
             gazebo,
             websocket_server,
