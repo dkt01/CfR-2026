@@ -100,6 +100,16 @@ def chunk_offsets(resilient_log, run_name):
     etc. So only lines logged after THIS run's own "target N steps into
     <run_name>" marker count; anything before it belongs to a previous run and
     must not leak into this run's offsets or restart notes.
+
+    The cumulative total in the "chunk N died" line is not trusted when the
+    following "resuming from ..._<steps>_steps.zip" line disagrees with it. A
+    chunk's checkpoints are numbered from zero (SB3 resets the counter every
+    time train.py calls learn()), so the checkpoint a chunk is resumed from
+    states that chunk's own progress directly. Older train_resilient.sh
+    subtracted a leftover checkpoint from a previous run when the directory was
+    reused, which understated the total -- one observed run logged "+13000"
+    for a chunk that had reached 35000. Reading the resume line keeps the step
+    axis right for runs whose logs were written by that version.
     """
     offsets = {1: 0}
     notes = []
@@ -111,16 +121,44 @@ def chunk_offsets(resilient_log, run_name):
         match = TARGET_RE.search(line)
         if match and match.group(1) == run_name:
             start = index
+    # Built by summing each chunk's own gain rather than reading the log's
+    # running total, because that total is the quantity the old bug corrupted:
+    # once one chunk is charged too few steps, every cumulative printed after
+    # it inherits the error.
+    running = 0
+    pending = None
+
+    def commit(chunk, gained):
+        nonlocal running
+        running += gained
+        offsets[chunk + 1] = running
+
     for line in lines[start:]:
+        if pending is not None and "resuming from" in line:
+            resumed = STEPS_RE.search(line)
+            if resumed:
+                # The checkpoint a chunk resumes from states what that chunk
+                # actually reached, and outranks a smaller logged gain.
+                commit(pending["chunk"], max(pending["gained"], int(resumed.group(1))))
+                pending = None
+                continue
         match = CHUNK_RE.search(line)
         if not match:
             continue
-        chunk, status, gained, cumulative, _target = match.groups()
-        offsets[int(chunk) + 1] = int(cumulative)
+        if pending is not None:  # died with no resume line to correct it
+            commit(pending["chunk"], pending["gained"])
+            pending = None
+        chunk, status, gained, _cumulative, _target = match.groups()
         if status:
             notes.append(
                 f"chunk {chunk} died with status {status} after +{gained} steps"
             )
+            # Hold it open: the next line may correct its step count.
+            pending = {"chunk": int(chunk), "gained": int(gained)}
+        else:
+            commit(int(chunk), int(gained))
+    if pending is not None:
+        commit(pending["chunk"], pending["gained"])
     return offsets, notes
 
 

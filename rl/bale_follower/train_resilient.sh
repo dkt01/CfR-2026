@@ -114,6 +114,22 @@ steps_in() {  # steps recorded in a checkpoint filename
     basename "$1" | sed -E 's/.*_([0-9]+)_steps\.zip/\1/'
 }
 
+# The highest step count among checkpoints this chunk wrote, i.e. those newer
+# than the marker touched just before it started. Scoping it to the chunk's own
+# files is what makes the count correct in a checkpoint directory that already
+# holds an earlier run's checkpoints: a plain "newest checkpoint" reads whatever
+# is there, including files this chunk never touched.
+chunk_steps() {
+    local marker="$1" best=0 steps
+    for f in "$CKPT_DIR"/bale_follower_*_steps.zip; do
+        [ -e "$f" ] || continue
+        [ "$f" -nt "$marker" ] || continue
+        steps=$(steps_in "$f")
+        [ "$steps" -gt "$best" ] && best=$steps
+    done
+    printf '%s' "$best"
+}
+
 # shellcheck disable=SC1091
 source /opt/ros/jazzy/setup.bash
 # shellcheck disable=SC1091
@@ -134,9 +150,8 @@ while [ "$completed" -lt "$TOTAL" ]; do
 
     start_sim || { log "simulation failed to start; retrying"; sleep 10; continue; }
 
-    before=$(newest_checkpoint || true)
-    before_steps=0
-    [ -n "$before" ] && before_steps=$(steps_in "$before")
+    marker="$CKPT_DIR/.chunk_start"
+    : > "$marker"
 
     set +e
     python "$SCRIPT_DIR/train.py" --total-timesteps "$remaining" \
@@ -145,16 +160,21 @@ while [ "$completed" -lt "$TOTAL" ]; do
     status=$?
     set -e
 
-    after=$(newest_checkpoint || true)
-    after_steps=0
-    [ -n "$after" ] && after_steps=$(steps_in "$after")
-    # A resumed chunk restarts SB3's counter, so progress is the newest
-    # checkpoint's own step count, not a difference against the previous run.
-    if [ -n "$before" ] && [ "$after_steps" -gt "$before_steps" ] && [ "$attempt" -eq 1 ]; then
-        gained=$((after_steps - before_steps))
-    else
-        gained=$after_steps
-    fi
+    # Every chunk's counter starts at zero -- train.py calls model.learn(),
+    # whose reset_num_timesteps defaults to True, so even a chunk resumed with
+    # --resume-from numbers its checkpoints from 0. A chunk's progress is
+    # therefore its own highest checkpoint, with nothing subtracted.
+    #
+    # This used to subtract the directory's newest checkpoint from before the
+    # chunk, on attempt 1 only. That contradicted the comment it carried, and
+    # in a reused checkpoint directory it silently charged this run for another
+    # run's steps: a chunk that reached 35328 was logged as "+13000" because an
+    # older run had left a 22000-step checkpoint behind. The cumulative total
+    # drives both the stopping point and progress.py's step axis, so the run
+    # overshot its target and every later chunk's evals were plotted 22000
+    # steps early.
+    gained=$(chunk_steps "$marker")
+    rm -f "$marker"
     completed=$((completed + gained))
 
     if [ "$status" -eq 0 ]; then
