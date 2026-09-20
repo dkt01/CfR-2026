@@ -235,7 +235,12 @@ Slash and publishes it under ZED-compatible names:
 
 $110^\circ$ horizontal field of view, $640 \times 360$, 15 Hz, 0.2 m to 20 m.
 Color and depth come from one `rgbd_camera` sensor, so they share one
-calibration and there is one `camera_info` rather than two.
+calibration and there is one `camera_info` rather than two. The published
+point cloud passes through `zed_cloud_noise_node.py`: forward range gets
+Gaussian noise with sigma `0.01 + 0.008 * range²` metres, with 3% independent
+invalid pixels. Its XYZ values stay on the original camera rays, and color is
+preserved. This is a stereo-like approximation, not a calibration from real
+ZED point clouds; the bridged depth image remains Gazebo's ideal depth.
 
 Rendered sensors need a render context, so they live in a second world file
 and are off by default:

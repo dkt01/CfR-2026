@@ -38,7 +38,9 @@ arduino_bridge:
     speed_slew_rate: 2.0    # m/s per second, both directions
 
     # Flip if the servo or drive is wired opposite to the assumed convention.
-    invert_steering: false
+    # 2026-09-18 steer_authority: positive (left) commands produced negative
+    # ZED yaw, and negative (right) commands produced positive yaw on the car.
+    invert_steering: true
     invert_speed: false
 
     # Bench testing only: set false to pass commands through without waiting
@@ -111,7 +113,7 @@ sim_vehicle:
     # (steer_authority ran too slowly to be usable).  Keep in step with
     # vehicle.yaml steering.effective_angle_table.
     steering_command_points: [-1.0, -0.5, 0.0, 0.5, 1.0]
-    steering_angle_points: [-0.512, -0.256, 0.0, 0.191, 0.382]
+    steering_angle_points: [-0.382, -0.191, 0.0, 0.256, 0.512]
     # Simulated tachometer.  It used to report a hard-coded rpm = 0, so a sim
     # run logged an empty speed channel while the car logged ~1000 distinct
     # values.  These mirror the firmware constants in src/arduino_rcm.ino; the

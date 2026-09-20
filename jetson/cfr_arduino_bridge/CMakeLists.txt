@@ -75,7 +75,7 @@ install(TARGETS arduino_bridge_node cmd_vel_to_drive_node sim_vehicle_node path_
 )
 
 install(PROGRAMS src/teleport_api.py src/maneuver_runner_node.py src/obstacle_randomizer_node.py
-  src/start_signal_detector_node.py src/lap_counter_node.py
+  src/start_signal_detector_node.py src/lap_counter_node.py src/zed_cloud_noise_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

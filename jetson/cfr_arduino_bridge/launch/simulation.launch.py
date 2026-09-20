@@ -176,8 +176,8 @@ def generate_launch_description():
         ],
     )
 
-    # The camera topics are bridged under the names Gazebo's rgbd_camera
-    # sensor actually publishes and renamed to the ZED's on the ROS side.
+    # Bridge Gazebo's RGB-D streams. The raw cloud stays on its Gazebo topic
+    # so zed_cloud_noise can publish a stereo-like cloud on the ZED topic.
     # Color and depth come from one sensor, so they share a calibration and
     # there is only one camera_info to bridge.
     gazebo_bridge = Node(
@@ -210,8 +210,16 @@ def generate_launch_description():
                 "/zed/zed_node/left/image_rect_color/camera_info",
             ),
             ("/zed/gz/rgbd/depth_image", "/zed/zed_node/depth/depth_registered"),
-            ("/zed/gz/rgbd/points", "/zed/zed_node/point_cloud/cloud_registered"),
         ],
+    )
+
+    zed_cloud_noise = Node(
+        package="cfr_arduino_bridge",
+        executable="zed_cloud_noise_node.py",
+        name="zed_cloud_noise",
+        output="screen",
+        parameters=[{"use_sim_time": True}],
+        condition=IfCondition(LaunchConfiguration("sensors")),
     )
 
     # Only with the camera rendered, since it has nothing to read otherwise.
@@ -286,6 +294,7 @@ def generate_launch_description():
             randomizer,
             command_bridge,
             gazebo_bridge,
+            zed_cloud_noise,
             start_signal_detector,
             cmd_vel_to_drive,
             path_follower,

@@ -401,8 +401,9 @@ steering:
   #   +/-1.0 rows are still a GUESS: steer_authority ran at ~0.6 m/s, the one
   #   regime where both speed sensors fail, and returned a non-monotonic map
   #   (full right lock reading less angle than half right).  Left and right
-  #   differ by ~34% at matched command, consistent with the 1504 us auto-mode
-  #   centre in center_offset.  Re-run steer_authority at 1.5-2.0 m/s to pin the
+  #   differ by ~34% at matched command. The original run's positive "left"
+  #   command actually turned right, so physical sides are swapped below after
+  #   enabling invert_steering. Re-run steer_authority at 1.5-2.0 m/s to pin the
   #   ends.  Interpolated by sim_vehicle_node, which is why the asymmetry now
   #   reaches the simulator at all.
   effective_angle_table:
@@ -411,11 +412,11 @@ steering:
     run: 'Session B/C 2026-09-18'
     units: [normalized, rad]
     rows:
-      - [-1.0, -0.512]
-      - [-0.5, -0.256]
+      - [-1.0, -0.382]
+      - [-0.5, -0.191]
       - [0.0, 0.0]
-      - [0.5, 0.191]
-      - [1.0, 0.382]
+      - [0.5, 0.256]
+      - [1.0, 0.512]
 
 longitudinal:
   # Coastdown fit: m dv/dt = -(f0 + f1 v + f2 v^2).  These replace the

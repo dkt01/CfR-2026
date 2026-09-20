@@ -60,8 +60,10 @@ def apply(
     """
     if not config.enabled:
         return scan
-    noisy = scan + rng.normal(0.0, config.noise_a + config.noise_b * scan**2)
-    dropped = rng.random(scan.shape) < config.dropout_prob
+    noisy = scan.copy()
+    hits = np.isfinite(scan) & (scan < max_range)
+    noisy[hits] += rng.normal(0.0, config.noise_a + config.noise_b * scan[hits] ** 2)
+    dropped = hits & (rng.random(scan.shape) < config.dropout_prob)
     noisy[dropped] = max_range
     return np.clip(noisy, 0.0, max_range)
 
@@ -69,7 +71,7 @@ def apply(
 if __name__ == "__main__":
     rng = np.random.default_rng(0)
     cfg = ZedSimConfig()
-    clean = np.linspace(0.5, 6.0, 12)
+    clean = np.linspace(0.5, 5.5, 11)
     trials = np.stack([apply(clean.copy(), cfg, 6.0, rng) for _ in range(2000)])
     # Dropped bins read max range; exclude them when measuring noise.
     err = np.where(trials >= 6.0, np.nan, trials) - clean
@@ -79,4 +81,5 @@ if __name__ == "__main__":
         print(f"range {r:4.1f} m  sigma {s * 100:5.1f} cm  dropout {d * 100:4.1f} %")
     assert sigma[-1] > sigma[0], "noise should grow with range"
     assert abs(np.nanmean(drop[:-1]) - cfg.dropout_prob) < 0.01
+    assert np.all(apply(np.full(12, 6.0), cfg, 6.0, rng) == 6.0)
     print("\nZED noise model check passed: quadratic growth, expected dropout rate")
