@@ -68,6 +68,12 @@ from env import (
     _yaw_from_quaternion,
 )
 from obstacle_course_path import CourseProgress, nearest_wall_distance, wall_boxes
+from corridor import (
+    NUM_CORRIDOR_FEATURES,
+    corridor_features,
+    estimate_corridor,
+    free_gap,
+)
 from obstacle_reward import ObstacleRewardConfig, compute_reward
 
 GRAVITY = 9.81
@@ -146,6 +152,7 @@ class ObstacleCourseEnv(gymnasium.Env):
         start_anywhere_prob: float = 0.8,
         start_anywhere_margin_m: float = 8.0,
         ground_step: float | None = 0.15,
+        use_corridor_features: bool = True,
     ) -> None:
         super().__init__()
         self.traction = traction
@@ -212,7 +219,14 @@ class ObstacleCourseEnv(gymnasium.Env):
         # an open bucket room especially. With a feed-forward policy the only
         # way to recover that is to show it several frames at once.
         self.frame_stack = max(1, frame_stack)
-        self._frame_dim = num_lidar_bins + 2
+        # Scan bins, speed, yaw rate, then the corridor summary. The raw bins
+        # stay: the summary is an aid to reading them, not a replacement, and
+        # dropping them would hide the one thing the summary deliberately
+        # ignores -- a wall straight ahead, which at the car wash is a wall
+        # the car is supposed to drive through and elsewhere is not.
+        self.use_corridor_features = use_corridor_features
+        self._corridor_dim = NUM_CORRIDOR_FEATURES if use_corridor_features else 0
+        self._frame_dim = num_lidar_bins + 2 + self._corridor_dim
         self._frames: collections.deque[np.ndarray] = collections.deque(
             maxlen=self.frame_stack
         )
@@ -404,9 +418,28 @@ class ObstacleCourseEnv(gymnasium.Env):
         # which is most of a tight corner (see YAW_RATE_SCALE).
         normalized_speed = np.clip((speed / self.obs_speed_scale + 1.0) / 2.0, 0.0, 1.0)
         normalized_yaw_rate = np.clip((yaw_rate / YAW_RATE_SCALE + 1.0) / 2.0, 0.0, 1.0)
-        frame = np.concatenate(
-            [normalized_scan, [normalized_speed, normalized_yaw_rate]]
-        ).astype(np.float32)
+        parts = [normalized_scan, [normalized_speed, normalized_yaw_rate]]
+        if self.use_corridor_features:
+            # Computed from the NOISY scan, not the clean one. The whole point
+            # of these features is that the robot can compute them too, and
+            # the robot's scan has noise in it; deriving them from the
+            # pre-noise scan would train the policy on a cleaner corridor than
+            # it will ever be given and hide any fragility to that noise here
+            # rather than on the car.
+            # Gap first: the corridor fit is cross-checked against it, so a
+            # set of walls running across the only opening is discarded
+            # instead of steering the car into the car wash's ribbon curtain.
+            gap_bearing, gap_depth = free_gap(
+                noisy, self.lidar_fov_deg, self.lidar_max_range
+            )
+            estimate = estimate_corridor(
+                noisy,
+                self.lidar_fov_deg,
+                self.lidar_max_range,
+                gap_bearing_rad=gap_bearing,
+            )
+            parts.append(corridor_features(estimate, gap_bearing, gap_depth))
+        frame = np.concatenate(parts).astype(np.float32)
         if not self._frames:
             # First frame of an episode: repeat it, so the stack never
             # contains anything from the episode before.

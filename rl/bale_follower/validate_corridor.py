@@ -222,11 +222,18 @@ def main() -> int:
         action="store_true",
         help="check the sign conventions on synthetic geometry and exit",
     )
+    parser.add_argument(
+        "--noisy",
+        action="store_true",
+        help="apply the ZED noise model before estimating, which is what the "
+        "policy is actually given -- the clean scan flatters the estimator",
+    )
     args = parser.parse_args()
 
     if args.self_test:
         return run_self_test()
 
+    import zed_sim
     from obstacle_env import ObstacleCourseEnv
 
     env = ObstacleCourseEnv(sdf_path=args.sdf, start_anywhere_prob=0.0)
@@ -249,8 +256,17 @@ def main() -> int:
             print(f"  no cloud at s={pose['s']:.1f}", flush=True)
             continue
 
-        estimate = estimate_corridor(scan, env.lidar_fov_deg, env.lidar_max_range)
+        if args.noisy:
+            scan = zed_sim.apply(
+                scan.copy(), env.zed_config, env.lidar_max_range, env._rng
+            )
         gap_bearing, gap_depth = free_gap(scan, env.lidar_fov_deg, env.lidar_max_range)
+        estimate = estimate_corridor(
+            scan,
+            env.lidar_fov_deg,
+            env.lidar_max_range,
+            gap_bearing_rad=gap_bearing,
+        )
         row = {
             "gap_bearing_deg": math.degrees(gap_bearing),
             "gap_depth": gap_depth,

@@ -112,6 +112,27 @@ MAX_SIDE_RESIDUAL_M = 0.18
 # disagree by more than this are not two sides of one corridor.
 MAX_SIDE_DISAGREEMENT_DEG = 35.0
 
+# A corridor the car cannot drive into is not the car's corridor. The side
+# fits say which way the boundaries run; free_gap says where the opening is.
+# When those two disagree by more than this, the fit has latched onto
+# something that crosses the path rather than flanking it -- measured at the
+# car wash, whose hanging ribbons render as a solid curtain and fit as a
+# "corridor" running 90 degrees across the lane the car has to drive through.
+#
+# This is NOT the angle rejection that was deliberately left out (see
+# estimate_corridor): it does not care how far the corridor turns, only that
+# the walls and the opening tell the same story. A real 90-degree corner --
+# the banked turn, the entry to the open area, the entry to the buckets --
+# passes, because there the gap points round the corner too.
+#
+# Measured over 373 confident fits across 540 poses on the real course:
+# at 60 degrees this drops 8 of the 34 fits whose heading was more than
+# 20 degrees wrong, and 1 of the 339 that were right. The margin is wide
+# (good fits' 95th percentile 41.6 degrees, bad fits' 90th 89.9), but the
+# number itself was picked against that one dataset, so treat it as tuned,
+# not derived.
+MAX_CORRIDOR_GAP_DISAGREEMENT_DEG = 60.0
+
 
 class CorridorEstimate:
     """Offset, heading and width of the drivable corridor, with a confidence.
@@ -258,17 +279,35 @@ def _orthogonal_line(xs: np.ndarray, ys: np.ndarray):
     return angle, offset, spread
 
 
+def _disagrees_with_gap(angle: float, gap_bearing_rad: float | None) -> bool:
+    """True when the fitted corridor runs across the only way out.
+
+    `angle` is a line direction, so this folds mod pi: a corridor at -89
+    degrees and one at +89 differ by 2, not 178.
+    """
+    if gap_bearing_rad is None:
+        return False
+    gap = float(gap_bearing_rad)
+    return _angle_between(angle, gap) > math.radians(MAX_CORRIDOR_GAP_DISAGREEMENT_DEG)
+
+
 def estimate_corridor(
     scan: np.ndarray,
     fov_deg: float,
     max_range: float,
     side_min_deg: float = SIDE_MIN_DEG,
     max_width_m: float = MAX_CORRIDOR_WIDTH_M,
+    gap_bearing_rad: float | None = None,
 ) -> CorridorEstimate:
     """Reduce a bearing-binned scan to the corridor the car is driving in.
 
     `scan` is `cloud_scan`'s output: one range per bearing bin, lowest bin at
     the rightmost bearing, empty bins filled with `max_range`.
+
+    Pass `free_gap`'s bearing as `gap_bearing_rad` to enable the consistency
+    check described at MAX_CORRIDOR_GAP_DISAGREEMENT_DEG. Callers that leave
+    it out get the side fits ungated, which is what the unit tests want but
+    not what the car should be driving on.
     """
     bins = int(scan.shape[0])
     if bins < 4:
@@ -306,6 +345,8 @@ def estimate_corridor(
 
         centre_y = (left_offset + right_offset) / 2.0
         angle = _mean_angle(left_angle, right_angle)
+        if _disagrees_with_gap(angle, gap_bearing_rad):
+            return CorridorEstimate(left_found=True, right_found=True)
         # Both walls seen and agreeing is the only case this is confident
         # about, and even then a scattered fit or a disagreement in direction
         # takes it back down.
@@ -330,7 +371,7 @@ def estimate_corridor(
     # signal that keeps a car parallel to a wall it is about to scrape.
     fit = left_fit if left_fit is not None else right_fit
     angle, offset, spread = fit
-    if abs(offset) > MAX_SINGLE_WALL_M:
+    if abs(offset) > MAX_SINGLE_WALL_M or _disagrees_with_gap(angle, gap_bearing_rad):
         return CorridorEstimate(
             left_found=left_fit is not None, right_found=right_fit is not None
         )
@@ -373,6 +414,22 @@ def free_gap(
     a broad run of moderately deep bins is. The run is scored on width times
     mean depth so that a wide shallow opening and a narrow deep one do not
     tie.
+
+    That score alone picks the wrong opening at every narrow passage on this
+    course, which measurement made plain before this weighting existed: the
+    gap pointed 43 degrees off the way the course goes at the tunnel, 43 at
+    the hoops and 33 in the bucket section. All three have the same shape --
+    the car must thread something narrow while a wider, emptier space sits
+    off to one side, and "widest" duly chose the space beside the tunnel over
+    the tunnel.
+
+    So the score is weighted by how far off the nose the opening lies. The
+    weight only halves across the full field of view, which is deliberately
+    mild: enough to prefer the passage the car is lined up with when the
+    alternatives are comparable, not so strong that it refuses to look round
+    a corner. A genuine 90 degree turn still wins, because there the forward
+    direction is a wall a few tenths of a metre away and scores near zero
+    however it is weighted.
     """
     bins = int(scan.shape[0])
     if bins < 4:
@@ -398,10 +455,12 @@ def free_gap(
             run = slice(start, index)
             width_deg = float(bearings[index - 1] - bearings[start]) + fov_deg / bins
             depth = float(np.mean(scan[run]))
-            score = width_deg * depth
+            centre_deg = float(np.mean(bearings[run]))
+            forward = 1.0 - 0.5 * abs(centre_deg) / max(half, 1e-6)
+            score = width_deg * depth * forward
             if score > best_score:
                 best_score = score
-                best_bearing = float(np.mean(bearings[run]))
+                best_bearing = centre_deg
                 best_depth = depth
             start = None
     return math.radians(best_bearing), min(best_depth, max_range)

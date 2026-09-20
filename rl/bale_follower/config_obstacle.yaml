@@ -71,6 +71,17 @@ env:
   # Mandatory in practice -- see obstacle_env.py's module docstring. Needs
   # sensors:=true (CFR_SENSORS=1) on the launch.
   scan_source: cloud
+  # Six extra observation channels summarising the drivable corridor: lateral
+  # offset, direction, width, a confidence, and the bearing and depth of the
+  # widest opening ahead. All derived from the same ZED scan the policy
+  # already gets, so they change nothing about what the robot would need to
+  # know -- see corridor.py, and validate_corridor.py for what they are worth
+  # in each part of the course.
+  #
+  # Turning this off changes the observation width (44 per frame to 38), so a
+  # checkpoint trained with it set one way cannot be resumed with it set the
+  # other.
+  use_corridor_features: true
   # Cycle a small pool of precomputed layouts rather than redrawing every
   # reset, so the policy sees varied bucket/hoop placement without spending
   # most of the wall clock on `gz service` calls. See
