@@ -35,6 +35,13 @@ import math
 
 import numpy as np
 
+# Nothing this module returns is ever below this: an occupied bin is clamped
+# to it and an empty one reads max_range. Exported because that makes it a
+# hard floor on every threshold downstream -- a contact test set below it is
+# dead code, which is exactly what happened to collision_clearance through
+# runs v1-v5. See assert_contact_is_detectable.
+SCAN_MIN_RANGE = 0.15
+
 
 def _scan_tracking_the_ground(
     ranges: np.ndarray,
@@ -113,7 +120,7 @@ def scan_from_points(
     max_range: float,
     min_height: float = -0.12,
     max_height: float = 0.80,
-    min_range: float = 0.15,
+    min_range: float = SCAN_MIN_RANGE,
     pitch: float = 0.0,
     roll: float = 0.0,
     ground_step: float | None = None,

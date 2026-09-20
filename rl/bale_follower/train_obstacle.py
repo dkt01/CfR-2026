@@ -33,7 +33,13 @@ from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
 from stable_baselines3.common.monitor import Monitor
 
 from obstacle_env import ObstacleCourseEnv
-from obstacle_reward import ObstacleRewardConfig
+from cloud_scan import SCAN_MIN_RANGE
+from obstacle_reward import (
+    ObstacleRewardConfig,
+    assert_attempting_beats_freezing,
+    assert_contact_is_detectable,
+    assert_no_quit_incentive,
+)
 from zed_sim import ZedSimConfig
 
 # Named stretches of the lap, by arc length, so "where does it stop" is a
@@ -67,10 +73,19 @@ DEFAULT_CONFIG = Path(__file__).resolve().parent / "config_obstacle.yaml"
 
 def build_env(config: dict, sdf_path: str, teleport_url: str) -> Monitor:
     env_config = config["env"]
+    reward_config = ObstacleRewardConfig(**config["reward"])
+    # Run the invariants against the config that is about to train, not just
+    # against the dataclass defaults. They existed through v1-v5 and were
+    # only ever executed by `python obstacle_reward.py`, so a YAML override
+    # could reintroduce either trap -- or a dead threshold -- and nothing on
+    # the training path would notice. A run costs a day; this costs nothing.
+    assert_no_quit_incentive(reward_config)
+    assert_attempting_beats_freezing(reward_config)
+    assert_contact_is_detectable(reward_config, SCAN_MIN_RANGE)
     env = ObstacleCourseEnv(
         sdf_path=sdf_path,
         teleport_url=teleport_url,
-        reward_config=ObstacleRewardConfig(**config["reward"]),
+        reward_config=reward_config,
         zed_config=ZedSimConfig(**config.get("zed_sim", {})),
         **env_config,
     )
@@ -106,6 +121,7 @@ class EpisodeOutcomeCallback(BaseCallback):
     def reset_counts(self) -> None:
         self.episodes = 0
         self.collisions = 0
+        self.wedges = 0
         self.stuck = 0
         self.hoop_misses = 0
         self.laps = 0
@@ -157,6 +173,7 @@ class EpisodeOutcomeCallback(BaseCallback):
                 continue
             self.episodes += 1
             self.collisions += bool(info.get("collided"))
+            self.wedges += bool(info.get("wedged"))
             self.stuck += bool(info.get("stuck"))
             self.hoop_misses += bool(info.get("hoop_missed"))
             self.laps += bool(info.get("lap_completed"))
@@ -168,8 +185,14 @@ class EpisodeOutcomeCallback(BaseCallback):
         if not self.episodes:
             return
         done = self.episodes
-        ended = self.collisions + self.stuck + self.hoop_misses + self.laps
+        ended = (
+            self.collisions + self.wedges + self.stuck + self.hoop_misses + self.laps
+        )
         self.logger.record("outcome/collision_rate", self.collisions / done)
+        # The headline number for this course. v5 ran at an effective 1.0
+        # without being able to see it, because contact was undetectable and
+        # every wedge was booked as "stuck" five seconds later instead.
+        self.logger.record("outcome/wedge_rate", self.wedges / done)
         self.logger.record("outcome/stuck_rate", self.stuck / done)
         self.logger.record("outcome/hoop_miss_rate", self.hoop_misses / done)
         self.logger.record("outcome/lap_rate", self.laps / done)

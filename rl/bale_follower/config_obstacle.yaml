@@ -122,9 +122,20 @@ reward:
   # 80 billed up to 7.2 a step -- twice the best possible step of progress
   # -- for threading a gap exactly as intended.
   safe_clearance: 0.25
-  k_touch: 30.0
-  touch_clearance: 0.08
-  collision_clearance: 0.06
+  # Both retired at 0.0, which is enforced rather than merely intended --
+  # build_env runs assert_contact_is_detectable against this file. cloud_scan
+  # clamps every bin to SCAN_MIN_RANGE (0.15 m), so these two at 0.08 and
+  # 0.06 could never be crossed by any scan the sensor can return: r_touch
+  # was identically 0 and the collision detector never fired through v1-v5,
+  # on a course whose whole difficulty is not hitting things. Contact is the
+  # wedge test now -- see obstacle_reward.py.
+  k_touch: 0.0
+  touch_clearance: 0.0
+  collision_clearance: 0.0
+  wedge_speed_floor: 0.15
+  wedge_cmd_speed: 0.30
+  wedge_steps: 5
+  wedge_penalty: 15.0
   # Modest on purpose. A collision ends the episode, which already forfeits
   # the rest of the lap plus both finish bonuses -- that is the real
   # deterrent. At 300 on top, sitting still (0) beat attempting the course

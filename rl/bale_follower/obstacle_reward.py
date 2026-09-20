@@ -85,19 +85,38 @@ class ObstacleRewardConfig:
     # perfectly centred. A safe_clearance above that would charge the car
     # for driving the course correctly.
     safe_clearance: float = 0.25
-    # Brushing something, short of a logged collision. Was 80.0 at 0.15 m,
-    # which is inside that same 0.165 m gap clearance -- it billed up to
-    # 7.2 a step, twice what the best possible step of progress pays, for
-    # threading a gap exactly as intended. Now it only bites in the 0.02 m
-    # between here and a genuine collision.
-    k_touch: float = 30.0
-    touch_clearance: float = 0.08
-    # Point-cloud range below which a step counts as a genuine hit rather
-    # than a close pass. There is no analytic ground truth to check this
-    # against on this course (see obstacle_env.py), so this threshold is the
-    # collision detector, not just a shaping cutoff -- tune it against actual
-    # sensor noise before trusting it, not just against these defaults.
-    collision_clearance: float = 0.06
+    # RETIRED, and deliberately left in place at 0.0 rather than deleted, so
+    # the reason survives: a scan-derived contact threshold cannot work on
+    # this course. `cloud_scan` floors every bin at its `min_range` of 0.15 m,
+    # so any threshold below that can never be crossed by any input the
+    # sensor can produce. These sat at 0.08 and 0.06 for the whole v1-v5
+    # effort, which means `r_touch` was identically 0 and the collision
+    # detector never fired once -- 50k steps of driving into walls on a
+    # course made of walls, logged at collision_rate 0.00.
+    #
+    # Raising them is not the fix either. The only reachable band is between
+    # the 0.15 m floor and the 0.165 m a side that threading the tightest
+    # bucket pair legitimately leaves, and 15 mm is well inside the sensor
+    # noise -- the car would be billed for driving the course correctly.
+    # Contact is detected by the wedge test below instead.
+    k_touch: float = 0.0
+    touch_clearance: float = 0.0
+    collision_clearance: float = 0.0
+    # Contact, detected by outcome rather than by range: the car is asking to
+    # drive forward and is not translating, so something is holding it. This
+    # is privileged (it reads sim pose) and therefore reward-and-termination
+    # only, never the observation -- but it is the only test that covers
+    # every obstacle on the course. The walls are static geometry we could
+    # measure against; the buckets and bales are redrawn by
+    # obstacle_randomizer_node every few episodes and have no ground truth to
+    # measure against at all.
+    wedge_speed_floor: float = 0.15
+    wedge_cmd_speed: float = 0.30
+    wedge_steps: int = 5
+    # Smaller than a collision, for the freeze-trap reason below: a wedge is
+    # the *common* failure, so it is charged often, and its real deterrent is
+    # the same one -- ending the episode forfeits the rest of the lap.
+    wedge_penalty: float = 15.0
     # 5 m of course progress -- deliberately modest, because it is not the
     # real deterrent. A collision *ends the episode*, so it already forfeits
     # every metre the car would have gone on to bank plus the lap bonus and
@@ -152,6 +171,7 @@ def compute_reward(
     prev_steer_fraction: float = 0.0,
     lap_completed: bool = False,
     stuck: bool = False,
+    wedged: bool = False,
     time_remaining_s: float = 0.0,
 ) -> ObstacleRewardResult:
     """One step's reward.
@@ -182,6 +202,8 @@ def compute_reward(
     total = progress + proximity + touch + smoothness + hoop + lap
     if collided:
         total -= config.collision_penalty
+    if wedged:
+        total -= config.wedge_penalty
     if stuck:
         total -= config.stuck_penalty
 
@@ -228,8 +250,43 @@ def assert_no_quit_incentive(config: ObstacleRewardConfig) -> None:
         f"{play_on:+.1f} for playing on -- that is the run-2 trap"
     )
     assert config.collision_penalty > 0.0, "crashing must not be a free exit"
+    assert config.wedge_penalty > 0.0, "wedging must not be a free exit"
     assert config.hoop_miss_penalty > config.collision_penalty, (
         "missing a hoop fails the run outright; it must cost more than a hit"
+    )
+
+
+def assert_contact_is_detectable(config: ObstacleRewardConfig, scan_min_range: float):
+    """Every threshold must be crossable by an input the sensor can produce.
+
+    This is the check that would have caught v1-v5. `cloud_scan` clamps each
+    bin to `min_range`, so a scan-derived threshold below that floor is dead
+    code: it type-checks, it unit-tests green against hand-written clearances
+    of 0.05, and it never once fires against the simulator or the robot. Both
+    contact thresholds sat under the floor for five runs while the reward
+    quietly reduced to "make progress, steer smoothly" on a course whose
+    entire difficulty is not hitting things.
+
+    So a scan threshold is either retired (0.0, meaning the term is off) or
+    strictly above the floor. Nothing in between is allowed to look alive.
+    """
+    for name in ("collision_clearance", "touch_clearance"):
+        value = getattr(config, name)
+        assert value == 0.0 or value > scan_min_range, (
+            f"{name}={value} is at or below the {scan_min_range} m scan floor, "
+            f"so it can never fire -- set it above the floor or to 0.0 to "
+            f"retire the term deliberately"
+        )
+    if config.k_touch > 0.0:
+        assert config.touch_clearance > scan_min_range, (
+            "k_touch is on but touch_clearance cannot be reached"
+        )
+    assert config.wedge_steps >= 1, "the wedge detector needs at least one step"
+    assert config.wedge_cmd_speed > config.wedge_speed_floor, (
+        "a wedge is 'asking to move faster than it is moving'; with "
+        f"wedge_cmd_speed={config.wedge_cmd_speed} at or below "
+        f"wedge_speed_floor={config.wedge_speed_floor} a car obeying its own "
+        "command would be charged for it"
     )
 
 
@@ -246,11 +303,22 @@ def assert_attempting_beats_freezing(config: ObstacleRewardConfig) -> None:
     The bar: a car that gets a few metres in before hitting something must
     already be ahead of one that sat on the line.
     """
-    attempt_m = config.collision_penalty / config.k_progress
-    assert attempt_m <= 10.0, (
-        f"a crash costs {attempt_m:.0f} m of progress, so the car must cover "
-        f"{attempt_m:.0f} m before trying beats sitting still -- too far to "
-        "find by exploration; lower collision_penalty or raise k_progress"
+    for label, penalty in (
+        ("crash", config.collision_penalty),
+        ("wedge", config.wedge_penalty),
+    ):
+        attempt_m = penalty / config.k_progress
+        assert attempt_m <= 10.0, (
+            f"a {label} costs {attempt_m:.0f} m of progress, so the car must "
+            f"cover {attempt_m:.0f} m before trying beats sitting still -- too "
+            f"far to find by exploration; lower the penalty or raise k_progress"
+        )
+    # Wedging is the failure a car that cannot drive yet hits constantly --
+    # v5 ended 100% of its episodes pinned against something -- so it is
+    # charged far more often than a crash and has to stay the cheaper of the
+    # two, or the common case dominates and freezing wins on average.
+    assert config.wedge_penalty <= config.collision_penalty, (
+        "a wedge must not cost more than a collision"
     )
 
 

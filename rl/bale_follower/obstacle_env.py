@@ -236,6 +236,8 @@ class ObstacleCourseEnv(gymnasium.Env):
         )
         self._cmd_speed = 0.0
         self._cmd_steer_fraction = 0.0
+        # Consecutive steps commanding forward without translating.
+        self._wedge_steps = 0
         self._rng = np.random.default_rng()
 
         # Course progress, for the reward only -- never for the observation.
@@ -639,6 +641,7 @@ class ObstacleCourseEnv(gymnasium.Env):
         self._stuck_window_travel.clear()
         self._cmd_speed = 0.0
         self._cmd_steer_fraction = 0.0
+        self._wedge_steps = 0
 
         # Seed the projection window at the dealt start, not at the line:
         # the search is deliberately local (see CourseProgress) so it cannot
@@ -682,7 +685,13 @@ class ObstacleCourseEnv(gymnasium.Env):
 
         scan = self._ground_truth_scan()
         min_clearance = float(scan.min())
-        collided = min_clearance < self.reward_config.collision_clearance
+        # Retired by default -- see ObstacleRewardConfig. Kept as a branch
+        # rather than deleted because a course with room for a reachable
+        # threshold could switch it back on by setting one.
+        collided = (
+            self.reward_config.collision_clearance > 0.0
+            and min_clearance < self.reward_config.collision_clearance
+        )
 
         # Longitudinal displacement, signed: what the car's own tachometer
         # plus direction estimate would report, so it is fair game for the
@@ -697,6 +706,26 @@ class ObstacleCourseEnv(gymnasium.Env):
             dt = 1.0 / self.control_hz
         measured_speed = travel / dt
         measured_yaw_rate = _wrap_to_pi(pose.yaw - self._prev_pose.yaw) / dt
+
+        # Wedged: asking to drive forward and not translating, for long
+        # enough that it is not just the lag between a command and the car
+        # answering it. Something is holding the car, and on this course that
+        # is nearly always a wall the forward 110-degree scan cannot see
+        # because the car is already alongside or nosed into it.
+        #
+        # Consecutive steps, not a time window, and deliberately short: the
+        # stuck detector needs 5 s of missed progress to fire, and v5 spent
+        # about 68% of every episode sitting in that window collecting no
+        # reward and no gradient. Reversing drops cmd_speed below the gate
+        # and resets the count, so backing off an obstacle stays available.
+        if (
+            self._cmd_speed >= self.reward_config.wedge_cmd_speed
+            and abs(measured_speed) < self.reward_config.wedge_speed_floor
+        ):
+            self._wedge_steps += 1
+        else:
+            self._wedge_steps = 0
+        wedged = self._wedge_steps >= self.reward_config.wedge_steps
 
         s_now = self._course.update(pose.x, pose.y, pose.z)
         progress_s = s_now - self._prev_s
@@ -756,6 +785,7 @@ class ObstacleCourseEnv(gymnasium.Env):
             prev_steer_fraction=self._prev_steer_fraction,
             lap_completed=self._lap_completed,
             stuck=stuck,
+            wedged=wedged,
         )
 
         self._prev_pose = pose
@@ -767,12 +797,18 @@ class ObstacleCourseEnv(gymnasium.Env):
         # A missed hoop fails the run outright per the rules, and a finished
         # lap is the goal -- no point spending the rest of the rollout in
         # either case.
-        terminated = collided or hoop_missed_now or self._lap_completed
+        # A wedge terminates rather than truncates: the car is pinned against
+        # an obstacle, which is a real outcome with a real cost, not the
+        # episode merely running out of road. Truncating would have SB3
+        # bootstrap the value of a state the car cannot actually continue
+        # from.
+        terminated = collided or wedged or hoop_missed_now or self._lap_completed
         truncated = self._episode_time >= self.episode_time_limit_s or stuck
 
         observation = self._build_observation(scan, measured_speed, measured_yaw_rate)
         info = {
             "collided": collided,
+            "wedged": wedged,
             "hoop_missed": hoop_missed_now,
             "hoops_passed": hoops_passed_now,
             "stuck": stuck,
