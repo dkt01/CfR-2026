@@ -259,7 +259,7 @@ def build_model(vehicle, spawn_pose):
         "         rear carrying the different rates of the stock GTR long and",
         "         XX-long shocks.  gz-sim 8 / dartsim does honour spring_stiffness",
         "         (checked on a one-joint world: 1 kg on 100 N/m settles at",
-        "         -98 mm), and spring_reference is NEGATIVE here on purpose;",
+        "         -98 mm), and spring_reference is NEGATIVE here on purpose:",
         "         see the derivation in generate_vehicle_model.py. -->",
         '    <model name="slash">',
         # Wheel centres sit at exactly one radius, so model-frame z = 0 IS ground
@@ -275,7 +275,15 @@ def build_model(vehicle, spawn_pose):
         f"<mass>{chassis_mass:.4f}</mass><inertia>"
         f"<ixx>{ixx:.5f}</ixx><iyy>{iyy:.5f}</iyy><izz>{izz:.5f}</izz></inertia></inertial>",
         f'        <collision name="collision"><pose>0 0 {body_h / 2 + radius * 0.6:.4f} 0 0 0</pose>'
-        f"<geometry><box><size>{body_l:.4f} {body_w:.4f} {body_h:.4f}</size></box></geometry></collision>",
+        f"<geometry><box><size>{body_l:.4f} {body_w:.4f} {body_h:.4f}</size></box></geometry>"
+        # Matches the wheels' lateral.mu_lateral: unset here meant an engine
+        # default nobody chose. If a hard hit ever tips the car onto this
+        # box, the belly-vs-ground contact should grip the way the tires do,
+        # not skate on whatever dartsim defaults to for an unspecified
+        # surface -- see the sliding-after-a-bale-hit investigation.
+        f"<surface><friction><ode><mu>{mu:.3f}</mu><mu2>{mu:.3f}</mu2></ode>"
+        f"<bullet><friction>{mu:.3f}</friction><friction2>{mu:.3f}</friction2>"
+        "</bullet></friction></surface></collision>",
         f'        <visual name="body"><pose>0 0 {body_h / 2 + radius * 0.6:.4f} 0 0 0</pose>'
         f"<geometry><box><size>{body_l:.4f} {body_w:.4f} {body_h:.4f}</size></box></geometry>"
         f"<material><diffuse>0.85 0.08 0.04 1</diffuse></material></visual>",

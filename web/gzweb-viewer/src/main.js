@@ -1,6 +1,9 @@
 import { AssetViewer } from "gzweb";
 import { parse } from "protobufjs";
+import * as THREE from "three";
 import { createSpeedometer } from "./speedometer.js";
+import { createSteeringDial, WHEELBASE, MIN_SPEED_FOR_STEERING } from "./steering-dial.js";
+import { createPointCloud } from "./pointcloud.js";
 import "./style.css";
 
 const status = document.querySelector("#viewer-status");
@@ -57,6 +60,16 @@ const poseTopic = `/world/${course.world}/dynamic_pose/info`;
 // The whole-world pose stream, which is the only one static models appear in.
 // See sampleLayout, which is not a subscription for reasons explained there.
 const layoutTopic = `/world/${course.world}/pose/info`;
+// Not world-namespaced -- both AckermannSteering's <topic> in the world file
+// and the ros_gz_bridge argument in simulation.launch.py spell it exactly
+// this way regardless of course.  This is what the plugin is actually acting
+// on, i.e. the closest thing to a "commanded" twist reachable from gz
+// transport (see steering-dial.js for why it is not literally the
+// autonomy stack's raw command).
+const cmdVelTopic = "/sim/cmd_vel";
+// Likewise unnamespaced; only published with `sensors:=true` at launch, so
+// the point-cloud-view toggle simply shows nothing without it.
+const pointCloudTopic = "/zed/gz/rgbd/points";
 const LAYOUT_SAMPLE_MS = 3000;
 const LAYOUT_SAMPLE_TIMEOUT_MS = 15000;
 const worldControlService = `/world/${course.world}/control`;
@@ -75,6 +88,9 @@ const positionInputs = [
   document.querySelector("#teleport-heading-degrees"),
 ];
 const speedometer = createSpeedometer(document.querySelector("#speedometer"));
+const steeringDial = createSteeringDial(document.querySelector("#steering-dial"));
+const pointCloud = createPointCloud();
+const pointCloudButton = document.querySelector("#point-cloud-view");
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 // The pose stream carries position only, so speed is differenced from it.
@@ -92,10 +108,15 @@ let updatingFollowView = false;
 let simulationSocket;
 let worldControlType;
 let booleanType;
+let cmdVelType;
+let pointCloudType;
 let teleportPreview;
 // Parsed once from the live connection's dictionary, and used by the layout
 // samples as well, which is why it is not local to connectPoseStream.
 let poseType;
+let pointCloudAttached = false;
+let pointCloudSubscribed = false;
+let pointCloudViewEnabled = false;
 document.title = `CfR ${course.title} Viewer`;
 document.querySelector("header h1").textContent = course.title;
 document
@@ -260,6 +281,113 @@ function updateSpeed(message, pose) {
   speedometer.report(filteredSpeed);
 }
 
+// Inverts the bicycle model cmd_vel_to_drive_node.cpp uses to turn a steering
+// angle into a yaw rate, so the dial can go the other way on the twist
+// Gazebo actually received.  The same MIN_SPEED_FOR_STEERING floor keeps a
+// nearly-stopped car's yaw noise from reading as a hard-over command.
+function updateCommandedSteering(twist) {
+  const speed = twist.linear?.x;
+  const yawRate = twist.angular?.z;
+  if (!Number.isFinite(speed) || !Number.isFinite(yawRate)) {
+    return;
+  }
+  const effectiveSpeed = Math.max(Math.abs(speed), MIN_SPEED_FOR_STEERING);
+  steeringDial.report(Math.atan2(WHEELBASE * yawRate, effectiveSpeed));
+}
+
+// The point cloud is parented to "slash" rather than positioned in world
+// coordinates every frame: it rides along with the vehicle for free once
+// attached, the same way the vehicle mesh itself does.
+function ensurePointCloudAttached(scene, slash) {
+  if (pointCloudAttached || !slash) {
+    return;
+  }
+  slash.add(pointCloud.object3D);
+  pointCloudAttached = true;
+}
+
+// Objects this hid, so it can put back exactly what it took away rather than
+// forcing everything visible again on the way out -- gzweb's own scene
+// carries objects that are invisible on purpose (its GridHelper, named
+// "grid", ships with visible=false and is centered on the world origin
+// rather than the course), and blindly re-showing everything popped that
+// grid in looking like the course had shifted.
+let hiddenForPointCloudView = [];
+let pointCloudViewClearColor = null;
+// The page's own ink color (see style.css :root), just used as the render
+// background instead of the course's default grey-green -- dark enough that
+// the cloud's points read clearly, not full black.
+const POINT_CLOUD_VIEW_BACKGROUND = 0x17242a;
+
+// Every node from `node` up to (not including) `root`, `node` itself
+// included.
+function ancestorChain(node, root) {
+  const chain = new Set();
+  for (let current = node; current && current !== root; current = current.parent) {
+    chain.add(current);
+  }
+  return chain;
+}
+
+// Point-cloud-only mode hides everything in the scene except the vehicle
+// (which carries the point cloud as a child, see ensurePointCloudAttached)
+// and whatever lights or views it.  AssetViewer.renderFromFiles loads the
+// whole SDF world as a single object and adds that once, so "slash" sits
+// nested inside it alongside the ground, bales, buckets and everything
+// else -- it is not a sibling of them at the top of the scene.  Hiding
+// top-level scene children would therefore hide the entire course,
+// vehicle included, in one shot (and the point cloud with it, being a
+// child of the now-invisible vehicle -- three.js does not render a visible
+// object whose ancestor is not).  This instead walks up from the vehicle to
+// the scene root, leaves every node on that walk (and the vehicle's own
+// subtree) untouched, and hides only the branches that lead somewhere else.
+function setPointCloudView(enabled) {
+  pointCloudViewEnabled = enabled;
+  pointCloud.object3D.visible = enabled;
+  const scene = viewer["scene"];
+  const slash = scene?.getByName("slash");
+  const root = scene?.scene;
+
+  if (root && slash) {
+    if (enabled) {
+      hiddenForPointCloudView = [];
+      const keep = ancestorChain(slash, root);
+      const hideExceptVehicle = (node) => {
+        if (node === slash || node.isLight || node.isCamera) {
+          return;
+        }
+        if (keep.has(node)) {
+          node.children.forEach(hideExceptVehicle);
+          return;
+        }
+        if (node.visible) {
+          node.visible = false;
+          hiddenForPointCloudView.push(node);
+        }
+      };
+      root.children.forEach(hideExceptVehicle);
+    } else {
+      hiddenForPointCloudView.forEach((node) => { node.visible = true; });
+      hiddenForPointCloudView = [];
+    }
+  }
+
+  if (scene?.renderer) {
+    if (enabled) {
+      pointCloudViewClearColor = scene.renderer.getClearColor(new THREE.Color());
+      scene.renderer.setClearColor(POINT_CLOUD_VIEW_BACKGROUND);
+    } else if (pointCloudViewClearColor) {
+      scene.renderer.setClearColor(pointCloudViewClearColor);
+      pointCloudViewClearColor = null;
+    }
+  }
+
+  if (enabled && !pointCloudSubscribed && simulationSocket?.readyState === WebSocket.OPEN && poseType) {
+    simulationSocket.send(`sub,${pointCloudTopic},,`);
+    pointCloudSubscribed = true;
+  }
+}
+
 // The start signal's arms are the one other thing in either world that moves,
 // and they move on a joint rather than by being teleported, so Gazebo reports
 // them as a link pose within the model.  Looked up once and kept: the scene is
@@ -359,6 +487,7 @@ function updatePoses(message) {
   if (slashPose && slash) {
     latestSlashPose = slashPose;
     scene.setPose(slash, slashPose.position, slashPose.orientation);
+    ensurePointCloudAttached(scene, slash);
     if (followSlash) {
       updateSlashFollowView(slashPose);
     }
@@ -472,6 +601,7 @@ function resetRobot() {
   previousSpeedSample = undefined;
   filteredSpeed = 0;
   speedometer.reset();
+  steeringDial.reset();
   const request = worldControlType.encode({ reset: { all: true } }).finish();
   sendRequest(worldControlService, "gz.msgs.WorldControl", request);
 }
@@ -561,7 +691,12 @@ function connectPoseStream() {
       poseType = root.lookupType("gz.msgs.Pose_V");
       worldControlType = root.lookupType("gz.msgs.WorldControl");
       booleanType = root.lookupType("gz.msgs.Boolean");
+      cmdVelType = root.lookupType("gz.msgs.Twist");
+      // Looked up now but only subscribed to once point-cloud-view is turned
+      // on -- a 640x360 depth stream is not worth the bandwidth otherwise.
+      pointCloudType = root.lookupType("gz.msgs.PointCloudPacked");
       socket.send(`sub,${poseTopic},,`);
+      socket.send(`sub,${cmdVelTopic},,`);
       // Only worth doing where something varies.  The speed course has no
       // buckets or hoops, and sampling a layout it does not have would open a
       // connection every few seconds to learn nothing.
@@ -575,6 +710,10 @@ function connectPoseStream() {
       signalButton.disabled = false;
       capturePoseButton.disabled = false;
       previewButton.disabled = false;
+      // Gated on the same connection as the rest, not just resourceLoaded$:
+      // setPointCloudView needs to find "slash" by name in the loaded scene,
+      // which is only guaranteed to have finished by the time this fires.
+      pointCloudButton.disabled = false;
       positionInputs.forEach((input) => { input.disabled = false; });
       return;
     }
@@ -592,6 +731,14 @@ function connectPoseStream() {
     }
     if (message.topic === poseTopic) {
       updatePoses(poseType.decode(message.payload));
+      return;
+    }
+    if (message.topic === cmdVelTopic) {
+      updateCommandedSteering(cmdVelType.decode(message.payload));
+      return;
+    }
+    if (message.topic === pointCloudTopic && pointCloudViewEnabled) {
+      pointCloud.update(pointCloudType.decode(message.payload));
     }
   });
 }
@@ -645,7 +792,10 @@ document.querySelector("#reset-view").addEventListener("click", () => {
   showCourseOverview();
 });
 resetRobotButton.addEventListener("click", resetRobot);
-signalButton.addEventListener("click", toggleStartSignal);
+pointCloudButton.addEventListener("click", () => {
+  setPointCloudView(!pointCloudViewEnabled);
+  pointCloudButton.textContent = pointCloudViewEnabled ? "Show full scene" : "Point cloud only";
+});
 capturePoseButton.addEventListener("click", captureRobotPosition);
 previewButton.addEventListener("click", previewTeleportPosition);
 teleportButton.addEventListener("click", teleportRobot);

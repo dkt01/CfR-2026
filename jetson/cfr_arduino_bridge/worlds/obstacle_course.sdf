@@ -887,13 +887,13 @@
          rear carrying the different rates of the stock GTR long and
          XX-long shocks.  gz-sim 8 / dartsim does honour spring_stiffness
          (checked on a one-joint world: 1 kg on 100 N/m settles at
-         -98 mm), and spring_reference is NEGATIVE here on purpose;
+         -98 mm), and spring_reference is NEGATIVE here on purpose:
          see the derivation in generate_vehicle_model.py. -->
     <model name="slash">
       <pose>-0.7000 0.0000 0.0200 0 0 0.0000</pose>
       <link name="chassis">
         <inertial><pose>-0.0202 0.0000 0.0670 0 0 0</pose><mass>2.8990</mass><inertia><ixx>0.08000</ixx><iyy>0.12000</iyy><izz>0.16000</izz></inertia></inertial>
-        <collision name="collision"><pose>0 0 0.0940 0 0 0</pose><geometry><box><size>0.5500 0.3000 0.1200</size></box></geometry></collision>
+        <collision name="collision"><pose>0 0 0.0940 0 0 0</pose><geometry><box><size>0.5500 0.3000 0.1200</size></box></geometry><surface><friction><ode><mu>1.000</mu><mu2>1.000</mu2></ode><bullet><friction>1.000</friction><friction2>1.000</friction2></bullet></friction></surface></collision>
         <visual name="body"><pose>0 0 0.0940 0 0 0</pose><geometry><box><size>0.5500 0.3000 0.1200</size></box></geometry><material><diffuse>0.85 0.08 0.04 1</diffuse></material></visual>
         <visual name="forward_direction_marker"><pose>0.025 0 0.16 0 1.5708 0</pose><geometry><cone><radius>0.12</radius><length>0.35</length></cone></geometry><material><diffuse>0.05 1 0.08 1</diffuse><emissive>0.02 0.45 0.04 1</emissive></material></visual>
         <visual name="zed2i_mount"><pose>0.25 0 0.155 0 0 0</pose><geometry><box><size>0.06 0.12 0.05</size></box></geometry><material><diffuse>0.20 0.23 0.26 1</diffuse></material></visual>

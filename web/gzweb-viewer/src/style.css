@@ -170,6 +170,12 @@ button:hover {
     height: 100%;
 }
 
+/* Steering dial sits in the mirror-image corner from the speedometer. */
+.steerdial {
+    left: 18px;
+    right: auto;
+}
+
 .dial-face {
     fill: #fffdf6;
     stroke: #17242a;
@@ -232,6 +238,31 @@ button:hover {
     visibility: visible;
 }
 
+.dial-center-mark {
+    stroke: #44504a;
+    stroke-width: 1.5;
+}
+
+.steer-wheel-rim {
+    fill: none;
+    stroke: #17242a;
+    stroke-width: 4;
+}
+
+.steer-wheel-spoke {
+    stroke: #17242a;
+    stroke-width: 3;
+    stroke-linecap: round;
+}
+
+.steer-wheel-spoke-top {
+    stroke: #a33a18;
+}
+
+.steer-wheel-hub {
+    fill: #17242a;
+}
+
 .dial-needle path {
     fill: #a33a18;
 }
@@ -244,7 +275,9 @@ button:hover {
     position: absolute;
     left: 0;
     right: 0;
-    bottom: 27%;
+    /* Low enough to sit in the gap the dial's own sweep leaves at the
+       bottom, clear of the needle/steering-wheel icon at centre. */
+    bottom: 8%;
     text-align: center;
 }
 
@@ -277,6 +310,11 @@ button:hover {
         bottom: 10px;
         width: 132px;
         height: 132px;
+    }
+
+    .steerdial {
+        left: 10px;
+        right: auto;
     }
 
     .speedo-value {

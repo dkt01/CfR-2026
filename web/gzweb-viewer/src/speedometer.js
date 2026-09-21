@@ -9,15 +9,14 @@
 // The needle therefore chases the reported value in a requestAnimationFrame
 // loop instead of being written directly, so its motion is tied to frames
 // rather than to message arrival.
+//
+// Geometry (the viewBox, face radius, sweep, and SVG helpers) is shared with
+// steering-dial.js via dial-utils.js, so both gauges sit on the same face.
+
+import { CENTER, RADIUS, START_ANGLE, SWEEP, ARC_LENGTH, polar, arcPath, element } from "./dial-utils.js";
 
 const DIAL_MAX = 6; // m/s full scale; the planned line tops out at 5.5
 const REDLINE = 5.5; // above the fastest plan we run -- see rl/bale_follower/course_path.py
-const START_ANGLE = 135; // SVG degrees, 0 = +x. 135 -> 405 leaves the gap at the bottom.
-const SWEEP = 270;
-const RADIUS = 78;
-const CENTER = 100;
-const ARC_LENGTH = RADIUS * SWEEP * (Math.PI / 180);
-const SVG_NS = "http://www.w3.org/2000/svg";
 
 // Needle tracking. TAU_RISE is shorter than TAU_FALL so the gauge answers the
 // throttle promptly but does not snap back to zero on a single dropped frame.
@@ -25,30 +24,9 @@ const TAU_RISE = 0.07;
 const TAU_FALL = 0.16;
 const STALE_MS = 400; // no pose this long -> the car is not moving, or we lost the stream
 
-function polar(radius, degrees) {
-  const radians = (degrees * Math.PI) / 180;
-  return {
-    x: CENTER + radius * Math.cos(radians),
-    y: CENTER + radius * Math.sin(radians),
-  };
-}
-
 function angleFor(speed) {
   const fraction = Math.min(Math.max(speed / DIAL_MAX, 0), 1);
   return START_ANGLE + fraction * SWEEP;
-}
-
-function arcPath(radius, startDegrees, endDegrees) {
-  const start = polar(radius, startDegrees);
-  const end = polar(radius, endDegrees);
-  const largeArc = Math.abs(endDegrees - startDegrees) > 180 ? 1 : 0;
-  return `M ${start.x} ${start.y} A ${radius} ${radius} 0 ${largeArc} 1 ${end.x} ${end.y}`;
-}
-
-function element(name, attributes) {
-  const node = document.createElementNS(SVG_NS, name);
-  Object.entries(attributes).forEach(([key, value]) => node.setAttribute(key, value));
-  return node;
 }
 
 function buildTicks(group) {
