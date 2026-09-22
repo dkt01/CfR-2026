@@ -351,3 +351,42 @@ button:hover {
         flex-wrap: wrap;
     }
 }
+
+/* Secondary viewport: always-on chase view of the ZED cloud and the car.
+   Sized in vh rather than px so it keeps a usable share of a short laptop
+   screen without crowding the main scene above it. */
+.cloud-view-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    margin-top: 1.25rem;
+}
+
+#cloud-view {
+    position: relative;
+    width: 100%;
+    height: clamp(180px, 26vh, 340px);
+    border-radius: 12px;
+    overflow: hidden;
+    background: #11191d;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+#cloud-view canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+.cloud-view-hint {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    margin: 0;
+    padding: 0 1rem;
+    text-align: center;
+    color: rgba(255, 255, 255, 0.55);
+    font-size: 0.85rem;
+    pointer-events: none;
+}

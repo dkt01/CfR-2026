@@ -355,16 +355,29 @@ steering:
   # constant - so sim and car agree with each other by construction while both
   # may be wrong about reality.
   max_angle_left:
-    value: 0.40
+    value: 0.512
     units: rad
-    provenance: guess
+    provenance: estimated
     experiment: B1
+    note: >
+      The left end of effective_angle_table, which is what the runtime
+      actually steers by.  It was 0.40 rad tagged `guess`, and that
+      disagreement was not harmless: generate_vehicle_model.py builds the
+      world's <steering_limit> from THIS value, so Gazebo clamped commands
+      that sim_vehicle_node had computed from the table.  Measured on the
+      simulated car, commands of 0.80 and 1.00 produced the identical 0.90 m
+      radius -- the top 22% of left steering did nothing at all.  Still not a
+      measurement of the real car: the table's +/-1.0 rows are extrapolated.
+      scripts/check_steering_consistency.py keeps the two in step.
   max_angle_right:
-    value: 0.40
+    value: 0.382
     units: rad
-    provenance: guess
+    provenance: estimated
     experiment: B1
-    note: Real Ackermann linkages are rarely symmetric; measure both ends.
+    note: >
+      The right end of effective_angle_table.  Real Ackermann linkages are
+      rarely symmetric and this one is not: 34% less lock than the left.
+      Measure both ends on the car.
   center_offset:
     value: 0.0
     units: normalized steering command
@@ -396,7 +409,9 @@ steering:
     experiment: A7
   # Effective bicycle-model steering angle against normalized command, from the
   # B1 constant-radius arcs.  This table, not max_angle_*, is what the simulator
-  # should interpolate once it exists.  Rows are [command, angle_rad].
+  # interpolates -- and as of 2026-09-21 max_angle_* is derived FROM it rather
+  # than standing as a separate guess that silently contradicted it.  Rows are
+  # [command, angle_rad].
   #   +/-0.5 rows are MEASURED (B2 skidpad, three runs in agreement).  The
   #   +/-1.0 rows are still a GUESS: steer_authority ran at ~0.6 m/s, the one
   #   regime where both speed sensors fail, and returned a non-monotonic map
@@ -506,13 +521,17 @@ longitudinal:
 
 lateral:
   min_turn_radius:
-    value: 0.766
+    value: 0.577
     units: m
     provenance: estimated
     experiment: B1
     note: >
-      wheelbase / tan(max_angle), i.e. entirely derived from the unmeasured
-      steering limit.  Appears nowhere in the codebase today.
+      wheelbase / tan(max_angle_left), i.e. entirely derived from the steering
+      limit, which is itself derived from the measured command -> angle table.
+      Was 0.766 m while max_angle was the old 0.40 rad guess.  Appears nowhere
+      in the codebase today, so it is a statement about the car rather than a
+      value anything reads; the SIMULATED car turns wider than this because
+      Gazebo's tires scrub (~1.10x the kinematic radius, measured).
   understeer_gradient:
     value: 0.007
     units: rad/(m/s^2)

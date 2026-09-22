@@ -77,7 +77,15 @@ cmd_vel_to_drive:
   ros__parameters:
     wheelbase: 0.324               # Traxxas Slash 4X4, metres
     max_speed: 8.0                 # m/s, linear.x is clamped to this
+    # Only used when the table below is empty.  Dividing by a single symmetric
+    # number over-steers LEFT by 28% and under-steers right by 4.5% against
+    # the measured table, at every angle -- see the node's header.
     max_steering_angle: 0.40       # rad at full lock
+    # The measured command -> angle table, inverted by the node so a desired
+    # angle becomes the command that actually produces it.  Keep in step with
+    # sim_vehicle's copy and vehicle.yaml steering.effective_angle_table.
+    steering_command_points: [-1.0, -0.5, 0.0, 0.5, 1.0]
+    steering_angle_points: [-0.382, -0.191, 0.0, 0.256, 0.512]
     min_speed_for_steering: 0.3    # floor speed for the bicycle model
     cmd_timeout: 0.3
     publish_rate_hz: 50.0

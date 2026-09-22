@@ -3,6 +3,7 @@ import { parse } from "protobufjs";
 import * as THREE from "three";
 import { createSpeedometer } from "./speedometer.js";
 import { createSteeringDial, WHEELBASE, MIN_SPEED_FOR_STEERING } from "./steering-dial.js";
+import { createCloudView } from "./cloud-view.js";
 import { createPointCloud } from "./pointcloud.js";
 import "./style.css";
 
@@ -90,7 +91,15 @@ const positionInputs = [
 const speedometer = createSpeedometer(document.querySelector("#speedometer"));
 const steeringDial = createSteeringDial(document.querySelector("#steering-dial"));
 const pointCloud = createPointCloud();
+// The always-on secondary viewport.  It has its own cloud instance and its own
+// renderer; see cloud-view.js.
+const cloudView = createCloudView(document.querySelector("#cloud-view"));
 const pointCloudButton = document.querySelector("#point-cloud-view");
+// How long to wait for a first cloud before telling the user the topic is
+// silent.  The sensor runs at 15 Hz, so this is generous even on llvmpipe.
+const POINT_CLOUD_SILENCE_MS = 4000;
+let pointCloudSilenceTimer = 0;
+let pointCloudFrames = 0;
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 // The pose stream carries position only, so speed is differenced from it.
@@ -382,10 +391,9 @@ function setPointCloudView(enabled) {
     }
   }
 
-  if (enabled && !pointCloudSubscribed && simulationSocket?.readyState === WebSocket.OPEN && poseType) {
-    simulationSocket.send(`sub,${pointCloudTopic},,`);
-    pointCloudSubscribed = true;
-  }
+  // The subscription and the silent-topic warning both live at connect time
+  // now, because the secondary viewport wants the cloud whether or not this
+  // mode is on.  Nothing to arm here.
 }
 
 // The start signal's arms are the one other thing in either world that moves,
@@ -692,11 +700,24 @@ function connectPoseStream() {
       worldControlType = root.lookupType("gz.msgs.WorldControl");
       booleanType = root.lookupType("gz.msgs.Boolean");
       cmdVelType = root.lookupType("gz.msgs.Twist");
-      // Looked up now but only subscribed to once point-cloud-view is turned
-      // on -- a 640x360 depth stream is not worth the bandwidth otherwise.
       pointCloudType = root.lookupType("gz.msgs.PointCloudPacked");
       socket.send(`sub,${poseTopic},,`);
       socket.send(`sub,${cmdVelTopic},,`);
+      // Subscribed here rather than when point-cloud-view is toggled, because
+      // the secondary viewport shows the cloud all the time now.  It is a
+      // 640x360 stream at ~5 MB a frame, which is the price of that viewport
+      // being useful without being armed first.
+      socket.send(`sub,${pointCloudTopic},,`);
+      pointCloudSubscribed = true;
+      pointCloudSilenceTimer = setTimeout(() => {
+        if (pointCloudFrames === 0) {
+          const why =
+            "No point cloud on " + pointCloudTopic +
+            " -- relaunch the simulation with sensors:=true";
+          cloudView.setHint(why);
+          status.textContent = why;
+        }
+      }, POINT_CLOUD_SILENCE_MS);
       // Only worth doing where something varies.  The speed course has no
       // buckets or hoops, and sampling a layout it does not have would open a
       // connection every few seconds to learn nothing.
@@ -737,8 +758,18 @@ function connectPoseStream() {
       updateCommandedSteering(cmdVelType.decode(message.payload));
       return;
     }
-    if (message.topic === pointCloudTopic && pointCloudViewEnabled) {
-      pointCloud.update(pointCloudType.decode(message.payload));
+    if (message.topic === pointCloudTopic) {
+      // Decoded ONCE and handed to both views: at ~5 MB a frame, decoding it
+      // twice is the most expensive thing this page could do per message.
+      const cloud = pointCloudType.decode(message.payload);
+      if (pointCloudFrames === 0) {
+        clearTimeout(pointCloudSilenceTimer);
+      }
+      pointCloudFrames += 1;
+      cloudView.update(cloud);
+      if (pointCloudViewEnabled) {
+        pointCloud.update(cloud);
+      }
     }
   });
 }

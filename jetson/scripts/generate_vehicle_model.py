@@ -94,11 +94,16 @@ def build_model(vehicle, spawn_pose):
 
     left = abs(float(value_of(vehicle, "steering.max_angle_left")))
     right = abs(float(value_of(vehicle, "steering.max_angle_right")))
-    # The joint limit has to admit the larger lock or the wider side is clipped;
-    # the plugin's steering_limit is what scales a command, so it takes the
-    # smaller, which is the angle the car can actually reach on both sides.
+    # BOTH take the larger lock.  The plugin's steering_limit is a SYMMETRIC
+    # clamp, so it cannot express this car's 34% asymmetry -- but the asymmetry
+    # is already carried by sim_vehicle_node, which interpolates the measured
+    # command -> angle table and hands Gazebo the resulting yaw rate.  Taking
+    # the smaller lock here therefore does not model the narrower side, it
+    # truncates a command the runtime has already sized correctly: measured on
+    # the simulated car, 0.80 and 1.00 of left command produced the identical
+    # 0.90 m radius because everything past 0.78 was being clipped away.
     joint_limit = max(left, right)
-    steering_limit = min(left, right)
+    steering_limit = max(left, right)
 
     # Front and rear are different shocks on different springs (GTR long on
     # #7444 at the front, XX-long on #7446 at the rear), so they are two

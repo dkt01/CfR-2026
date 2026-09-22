@@ -16,9 +16,20 @@
 // consistent with the cloud arriving pre-rotated into that same frame.
 //
 // "gz.msgs.PointCloudPacked" is decoded generically off whatever field
-// layout the message itself declares (see decodeFields), the same way a ROS
-// PointCloud2 would be, rather than assuming fixed byte offsets: the field
-// list is small and this only runs a few times a second.
+// layout the message itself declares, rather than assuming fixed byte
+// offsets: the field list is small and this only runs a few times a second.
+//
+// It is NOT decoded "the same way a ROS PointCloud2 would be", which is what
+// this comment used to claim and what readScalar used to do.  The two
+// messages look alike and their datatype enums are OFF BY ONE -- see
+// readScalar.  Reading a gz cloud with ROS numbering is silent and total:
+// every field here declares FLOAT32, which is 6 in gz, and 6 is UINT32 in
+// ROS, so the float bits get read as integers.  The sky's +Inf returns
+// (0x7F800000) then decode as the finite integer 2139095040 instead of
+// Infinity, so the non-finite guard below does not drop them, 230k points
+// land 2.1 billion metres away, and the real cloud is invisible inside a
+// bounding sphere that size.  RViz is unaffected because it reads the
+// ros_gz_bridge output, and the bridge renumbers the enum on the way past.
 
 import * as THREE from "three";
 
@@ -26,17 +37,26 @@ const CAMERA_OFFSET = { x: 0.315, y: 0, z: 0.20 };
 const POINT_SIZE = 0.03;
 const DEFAULT_COLOR = new THREE.Color(0x2596d8);
 
+// gz.msgs.PointCloudPacked.Field.DataType, which counts from ZERO:
+//
+//   INT8=0 UINT8=1 INT16=2 UINT16=3 INT32=4 UINT32=5 FLOAT32=6 FLOAT64=7
+//
+// sensor_msgs/PointField counts from one (INT8=1 ... FLOAT32=7, FLOAT64=8).
+// This decodes the raw gz message off the websocket, so it is the gz enum
+// that applies.  Unknown values return NaN rather than 0, so a schema this
+// does not understand drops its points at the finite check instead of piling
+// them all on the origin.
 function readScalar(view, offset, datatype, littleEndian) {
   switch (datatype) {
-    case 1: return view.getInt8(offset);
-    case 2: return view.getUint8(offset);
-    case 3: return view.getInt16(offset, littleEndian);
-    case 4: return view.getUint16(offset, littleEndian);
-    case 5: return view.getInt32(offset, littleEndian);
-    case 6: return view.getUint32(offset, littleEndian);
-    case 7: return view.getFloat32(offset, littleEndian);
-    case 8: return view.getFloat64(offset, littleEndian);
-    default: return 0;
+    case 0: return view.getInt8(offset);
+    case 1: return view.getUint8(offset);
+    case 2: return view.getInt16(offset, littleEndian);
+    case 3: return view.getUint16(offset, littleEndian);
+    case 4: return view.getInt32(offset, littleEndian);
+    case 5: return view.getUint32(offset, littleEndian);
+    case 6: return view.getFloat32(offset, littleEndian);
+    case 7: return view.getFloat64(offset, littleEndian);
+    default: return NaN;
   }
 }
 
