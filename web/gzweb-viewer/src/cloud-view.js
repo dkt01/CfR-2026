@@ -16,6 +16,12 @@
 // Its own renderer and its own requestAnimationFrame loop, deliberately:
 // gzweb's AssetViewer owns the main canvas and its render loop, and borrowing
 // them would couple this to the internals of a dependency.
+//
+// That loop draws on demand rather than every vsync.  Nothing in this scene
+// moves on its own -- the camera is fixed, the car is a static likeness, and
+// the only thing that ever changes is the cloud, which arrives at about 4 Hz.
+// Redrawing 150k points 60 times a second to show 56 identical frames in a
+// row was most of this page's GPU time.
 
 import * as THREE from "three";
 
@@ -33,7 +39,7 @@ const BACKGROUND = 0x11191d;
 
 export function createCloudView(container) {
   if (!container) {
-    return { update() {}, dispose() {} };
+    return { draw() {}, frames: 0, setHint() {}, dispose() {} };
   }
 
   const scene = new THREE.Scene();
@@ -105,6 +111,8 @@ export function createCloudView(container) {
   hint.textContent = "waiting for the ZED point cloud";
   container.appendChild(hint);
 
+  let needsRender = true;
+
   function resize() {
     const width = container.clientWidth;
     const height = container.clientHeight;
@@ -114,6 +122,7 @@ export function createCloudView(container) {
     renderer.setSize(width, height, false);
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
+    needsRender = true;
   }
   resize();
   const observer = new ResizeObserver(resize);
@@ -124,14 +133,20 @@ export function createCloudView(container) {
     if (!running) {
       return;
     }
-    renderer.render(scene, camera);
     requestAnimationFrame(tick);
+    if (!needsRender) {
+      return;
+    }
+    needsRender = false;
+    renderer.render(scene, camera);
   }
   tick();
 
   return {
-    update(message) {
-      cloud.update(message);
+    /** Draw the decoder's current frame; see createCloudBuffers. */
+    draw(buffers) {
+      cloud.draw(buffers);
+      needsRender = true;
       if (frames === 0) {
         hint.remove();
       }

@@ -4,7 +4,7 @@ import * as THREE from "three";
 import { createSpeedometer } from "./speedometer.js";
 import { createSteeringDial, WHEELBASE, MIN_SPEED_FOR_STEERING } from "./steering-dial.js";
 import { createCloudView } from "./cloud-view.js";
-import { createPointCloud } from "./pointcloud.js";
+import { createCloudBuffers, createPointCloud } from "./pointcloud.js";
 import "./style.css";
 
 const status = document.querySelector("#viewer-status");
@@ -91,6 +91,9 @@ const positionInputs = [
 const speedometer = createSpeedometer(document.querySelector("#speedometer"));
 const steeringDial = createSteeringDial(document.querySelector("#steering-dial"));
 const pointCloud = createPointCloud();
+// One decode per message, shared by both views: the frame is ~5.5 MB and
+// 230400 points, and each view only wraps BufferAttributes over these arrays.
+const cloudBuffers = createCloudBuffers();
 // The always-on secondary viewport.  It has its own cloud instance and its own
 // renderer; see cloud-view.js.
 const cloudView = createCloudView(document.querySelector("#cloud-view"));
@@ -353,6 +356,12 @@ function ancestorChain(node, root) {
 function setPointCloudView(enabled) {
   pointCloudViewEnabled = enabled;
   pointCloud.object3D.visible = enabled;
+  // Frames only go into this view while it is visible, so on the way in it
+  // still holds whatever was current when it was last switched off -- catch
+  // it up rather than showing a stale cloud until the next message lands.
+  if (enabled && cloudBuffers.count > 0) {
+    pointCloud.draw(cloudBuffers);
+  }
   const scene = viewer["scene"];
   const slash = scene?.getByName("slash");
   const root = scene?.scene;
@@ -759,16 +768,23 @@ function connectPoseStream() {
       return;
     }
     if (message.topic === pointCloudTopic) {
-      // Decoded ONCE and handed to both views: at ~5 MB a frame, decoding it
-      // twice is the most expensive thing this page could do per message.
+      // Unpacked ONCE and handed to both views: at ~5 MB and 230400 points a
+      // frame, doing it twice is the most expensive thing this page could do
+      // per message.  Both the protobuf decode and the point unpack happen
+      // here; the views only wrap attributes over the result.
       const cloud = pointCloudType.decode(message.payload);
+      if (!cloudBuffers.ingest(cloud)) {
+        return;
+      }
       if (pointCloudFrames === 0) {
         clearTimeout(pointCloudSilenceTimer);
       }
       pointCloudFrames += 1;
-      cloudView.update(cloud);
+      cloudView.draw(cloudBuffers);
+      // The main view's copy is only refreshed while it is actually on
+      // screen; setPointCloudView draws the latest frame on the way in.
       if (pointCloudViewEnabled) {
-        pointCloud.update(cloud);
+        pointCloud.draw(cloudBuffers);
       }
     }
   });
@@ -823,6 +839,7 @@ document.querySelector("#reset-view").addEventListener("click", () => {
   showCourseOverview();
 });
 resetRobotButton.addEventListener("click", resetRobot);
+signalButton.addEventListener("click", toggleStartSignal);
 pointCloudButton.addEventListener("click", () => {
   setPointCloudView(!pointCloudViewEnabled);
   pointCloudButton.textContent = pointCloudViewEnabled ? "Show full scene" : "Point cloud only";

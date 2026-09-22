@@ -96,8 +96,18 @@ def spin(node, seconds):
         rclpy.spin_once(node, timeout_sec=0.02)
 
 
-def one(node, x, y, speed, cmd, settle, hold):
-    """Accelerate straight, then hold a constant lock.  Returns (a_y, roll)."""
+def one(node, x, y, speed, cmd, settle, hold, reversal=0.0):
+    """Accelerate straight, then steer.  Returns (a_y, max roll, v).
+
+    With `reversal` > 0 the lock is held for that long and then swung to the
+    OPPOSITE lock in a single tick.  That is the manoeuvre this course forces
+    at station 103->107, where curvature goes from +0.659 to -0.630 in four
+    metres, and it is the one that rolls cars: a steady corner settles into
+    one load transfer, a reversal stacks the second one on top of a body that
+    is still rolling back from the first.  Vehicle certification calls it the
+    fishhook test, and measuring only the steady case -- which is what the
+    first version of this file did -- misses it completely.
+    """
     teleport(x, y, 0.0)
     node.steer, node.speed, node.recording, node.samples = 0.0, 0.0, False, []
     spin(node, 1.0)
@@ -106,7 +116,12 @@ def one(node, x, y, speed, cmd, settle, hold):
 
     node.recording, node.samples = True, []
     node.steer = cmd
-    spin(node, hold)
+    if reversal > 0.0:
+        spin(node, reversal)
+        node.steer = -cmd                   # THE REVERSAL
+        spin(node, hold)
+    else:
+        spin(node, hold)
     node.recording = False
     node.steer, node.speed = 0.0, 0.0
     spin(node, 0.5)
@@ -139,6 +154,9 @@ def main():
                     default=[2.0, 2.5, 3.0, 3.5, 4.0, 4.5])
     ap.add_argument("--cmd", type=float, default=-1.0,
                     help="steering command to hold (default full right lock)")
+    ap.add_argument("--reversal", type=float, default=0.0,
+                    help="hold the lock this long, then swing to the opposite "
+                         "lock in one tick (0 = steady lock, the old test)")
     args = ap.parse_args()
 
     yaml.safe_load((HERE / "config.yaml").read_text())
@@ -155,11 +173,14 @@ def main():
             f"  Refusing to POST to port {TELEPORT_PORT}: that endpoint is not\n"
             "  domain-scoped, so it may belong to a different simulation.")
 
-    print(f"\n  constant lock {args.cmd:+.2f}, increasing speed\n")
+    what = (f"lock {args.cmd:+.2f} for {args.reversal:.2f}s then REVERSED"
+            if args.reversal > 0 else f"constant lock {args.cmd:+.2f}")
+    print(f"\n  {what}, increasing speed\n")
     print(f"  {'speed':>6} {'achieved v':>11} {'lat accel':>11} {'max roll':>10}")
     rolled_at = None
     for speed in args.speeds:
-        got = one(node, args.x, args.y, speed, args.cmd, args.settle, args.hold)
+        got = one(node, args.x, args.y, speed, args.cmd, args.settle,
+                  args.hold, args.reversal)
         if got is None:
             print(f"  {speed:6.2f}   too few samples, skipped")
             continue
