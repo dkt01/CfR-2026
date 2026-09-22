@@ -48,6 +48,8 @@ jobs:
 
   arduino-build:
     name: Build Arduino firmware
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
 
     steps:
