@@ -68,6 +68,9 @@ jobs:
 
   viewer-build:
     name: Build browser viewer
+    # Checkout and the npm registry are all this job reaches for.
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
 
     steps:
