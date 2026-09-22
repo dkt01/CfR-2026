@@ -24,6 +24,23 @@ startup: gzweb 3.0.2 cannot load a binary STL over HTTP and says nothing when
 it fails, so without it every mesh silently goes missing and only the
 collision primitives are drawn. The comment there has the details.
 
+## Dependency overrides
+
+gzweb 3.0.2 is the latest release and still asks for `protobufjs` 6,
+`fast-xml-parser` 4 and `three-nebula` 10, all three of which carry published
+advisories -- protobufjs 6 a critical one. Its bundle leaves those imports
+external rather than inlining them, so the `overrides` block in
+`package.json` is enough to make it resolve the patched majors instead:
+
+| Package | gzweb asks for | We resolve |
+| --- | --- | --- |
+| `protobufjs` | `^6.11.3` | `^7.6.6`, the same copy `src/main.js` already used |
+| `fast-xml-parser` | `^4.1.3` | `^5.11.1`, parses both world files byte-identically |
+| `three-nebula` | `^10.0.3` | `^11.1.2`, which dropped the vulnerable `uuid` dependency outright |
+
+Drop the whole block once gzweb bumps these itself; until then removing it
+brings the advisories back.
+
 ## Run
 
 In environment with [nvm](https://github.com/nvm-sh/nvm) installed:
