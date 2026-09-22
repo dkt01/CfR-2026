@@ -65,3 +65,29 @@ jobs:
 
       - name: Compile Arduino Uno firmware
         run: arduino-cli compile --fqbn arduino:avr:uno src/arduino_rcm
+
+  viewer-build:
+    name: Build browser viewer
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          # gzweb 3 asks for Node 24, same as web/gzweb-viewer/README.md.
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/gzweb-viewer/package-lock.json
+
+      # npm ci rather than npm install, so a package.json the lockfile has
+      # drifted from fails here instead of resolving to something nobody has
+      # built against.
+      - name: Install viewer dependencies
+        working-directory: web/gzweb-viewer
+        run: npm ci
+
+      - name: Build the viewer
+        working-directory: web/gzweb-viewer
+        run: npm run build
