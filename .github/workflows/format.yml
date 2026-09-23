@@ -18,13 +18,17 @@ jobs:
 
     steps:
       - name: 'PR commits + 1'
-        run: echo "PR_FETCH_DEPTH=$(( ${{ github.event.pull_request.commits }} + 1 ))" >> "${GITHUB_ENV}"
+        env:
+          PR_COMMITS: ${{ github.event.pull_request.commits }}
+        run: echo "PR_FETCH_DEPTH=$(( PR_COMMITS + 1 ))" >> "${GITHUB_ENV}"
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: ${{ env.PR_FETCH_DEPTH }}
       - name: 'Fetch the other branch with enough history for a common merge-base commit'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          git fetch origin ${{ github.event.pull_request.base.sha }}
+          git fetch origin "${BASE_SHA}"
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
