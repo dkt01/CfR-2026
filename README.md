@@ -4,6 +4,12 @@ The Command for Racing team repository for the 2026 Cat Technology DIY Robot Cha
 ## Commissioning
 
 * XBee setup and pairing the two modules is covered in this [SparkFun Guide](https://learn.sparkfun.com/tutorials/xbee-shield-hookup-guide)
+* Course E-Stop on the laptop-side XBee (used by `src/rpi_rc_estop/estop_tui.py`):
+  * Wire the E-Stop RJ-45 to the XBee Pro S1 as in [circuit-xbee.svg](src/rpi_rc_estop/circuit-xbee.svg): pins 1-2 to GND (pin 10), pins 3-4 to DIO1 (pin 19), pins 5-8 to DIO0 (pin 20).  The XBee is a 3.3 V part; do not connect anything to the RJ-45 pins except these three nets.
+  * In XCTU, on the **laptop-side** module only, set `D0` = `3` (Digital input), `D1` = `3` (Digital input) and confirm `PR` = `FF` (internal pull-ups on, the default), then click **Write**.  The loop closing to GND and the cable-sense pair both rely on those pull-ups, so no external resistors are needed.
+  * The module must already be in escaped API mode (`AP` = `2`) as the TUI requires.  The TUI polls the pins with the local `IS` AT command at 20 Hz; no `IR`, `IC` or `DH`/`DL` changes are needed.
+  * Until `D0`/`D1` are configured the TUI treats the physical E-Stop as asserted, so a missing step fails safe rather than silently ignoring the course E-Stop.
+  * The TUI sends E-Stop if the software E-Stop **or** the physical E-Stop is set.  The physical E-Stop is asserted when the loop is open, the cable is unplugged, or the XBee stops answering.  The `` ` `` key overrides only the physical E-Stop, for bench use without the course cable; the software E-Stop (space / `c`, and controller loss) is never overridden.
 
 ## Run Modes
 
