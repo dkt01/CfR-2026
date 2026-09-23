@@ -22,8 +22,6 @@ from pathlib import Path
 
 import numpy as np
 
-import observation as obs_mod
-
 
 def main():
     ap = argparse.ArgumentParser()
@@ -36,7 +34,9 @@ def main():
 
     model = PPO.load(args.checkpoint, device="cpu")
     layers = []
-    for module in list(model.policy.mlp_extractor.policy_net) + [model.policy.action_net]:
+    for module in list(model.policy.mlp_extractor.policy_net) + [
+        model.policy.action_net
+    ]:
         if isinstance(module, torch.nn.Linear):
             layers.append(module)
     if not layers:
@@ -59,9 +59,12 @@ def main():
     out = args.out or args.checkpoint.with_suffix(".npz")
     np.savez(out, **blob)
     shape = " -> ".join(
-        [str(blob["w0"].shape[0])] + [str(blob[f"w{i}"].shape[1]) for i in range(len(layers))]
+        [str(blob["w0"].shape[0])]
+        + [str(blob[f"w{i}"].shape[1]) for i in range(len(layers))]
     )
-    print(f"wrote {out}  ({shape}, {sum(b.size for b in blob.values() if hasattr(b, 'size')):,} parameters)")
+    print(
+        f"wrote {out}  ({shape}, {sum(b.size for b in blob.values() if hasattr(b, 'size')):,} parameters)"
+    )
 
     # Prove the export before anyone drives it: the numpy path and torch must
     # agree on the same random observations.

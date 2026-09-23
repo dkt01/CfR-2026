@@ -101,16 +101,29 @@ def rollout(env, predict, episodes):
 
 def summarise(records):
     if not records:
-        return dict(ret=-1e9, finish=0.0, time=float("nan"), clearance=0.0,
-                    overspeed=0.0, cte=float("nan"), max_cte=float("nan"),
-                    jerk=float("nan"), gain=float("nan"), stop=0.0, n=0)
+        return dict(
+            ret=-1e9,
+            finish=0.0,
+            time=float("nan"),
+            clearance=0.0,
+            overspeed=0.0,
+            cte=float("nan"),
+            max_cte=float("nan"),
+            jerk=float("nan"),
+            gain=float("nan"),
+            stop=0.0,
+            n=0,
+        )
     # `stopped` is the run the brief actually asks for: two laps AND at rest.
     # `finished` alone is the car crossing the line still doing 5 m/s, which
     # on a course with no run-off is not a completed run.
     finished = [r for r in records if r["stopped"]]
     times = [r["race_time"] for r in finished]
-    gains = [r["last_lap"] - r["best_lap"] for r in finished
-             if r["last_lap"] > 0 and np.isfinite(r["best_lap"])]
+    gains = [
+        r["last_lap"] - r["best_lap"]
+        for r in finished
+        if r["last_lap"] > 0 and np.isfinite(r["best_lap"])
+    ]
     return dict(
         # MEAN EPISODE RETURN is what picks the best model, not finish rate.
         # Finish-rate-first selection silently re-imposes a priority the
@@ -137,7 +150,8 @@ def summarise(records):
         # lap time", after the fact.
         gain=float(np.mean(gains)) if gains else 0.0,
         stop=float(np.mean([r["stop_distance"] for r in finished]))
-             if finished else float("nan"),
+        if finished
+        else float("nan"),
         n=len(records),
     )
 
@@ -160,7 +174,7 @@ def make_eval_envs(cfg, track, n=64):
     nominal = FormulaOneEnv(cfg, track, n, seed=10_001, deterministic=True)
     nominal.random_start = False
     field = FormulaOneEnv(cfg, track, n, seed=10_002, deterministic=False)
-    field.random_start = False   # a real run starts on the grid
+    field.random_start = False  # a real run starts on the grid
     return nominal, field
 
 
@@ -169,8 +183,12 @@ def main():
     ap.add_argument("--dir", type=Path, default=HERE / "runs/v1")
     ap.add_argument("--steps", type=int, default=None)
     ap.add_argument("--resume", type=Path, default=None)
-    ap.add_argument("--eval-every", type=int, default=None,
-                    help="steps between evaluations; default from config")
+    ap.add_argument(
+        "--eval-every",
+        type=int,
+        default=None,
+        help="steps between evaluations; default from config",
+    )
     ap.add_argument("--config", type=Path, default=HERE / "config.yaml")
     args = ap.parse_args()
 
@@ -201,8 +219,9 @@ def main():
         verbose=1,
         seed=int(tcfg["seed"]),
         device="cpu",
-        policy_kwargs=dict(net_arch=list(tcfg["net_arch"]),
-                           log_std_init=float(tcfg["log_std_init"])),
+        policy_kwargs=dict(
+            net_arch=list(tcfg["net_arch"]), log_std_init=float(tcfg["log_std_init"])
+        ),
     )
     if args.resume:
         model = PPO.load(args.resume, env=train_env, device="cpu")
@@ -241,13 +260,19 @@ def main():
 
         nom = summarise(rollout(nominal, predict, 64))
         fld = summarise(rollout(field, predict, 256))
-        history.append(dict(steps=int(model.num_timesteps), wall=time.time() - started,
-                            nominal=nom, field=fld))
+        history.append(
+            dict(
+                steps=int(model.num_timesteps),
+                wall=time.time() - started,
+                nominal=nom,
+                field=fld,
+            )
+        )
         (args.dir / "history.json").write_text(json.dumps(history, indent=1))
         print(
             f"  [{label}] "
-            f"nominal {100*nom['finish']:3.0f}% {nom['time']:6.2f}s | "
-            f"field {100*fld['finish']:3.0f}% {fld['time']:6.2f}s "
+            f"nominal {100 * nom['finish']:3.0f}% {nom['time']:6.2f}s | "
+            f"field {100 * fld['finish']:3.0f}% {fld['time']:6.2f}s "
             f"ret {fld['ret']:7.1f} | "
             f"clearance {fld['clearance']:+.3f} m over {fld['overspeed']:+.2f} m/s"
         )
@@ -284,7 +309,7 @@ def main():
             if self.num_timesteps < self.next_at:
                 return True
             self.next_at += self.every
-            evaluate_now(self.model, f"{self.num_timesteps/1e6:5.2f}M")
+            evaluate_now(self.model, f"{self.num_timesteps / 1e6:5.2f}M")
             return True
 
     every = args.eval_every or int(tcfg["eval_every_steps"])
@@ -292,14 +317,19 @@ def main():
     print(f"training {total:,} steps in {args.dir}, evaluating every {every:,}")
     if callable(sched):
         print(f"  learning rate {sched(1.0):.2e} -> {sched(0.0):.2e}, linear")
-    model.learn(total_timesteps=total, callback=Evaluate(every),
-                reset_num_timesteps=args.resume is None)
+    model.learn(
+        total_timesteps=total,
+        callback=Evaluate(every),
+        reset_num_timesteps=args.resume is None,
+    )
     # Always score the finished model, so a run shorter than one eval interval
     # still leaves a best_model.zip behind rather than an empty directory.
     evaluate_now(model, "final")
-    print(f"\ndone in {(time.time()-started)/60:.1f} min. "
-          f"Best field return {best[0]:.1f}: {100*best[1]:.0f}% at {best[2]:.2f} s.\n"
-          f"Export it:  python3 export_policy.py {args.dir/'best_model.zip'}")
+    print(
+        f"\ndone in {(time.time() - started) / 60:.1f} min. "
+        f"Best field return {best[0]:.1f}: {100 * best[1]:.0f}% at {best[2]:.2f} s.\n"
+        f"Export it:  python3 export_policy.py {args.dir / 'best_model.zip'}"
+    )
 
 
 if __name__ == "__main__":

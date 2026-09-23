@@ -37,7 +37,6 @@ import argparse
 import json
 import math
 import os
-import sys
 import time
 import urllib.request
 from pathlib import Path
@@ -58,13 +57,14 @@ HERE = Path(__file__).resolve().parent
 TELEPORT_PORT = int(os.environ.get("CFR_TELEPORT_PORT", "9003"))
 TELEPORT = f"http://127.0.0.1:{TELEPORT_PORT}/api/sim/teleport"
 
-TICK = 0.02   # s, command publish period (matches measure_turn_radius.py)
+TICK = 0.02  # s, command publish period (matches measure_turn_radius.py)
 
 
 def teleport(x, y, heading):
     body = json.dumps({"x": x, "y": y, "heading": heading}).encode()
-    req = urllib.request.Request(TELEPORT, data=body,
-                                 headers={"Content-Type": "application/json"})
+    req = urllib.request.Request(
+        TELEPORT, data=body, headers={"Content-Type": "application/json"}
+    )
     with urllib.request.urlopen(req, timeout=5) as r:
         return json.loads(r.read())
 
@@ -78,13 +78,15 @@ def yaw_of(msg):
 class Driver(Node):
     def __init__(self):
         super().__init__("measure_step_steer")
-        self.pub = self.create_publisher(DriveCommand, "/drive_cmd",
-                                         qos_profile_sensor_data)
-        self.samples = []   # (t_wall, yaw)
+        self.pub = self.create_publisher(
+            DriveCommand, "/drive_cmd", qos_profile_sensor_data
+        )
+        self.samples = []  # (t_wall, yaw)
         self.recording = False
         self.t0 = None
-        self.create_subscription(PoseStamped, "/zed/zed_node/pose", self.on_pose,
-                                 qos_profile_sensor_data)
+        self.create_subscription(
+            PoseStamped, "/zed/zed_node/pose", self.on_pose, qos_profile_sensor_data
+        )
         self.steer = 0.0
         self.speed = 0.0
         self.create_timer(TICK, self.tick)
@@ -120,7 +122,7 @@ def smoothed_rate(t, yaw, dt_grid=0.01, win_s=0.15, poly=3):
     t_grid = np.arange(t[0], t[-1], dt_grid)
     yaw_grid = np.interp(t_grid, t, yaw)
     win = int(win_s / dt_grid)
-    win += 1 - (win % 2)   # savgol needs an odd window
+    win += 1 - (win % 2)  # savgol needs an odd window
     win = max(win, poly + 2 + (poly + 2) % 2 + 1)
     rate = savgol_filter(yaw_grid, win, poly, deriv=1, delta=dt_grid)
     return t_grid, rate
@@ -135,8 +137,9 @@ def crossing_time(t, rate, frac, steady):
         idx = np.argmax(rate >= target)
     else:
         idx = np.argmax(rate <= target)
-    if idx == 0 and not ((steady >= 0 and rate[0] >= target) or
-                          (steady < 0 and rate[0] <= target)):
+    if idx == 0 and not (
+        (steady >= 0 and rate[0] >= target) or (steady < 0 and rate[0] <= target)
+    ):
         return float("nan")
     if idx == 0:
         return t[0]
@@ -158,8 +161,13 @@ def model_trace(cfg, speed, step_command, t_pre, t_post):
     """
     flat = {**cfg, "randomize": {**cfg["randomize"], "enabled": False}}
     plant = Plant(flat, 1, np.random.default_rng(0))
-    plant.reset(np.array([True]), np.array([0.0]), np.array([0.0]),
-                np.array([0.0]), np.array([speed]))
+    plant.reset(
+        np.array([True]),
+        np.array([0.0]),
+        np.array([0.0]),
+        np.array([0.0]),
+        np.array([speed]),
+    )
     dt = plant.dt_sub
     n_pre = int(round(t_pre / dt))
     n_post = int(round(t_post / dt))
@@ -181,12 +189,12 @@ def run_one(node, cfg, x, y, speed, step_command, settle, pre, post):
     node.steer, node.speed, node.recording, node.samples = 0.0, 0.0, False, []
     spin(node, 1.0)
     node.steer, node.speed = 0.0, speed
-    spin(node, settle)                    # up to speed, straight, steer settled at 0
+    spin(node, settle)  # up to speed, straight, steer settled at 0
 
     node.recording, node.samples = True, []
-    spin(node, pre)                       # baseline, steer still 0
+    spin(node, pre)  # baseline, steer still 0
     step_t = time.time()
-    node.steer = step_command             # THE STEP
+    node.steer = step_command  # THE STEP
     spin(node, post)
     node.recording = False
     node.steer, node.speed = 0.0, 0.0
@@ -205,19 +213,28 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--x", type=float, default=20.0)
     ap.add_argument("--y", type=float, default=-14.0)
-    ap.add_argument("--speed", type=float, default=2.5,
-                    help="hairpin approach speed, m/s")
+    ap.add_argument(
+        "--speed", type=float, default=2.5, help="hairpin approach speed, m/s"
+    )
     ap.add_argument("--settle", type=float, default=3.0)
     ap.add_argument("--pre", type=float, default=0.5)
     ap.add_argument("--post", type=float, default=2.0)
-    ap.add_argument("--commands", type=float, nargs="+",
-                     default=[1.0, -1.0, 0.55, -0.55],
-                     help="steering commands to step to (0.55 ~= the "
-                          "tightest hairpin's required angle)")
-    ap.add_argument("--save", type=Path, default=None,
-                    help="write the raw (t, yaw) traces to an .npz, so a lag "
-                         "model can be FITTED to them offline instead of "
-                         "eyeballed off the table below")
+    ap.add_argument(
+        "--commands",
+        type=float,
+        nargs="+",
+        default=[1.0, -1.0, 0.55, -0.55],
+        help="steering commands to step to (0.55 ~= the "
+        "tightest hairpin's required angle)",
+    )
+    ap.add_argument(
+        "--save",
+        type=Path,
+        default=None,
+        help="write the raw (t, yaw) traces to an .npz, so a lag "
+        "model can be FITTED to them offline instead of "
+        "eyeballed off the table below",
+    )
     args = ap.parse_args()
 
     cfg = yaml.safe_load((HERE / "config.yaml").read_text())
@@ -225,8 +242,11 @@ def main():
     rclpy.init()
     node = Driver()
 
-    print(f"  checking for a simulator on ROS_DOMAIN_ID="
-          f"{os.environ.get('ROS_DOMAIN_ID', '0')} ...", flush=True)
+    print(
+        f"  checking for a simulator on ROS_DOMAIN_ID="
+        f"{os.environ.get('ROS_DOMAIN_ID', '0')} ...",
+        flush=True,
+    )
     node.recording, node.samples = True, []
     spin(node, 4.0)
     seen, node.samples, node.recording = list(node.samples), [], False
@@ -240,13 +260,19 @@ def main():
             "  Start the sim on this domain first (./validate.sh ...)."
         )
 
-    print(f"\n  step-steer @ {args.speed:.2f} m/s, TICK={TICK*1000:.0f} ms command rate\n")
+    print(
+        f"\n  step-steer @ {args.speed:.2f} m/s, TICK={TICK * 1000:.0f} ms command rate\n"
+    )
     results = []
-    raw = {"speed": np.array(args.speed), "pre": np.array(args.pre),
-           "post": np.array(args.post)}
+    raw = {
+        "speed": np.array(args.speed),
+        "pre": np.array(args.pre),
+        "post": np.array(args.post),
+    }
     for cmd in args.commands:
-        got = run_one(node, cfg, args.x, args.y, args.speed, cmd,
-                      args.settle, args.pre, args.post)
+        got = run_one(
+            node, cfg, args.x, args.y, args.speed, cmd, args.settle, args.pre, args.post
+        )
         if got is None:
             print(f"  cmd {cmd:+.2f}   too few samples, skipped")
             continue
@@ -258,22 +284,27 @@ def main():
         tg_m, rate_m = model_trace(cfg, args.speed, cmd, args.pre, args.post)
         rate_m_on_grid = np.interp(tg_r, tg_m, rate_m)
 
-        mask_ss = tg_r > (args.post - 0.4)   # last 0.4s = steady state
+        mask_ss = tg_r > (args.post - 0.4)  # last 0.4s = steady state
         ss_r = np.mean(rate_r[mask_ss])
         ss_m = np.mean(rate_m_on_grid[mask_ss])
         ss_ratio = ss_r / ss_m if abs(ss_m) > 1e-6 else float("nan")
 
-        print(f"  cmd {cmd:+.2f}   steady yaw rate  gazebo {ss_r:+.3f}  "
-              f"model {ss_m:+.3f} rad/s   ratio {ss_ratio:.3f}")
+        print(
+            f"  cmd {cmd:+.2f}   steady yaw rate  gazebo {ss_r:+.3f}  "
+            f"model {ss_m:+.3f} rad/s   ratio {ss_ratio:.3f}"
+        )
         for frac in (0.2, 0.5):
             tc_r = crossing_time(tg_r, rate_r, frac, ss_r)
             tc_m = crossing_time(tg_m, rate_m, frac, ss_m)
-            extra = tc_r - tc_m if np.isfinite(tc_r) and np.isfinite(tc_m) else float("nan")
-            print(f"    time to {frac*100:.0f}% of steady:  gazebo {tc_r:.3f}s  "
-                  f"model {tc_m:.3f}s   EXTRA DELAY {extra:+.3f}s")
+            extra = (
+                tc_r - tc_m if np.isfinite(tc_r) and np.isfinite(tc_m) else float("nan")
+            )
+            print(
+                f"    time to {frac * 100:.0f}% of steady:  gazebo {tc_r:.3f}s  "
+                f"model {tc_m:.3f}s   EXTRA DELAY {extra:+.3f}s"
+            )
         print(f"    {'t (s)':>7} {'gazebo':>9} {'model':>9} {'ratio':>7}")
-        checkpoints = [0.05, 0.10, 0.15, 0.20, 0.30, 0.50, 0.75, 1.00,
-                       args.post - 0.2]
+        checkpoints = [0.05, 0.10, 0.15, 0.20, 0.30, 0.50, 0.75, 1.00, args.post - 0.2]
         row = []
         for tc in checkpoints:
             if tc <= 0 or tc >= tg_r[-1]:
@@ -296,21 +327,26 @@ def main():
     if not results:
         return
     print("  --- summary ---")
-    print(f"  steady-state ratio (this run):    "
-          f"{np.mean([r[1] for r in results]):.3f}  "
-          f"(measure_turn_radius.py found ~1.10 median)")
+    print(
+        f"  steady-state ratio (this run):    "
+        f"{np.mean([r[1] for r in results]):.3f}  "
+        f"(measure_turn_radius.py found ~1.10 median)"
+    )
     early_ratios = []
     for cmd, ss_ratio, row in results:
         for tc, gr, mr, ratio in row:
             if tc <= 0.20 and np.isfinite(ratio):
                 early_ratios.append(ratio)
     if early_ratios:
-        print(f"  turn-in ratio (t<=0.20s, this run): "
-              f"{np.mean(early_ratios):.3f}")
-        print("  turn-in >> steady-state  ==>  extra transient understeer, "
-              "tire_scrub undercorrects turn-in")
-        print("  turn-in ~= steady-state  ==>  scrub already explains "
-              "turn-in; the Gazebo regression has some other cause")
+        print(f"  turn-in ratio (t<=0.20s, this run): {np.mean(early_ratios):.3f}")
+        print(
+            "  turn-in >> steady-state  ==>  extra transient understeer, "
+            "tire_scrub undercorrects turn-in"
+        )
+        print(
+            "  turn-in ~= steady-state  ==>  scrub already explains "
+            "turn-in; the Gazebo regression has some other cause"
+        )
 
 
 if __name__ == "__main__":

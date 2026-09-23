@@ -49,9 +49,21 @@ ROOT = HERE.parents[1]
 
 # Per-car quantities worth correlating against.  Plant draws plus the sensor
 # draws the env holds itself.
-PLANT_KEYS = ("dead_time", "coast_f0", "accel", "slew", "understeer",
-              "tire_scrub", "steer_gain", "steer_asym", "steer_offset",
-              "steer_limit", "dropout", "yaw_tau", "steer_tau")
+PLANT_KEYS = (
+    "dead_time",
+    "coast_f0",
+    "accel",
+    "slew",
+    "understeer",
+    "tire_scrub",
+    "steer_gain",
+    "steer_asym",
+    "steer_offset",
+    "steer_limit",
+    "dropout",
+    "yaw_tau",
+    "steer_tau",
+)
 ENV_KEYS = ("noise_xy", "noise_yaw", "drift_rate", "jitter")
 
 
@@ -91,10 +103,9 @@ def run_all(cfg, trk, n, seed, scale, graze_margin):
                 out[i] = info[i]
         if all(o is not None for o in out):
             break
-    clean = np.array([
-        bool(o) and o["stopped"] and o["min_clearance"] >= graze_margin
-        for o in out
-    ])
+    clean = np.array(
+        [bool(o) and o["stopped"] and o["min_clearance"] >= graze_margin for o in out]
+    )
     return clean, drawn
 
 
@@ -111,31 +122,35 @@ def main():
     ideal = float((trk.ds / __import__("baseline").feasible_profile(trk, cfg)).sum())
 
     scales = [1.00, 0.90, 0.80, 0.70, 0.60, 0.50, 0.40]
-    best = np.zeros(args.cars)          # fastest scale each car survived
+    best = np.zeros(args.cars)  # fastest scale each car survived
     drawn = None
-    print(f"\n  {args.cars} cars from the full randomize distribution, "
-          f"scripted driver, clean = two laps at rest and never inside "
-          f"{graze:.2f} m\n")
+    print(
+        f"\n  {args.cars} cars from the full randomize distribution, "
+        f"scripted driver, clean = two laps at rest and never inside "
+        f"{graze:.2f} m\n"
+    )
     print(f"  {'scale':>6} {'~lap':>7} {'clean':>7}")
     for sc in scales:
         clean, d = run_all(cfg, trk, args.cars, args.seed, sc, graze)
         if drawn is None:
             drawn = d
         best = np.where(clean & (best == 0.0), sc, best)
-        print(f"  {sc:6.2f} {2*ideal/sc:6.1f}s {100*clean.mean():6.0f}%")
+        print(f"  {sc:6.2f} {2 * ideal / sc:6.1f}s {100 * clean.mean():6.0f}%")
 
     never = best == 0.0
-    print(f"\n  --- what a policy has to drive to cover N% of cars ---")
+    print("\n  --- what a policy has to drive to cover N% of cars ---")
     print(f"  {'cover':>7} {'max scale':>10} {'~two laps':>11}")
     for pct in (50, 70, 80, 90, 95):
         # The scale at which `pct` of cars are still clean.
         q = np.percentile(best, 100 - pct)
-        lap = f"{2*ideal/q:.1f}s" if q > 0 else "impossible"
+        lap = f"{2 * ideal / q:.1f}s" if q > 0 else "impossible"
         print(f"  {pct:6d}% {q:10.2f} {lap:>11}")
-    print(f"\n  cars no speed got round cleanly: {100*never.mean():.0f}% "
-          f"({never.sum()} of {args.cars})")
+    print(
+        f"\n  cars no speed got round cleanly: {100 * never.mean():.0f}% "
+        f"({never.sum()} of {args.cars})"
+    )
 
-    print(f"\n  --- which axis costs the speed ---")
+    print("\n  --- which axis costs the speed ---")
     print(f"  {'parameter':>14} {'range drawn':>22} {'corr with max speed':>21}")
     rows = []
     for k, v in drawn.items():
@@ -147,8 +162,10 @@ def main():
     for _, k, v, c in sorted(rows, reverse=True):
         flag = "   <-- costs speed" if c < -0.2 else ""
         print(f"  {k:>14} {v.min():9.3f} to {v.max():-9.3f} {c:+21.2f}{flag}")
-    print("\n  Negative correlation = cars with MORE of this had to be driven"
-          "\n  slower.  A range that dominates here is a range to question.\n")
+    print(
+        "\n  Negative correlation = cars with MORE of this had to be driven"
+        "\n  slower.  A range that dominates here is a range to question.\n"
+    )
 
 
 if __name__ == "__main__":

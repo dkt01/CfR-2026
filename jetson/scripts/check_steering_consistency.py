@@ -65,12 +65,15 @@ def main() -> int:
     table_right = abs(min(angle for _, angle in table))
     max_left = steering["max_angle_left"]["value"]
     max_right = steering["max_angle_right"]["value"]
-    provenance = (steering["max_angle_left"]["provenance"],
-                  steering["effective_angle_table"]["provenance"])
+    provenance = (
+        steering["max_angle_left"]["provenance"],
+        steering["effective_angle_table"]["provenance"],
+    )
 
     print("\n--- vehicle.yaml, internally")
     note(
-        abs(max_left - table_left) < TOLERANCE and abs(max_right - table_right) < TOLERANCE,
+        abs(max_left - table_left) < TOLERANCE
+        and abs(max_right - table_right) < TOLERANCE,
         "max_angle_* agrees with the effective_angle_table",
         f"max_angle_left/right   {max_left} / {max_right}   [{provenance[0]}]\n"
         f"table reaches          {table_left} / {table_right}   [{provenance[1]}]\n"
@@ -90,18 +93,26 @@ def main() -> int:
     sim = bridge["sim_vehicle"]["ros__parameters"]
     pts = list(zip(sim["steering_command_points"], sim["steering_angle_points"]))
     note(
-        all(abs(a - b) < TOLERANCE and abs(c - d) < TOLERANCE
-            for (a, c), (b, d) in zip(table, pts)),
+        all(
+            abs(a - b) < TOLERANCE and abs(c - d) < TOLERANCE
+            for (a, c), (b, d) in zip(table, pts)
+        ),
         "sim_vehicle steering table matches vehicle.yaml",
         f"vehicle.yaml {table}\narduino_bridge {pts}",
     )
     c2d_params = bridge["cmd_vel_to_drive"]["ros__parameters"]
-    c2d_table = list(zip(c2d_params.get("steering_command_points", []),
-                         c2d_params.get("steering_angle_points", [])))
+    c2d_table = list(
+        zip(
+            c2d_params.get("steering_command_points", []),
+            c2d_params.get("steering_angle_points", []),
+        )
+    )
     if c2d_table:
         note(
-            all(abs(a - b) < TOLERANCE and abs(c - d) < TOLERANCE
-                for (a, c), (b, d) in zip(table, c2d_table)),
+            all(
+                abs(a - b) < TOLERANCE and abs(c - d) < TOLERANCE
+                for (a, c), (b, d) in zip(table, c2d_table)
+            ),
             "cmd_vel_to_drive inverts the same table the car was measured on",
             "A desired angle becomes the command that actually produces it.\n"
             "Dividing by the symmetric max_steering_angle instead over-steers\n"
@@ -132,9 +143,12 @@ def main() -> int:
             plugin_limit >= table_left - TOLERANCE,
             f"{world.name}: steering_limit admits the measured left lock",
             f"steering_limit {plugin_limit} rad vs table's {table_left} rad left"
-            + ("" if plugin_limit >= table_left - TOLERANCE else
-               f"\nCommands past {100 * plugin_limit / table_left:.0f}% of full left are "
-               "silently truncated: measured, 0.80 and 1.00 gave the\nsame radius in Gazebo."),
+            + (
+                ""
+                if plugin_limit >= table_left - TOLERANCE
+                else f"\nCommands past {100 * plugin_limit / table_left:.0f}% of full left are "
+                "silently truncated: measured, 0.80 and 1.00 gave the\nsame radius in Gazebo."
+            ),
         )
         if joint:
             upper = float(joint.group(2))
@@ -153,8 +167,11 @@ def main() -> int:
         "min_turn_radius follows from the measured lock",
         f"stated {stated} m; from max_angle {from_guess:.3f} m; "
         f"from the table {from_table:.3f} m."
-        + ("" if abs(stated - from_table) < 0.05 else
-           "\nIt tracks max_angle rather than the measured table."),
+        + (
+            ""
+            if abs(stated - from_table) < 0.05
+            else "\nIt tracks max_angle rather than the measured table."
+        ),
     )
 
     print()
@@ -162,9 +179,11 @@ def main() -> int:
         print(f"{len(findings)} disagreement(s):")
         for f in findings:
             print(f"  - {f}")
-        print("\nvehicle.yaml calls max_angle_* a `guess` and the table's end points\n"
-              "extrapolated, so neither is authoritative. Measuring the real car's\n"
-              "lock settles it; until then the simulated car follows max_angle_*.")
+        print(
+            "\nvehicle.yaml calls max_angle_* a `guess` and the table's end points\n"
+            "extrapolated, so neither is authoritative. Measuring the real car's\n"
+            "lock settles it; until then the simulated car follows max_angle_*."
+        )
         return 1
     print("every record of the steering authority agrees")
     return 0

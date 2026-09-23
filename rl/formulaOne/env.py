@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Two laps of the Speed Course, vectorised over B cars.
 
 Plain numpy, no Gazebo, no ROS.  On one CPU core this steps ~10^5 car-steps a
@@ -22,7 +21,6 @@ from __future__ import annotations
 
 import numpy as np
 
-import observation as obs_mod
 import track as track_mod
 from observation import ObservationBuilder, scale_action
 from plant import Plant
@@ -65,7 +63,10 @@ class FormulaOneEnv:
         if deterministic:
             # A copy, so turning randomisation off for evaluation cannot leak
             # back into the training config object.
-            self.cfg = {**config, "randomize": {**config["randomize"], "enabled": False}}
+            self.cfg = {
+                **config,
+                "randomize": {**config["randomize"], "enabled": False},
+            }
 
         self.plant = Plant(self.cfg, self.n, self.rng)
         self.reward = Reward(config)
@@ -175,9 +176,9 @@ class FormulaOneEnv:
         self.noise_yaw[mask] = u(*r["pose_noise_yaw"], k)
         self.drift_dir[mask] = u(-np.pi, np.pi, k)
         self.drift_rate[mask] = u(*r["pose_drift_m_per_lap"], k)
-        self.drift_yaw_rate[mask] = u(*r["pose_drift_rad_per_lap"], k) * self.rng.choice(
-            [-1.0, 1.0], k
-        )
+        self.drift_yaw_rate[mask] = u(
+            *r["pose_drift_rad_per_lap"], k
+        ) * self.rng.choice([-1.0, 1.0], k)
         self.jitter[mask] = u(*r["control_jitter"], k)
 
     def _reset_idx(self, mask):
@@ -286,8 +287,9 @@ class FormulaOneEnv:
         # difference a step against itself on every terminal tick.
         obs_speed = np.where(p.speed < 0.3, 0.0, p.speed)
         raw_accel = np.clip((obs_speed - self.prev_obs_speed) / self.dt, -20.0, 20.0)
-        accel = ((1 - self.accel_filter) * self.speed_rate
-                 + self.accel_filter * raw_accel)
+        accel = (
+            1 - self.accel_filter
+        ) * self.speed_rate + self.accel_filter * raw_accel
 
         keep = np.ones(self.n, dtype=bool) if mask is None else mask
         self.speed_rate = np.where(keep, accel, self.speed_rate)
@@ -303,8 +305,14 @@ class FormulaOneEnv:
         # stall timeout), so the policy must not be handed a clean crawl.
         speed = np.where(p.speed < 0.3, 0.0, p.speed)
         obs, self.frame = self.obs_builder.compute(
-            self.sensed_x, self.sensed_y, self.sensed_yaw, speed,
-            self.yaw_rate, self.speed_rate, self.prev_action, self.last_steer,
+            self.sensed_x,
+            self.sensed_y,
+            self.sensed_yaw,
+            speed,
+            self.yaw_rate,
+            self.speed_rate,
+            self.prev_action,
+            self.last_steer,
             self._lap_state(),
         )
         return obs
@@ -312,11 +320,14 @@ class FormulaOneEnv:
     def _lap_state(self):
         """(B, 3) lap progress, time on this lap, time to beat."""
         lap_progress = np.clip(
-            (self.distance - self.laps_done * self.track.length)
-            / self.track.length, 0.0, 1.0)
-        return np.stack([lap_progress,
-                         self.elapsed - self.lap_started_at,
-                         self.last_lap_time], axis=1)
+            (self.distance - self.laps_done * self.track.length) / self.track.length,
+            0.0,
+            1.0,
+        )
+        return np.stack(
+            [lap_progress, self.elapsed - self.lap_started_at, self.last_lap_time],
+            axis=1,
+        )
 
     # ------------------------------------------------------------------ step
 
@@ -331,7 +342,10 @@ class FormulaOneEnv:
         # car is actually judged by.  Using truth here instead would train a
         # policy that silently depends on perfect localisation.
         steer_cmd, speed_cmd = scale_action(
-            action, self.frame["v_cap"], self.frame["steer_ff"], self.residual,
+            action,
+            self.frame["v_cap"],
+            self.frame["steer_ff"],
+            self.residual,
             self.frame["v_floor"],
         )
         # TWO LAPS DONE MEANS STOP.  The throttle is taken away and the
@@ -370,9 +384,9 @@ class FormulaOneEnv:
         # Close the lap that just ended and open the next one.
         lap_time = self.elapsed - self.lap_started_at
         self.last_lap_time = np.where(lapped_mask, lap_time, self.last_lap_time)
-        self.best_lap_time = np.where(lapped_mask,
-                                      np.minimum(self.best_lap_time, lap_time),
-                                      self.best_lap_time)
+        self.best_lap_time = np.where(
+            lapped_mask, np.minimum(self.best_lap_time, lap_time), self.best_lap_time
+        )
         self.lap_started_at = np.where(lapped_mask, self.elapsed, self.lap_started_at)
 
         crashed = min_clear <= 0.0
@@ -405,13 +419,18 @@ class FormulaOneEnv:
         #     something the policy was told to do.
         r = self.cfg["reward"]
         lap_progress = np.clip(
-            (self.distance - self.laps_done * self.track.length)
-            / self.track.length, 0.0, 1.0)
-        pace = np.where(self.last_lap_time > 0.0,
-                        self.last_lap_time * lap_progress
-                        - (self.elapsed - self.lap_started_at), 0.0)
+            (self.distance - self.laps_done * self.track.length) / self.track.length,
+            0.0,
+            1.0,
+        )
+        pace = np.where(
+            self.last_lap_time > 0.0,
+            self.last_lap_time * lap_progress - (self.elapsed - self.lap_started_at),
+            0.0,
+        )
         potential = float(r["lap_improve"]) * np.clip(
-            pace, -float(r["lap_improve_cap"]), float(r["lap_improve_cap"]))
+            pace, -float(r["lap_improve_cap"]), float(r["lap_improve_cap"])
+        )
         quiet = lapped_mask | self.stopping
         lap_gain = np.where(quiet, 0.0, potential - self.pace_potential)
         self.pace_potential = potential
@@ -449,8 +468,9 @@ class FormulaOneEnv:
         live = ~self.stopping
         self.ep_lateral_sum += np.abs(lateral_true) * live
         self.ep_lateral_n += live
-        self.ep_lateral_max = np.maximum(self.ep_lateral_max,
-                                         np.abs(lateral_true) * live)
+        self.ep_lateral_max = np.maximum(
+            self.ep_lateral_max, np.abs(lateral_true) * live
+        )
         self.ep_steer_jerk_sum += steer_jerk**2
         self.ep_steps += 1
         # How far under the floor the car actually ran, while racing.  The
@@ -468,8 +488,12 @@ class FormulaOneEnv:
         winding_up = (self.speed_rate > 0.5) | (p.speed < 1.0)
         self.ep_floor_deficit = np.maximum(
             self.ep_floor_deficit,
-            np.where(live & ~winding_up,
-                     np.maximum(self.frame["v_floor"] - p.speed, 0.0), 0.0))
+            np.where(
+                live & ~winding_up,
+                np.maximum(self.frame["v_floor"] - p.speed, 0.0),
+                0.0,
+            ),
+        )
 
         terminated = crashed | stopped | stop_failed | stalled
         truncated = timed_out & ~terminated
@@ -500,17 +524,20 @@ class FormulaOneEnv:
                     "race_time": float(self.race_time[i]),
                     "stop_distance": float(self.distance[i] - self.target_distance),
                     "lap_time": float(self.race_time[i] / self.laps)
-                                if np.isfinite(self.race_time[i])
-                                else float(self.elapsed[i] / max(self.laps_done[i], 1)),
+                    if np.isfinite(self.race_time[i])
+                    else float(self.elapsed[i] / max(self.laps_done[i], 1)),
                     "best_lap": float(self.best_lap_time[i])
-                                if np.isfinite(self.best_lap_time[i]) else float("nan"),
+                    if np.isfinite(self.best_lap_time[i])
+                    else float("nan"),
                     "last_lap": float(self.last_lap_time[i]),
-                    "mean_cte": float(self.ep_lateral_sum[i]
-                                      / max(self.ep_lateral_n[i], 1)),
+                    "mean_cte": float(
+                        self.ep_lateral_sum[i] / max(self.ep_lateral_n[i], 1)
+                    ),
                     "max_cte": float(self.ep_lateral_max[i]),
                     "floor_deficit": float(self.ep_floor_deficit[i]),
-                    "steer_jerk_rms": float(np.sqrt(
-                        self.ep_steer_jerk_sum[i] / max(self.ep_steps[i], 1))),
+                    "steer_jerk_rms": float(
+                        np.sqrt(self.ep_steer_jerk_sum[i] / max(self.ep_steps[i], 1))
+                    ),
                 }
             self._reset_idx(done)
             # A car that has just been placed has no history to be delayed
@@ -528,16 +555,25 @@ class FormulaOneEnv:
 
     def scripted_action(self, driver):
         """Action array from the scripted baseline, in the policy's own space."""
-        return driver.act(self.frame["station"], self.plant.speed,
-                          self.frame["v_cap"], self.frame["v_floor"])
+        return driver.act(
+            self.frame["station"],
+            self.plant.speed,
+            self.frame["v_cap"],
+            self.frame["v_floor"],
+        )
 
     def snapshot(self):
         """Per-car truth, for plotting and for the self-test."""
         p = self.plant
         return dict(
-            x=p.x.copy(), y=p.y.copy(), yaw=p.yaw.copy(), speed=p.speed.copy(),
-            steer=p.steer_angle.copy(), station=self.station.copy(),
-            distance=self.distance.copy(), elapsed=self.elapsed.copy(),
+            x=p.x.copy(),
+            y=p.y.copy(),
+            yaw=p.yaw.copy(),
+            speed=p.speed.copy(),
+            steer=p.steer_angle.copy(),
+            station=self.station.copy(),
+            distance=self.distance.copy(),
+            elapsed=self.elapsed.copy(),
             v_cap=self.frame["v_cap"].copy(),
             steer_ff=self.frame["steer_ff"].copy(),
             clearance=self.track.body_clearance(

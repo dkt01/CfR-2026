@@ -434,7 +434,7 @@ steering:
       2075R is specified 0.17 s at 6.0 V and 0.19 s at 4.8 V, so if 5 V is
       right the starting figure is nearer 5.7 rad/s.  A multimeter settles it.
       Second, the linkage ratio, which A4 geometry can carry.
-      
+
   tau:
     value: 0.06
     units: s

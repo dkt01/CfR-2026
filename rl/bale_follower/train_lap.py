@@ -63,8 +63,9 @@ ACTION_LAYOUT = (
 )
 
 
-def build_env(config: dict, sdf_path: str, teleport_url: str,
-              max_speed: float | None = None) -> LapRacerEnv:
+def build_env(
+    config: dict, sdf_path: str, teleport_url: str, max_speed: float | None = None
+) -> LapRacerEnv:
     env_config = dict(config["env"])
     if max_speed is not None:
         env_config["max_speed"] = max_speed
@@ -137,8 +138,14 @@ def run_episode(env: LapRacerEnv, model: PPO) -> dict:
 class LapEvalCallback(BaseCallback):
     """Deterministic evaluation, keeping the best checkpoint by pace."""
 
-    def __init__(self, raw_env: LapRacerEnv, metadata: dict, save_dir: Path,
-                 every_rollouts: int = 8, episodes: int = 3) -> None:
+    def __init__(
+        self,
+        raw_env: LapRacerEnv,
+        metadata: dict,
+        save_dir: Path,
+        every_rollouts: int = 8,
+        episodes: int = 3,
+    ) -> None:
         super().__init__()
         self.raw_env = raw_env
         self.metadata = metadata
@@ -163,20 +170,24 @@ class LapEvalCallback(BaseCallback):
         budget = self.raw_env.episode_time_limit_s
         episodes = [run_episode(self.raw_env, self.model) for _ in range(self.episodes)]
         score = statistics.fmean(
-            episode_score(e, budget, self.raw_env.max_laps) for e in episodes)
+            episode_score(e, budget, self.raw_env.max_laps) for e in episodes
+        )
         laps = [e["laps"] for e in episodes]
         best_laps = [e["best_lap_s"] for e in episodes if e["best_lap_s"]]
         collisions = sum(e["collided"] for e in episodes)
 
         self.logger.record("eval/score", score)
         self.logger.record("eval/laps", statistics.fmean(laps))
-        self.logger.record("eval/s_progress_m",
-                           statistics.fmean(e["s_progress"] for e in episodes))
+        self.logger.record(
+            "eval/s_progress_m", statistics.fmean(e["s_progress"] for e in episodes)
+        )
         self.logger.record("eval/collision_rate", collisions / len(episodes))
-        self.logger.record("eval/mean_speed",
-                           statistics.fmean(e["mean_speed"] for e in episodes))
-        self.logger.record("eval/recoveries",
-                           statistics.fmean(e["recoveries"] for e in episodes))
+        self.logger.record(
+            "eval/mean_speed", statistics.fmean(e["mean_speed"] for e in episodes)
+        )
+        self.logger.record(
+            "eval/recoveries", statistics.fmean(e["recoveries"] for e in episodes)
+        )
         if best_laps:
             self.logger.record("eval/best_lap_s", min(best_laps))
         print(
@@ -195,9 +206,16 @@ class LapEvalCallback(BaseCallback):
             if normaliser is not None:
                 normaliser.save(str(self.save_dir / "vecnormalize.pkl"))
             with open(path.with_suffix(".json"), "w") as handle:
-                json.dump({**self.metadata, "score": score,
-                           "at_timesteps": self.num_timesteps,
-                           "episodes": episodes}, handle, indent=2)
+                json.dump(
+                    {
+                        **self.metadata,
+                        "score": score,
+                        "at_timesteps": self.num_timesteps,
+                        "episodes": episodes,
+                    },
+                    handle,
+                    indent=2,
+                )
 
         reset_obs = self.model.env.reset()
         self.model._last_obs = reset_obs
@@ -210,33 +228,49 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default=str(DEFAULT_CONFIG))
     parser.add_argument("--sdf-path", default=str(DEFAULT_SDF))
-    parser.add_argument("--teleport-url",
-                        default="http://localhost:9003/api/sim/teleport")
+    parser.add_argument(
+        "--teleport-url", default="http://localhost:9003/api/sim/teleport"
+    )
     parser.add_argument("--total-timesteps", type=int, default=None)
-    parser.add_argument("--max-speed", type=float, default=None,
-                        help="override env.max_speed, for the speed curriculum")
-    parser.add_argument("--checkpoint-dir",
-                        default=str(Path(__file__).resolve().parent / "checkpoints_lap"))
+    parser.add_argument(
+        "--max-speed",
+        type=float,
+        default=None,
+        help="override env.max_speed, for the speed curriculum",
+    )
+    parser.add_argument(
+        "--checkpoint-dir",
+        default=str(Path(__file__).resolve().parent / "checkpoints_lap"),
+    )
     parser.add_argument("--resume-from", default=None)
     parser.add_argument(
-        "--learning-rate", type=float, default=None,
+        "--learning-rate",
+        type=float,
+        default=None,
         help="override training.learning_rate. Fine-tuning a cloned policy "
-             "wants a smaller one than training from scratch: the value "
-             "function starts untrained, so the first rollouts produce noisy "
-             "advantages, and at 3e-4 those can undo the clone before the "
-             "critic is worth listening to.")
+        "wants a smaller one than training from scratch: the value "
+        "function starts untrained, so the first rollouts produce noisy "
+        "advantages, and at 3e-4 those can undo the clone before the "
+        "critic is worth listening to.",
+    )
     parser.add_argument(
-        "--ent-coef", type=float, default=None,
+        "--ent-coef",
+        type=float,
+        default=None,
         help="override training.ent_coef. The clone is saved with a small "
-             "action std on purpose; an entropy bonus inflates it back.")
+        "action std on purpose; an entropy bonus inflates it back.",
+    )
     parser.add_argument(
-        "--throttle-bias", type=float, default=0.5,
+        "--throttle-bias",
+        type=float,
+        default=0.5,
         help="initial bias on the throttle output of a FRESH policy, in "
-             "action units. The throttle maps [-1, 1] to "
-             "[-reverse_speed, max_speed], so an untrained mean of 0 asks "
-             "for 0.4 m/s and PPO has to learn to move before it can learn "
-             "to drive; 0.5 starts it at ~1.2 m/s instead. Changes where "
-             "exploration starts, not what is being optimised.")
+        "action units. The throttle maps [-1, 1] to "
+        "[-reverse_speed, max_speed], so an untrained mean of 0 asks "
+        "for 0.4 m/s and PPO has to learn to move before it can learn "
+        "to drive; 0.5 starts it at ~1.2 m/s instead. Changes where "
+        "exploration starts, not what is being optimised.",
+    )
     args = parser.parse_args()
 
     with open(args.config) as handle:
@@ -286,23 +320,30 @@ def main() -> None:
                 model.lr_schedule = lambda _progress: args.learning_rate
             if args.ent_coef is not None:
                 model.ent_coef = args.ent_coef
-            print(f"resumed {args.resume_from} at lr {model.lr_schedule(1.0):.1e}, "
-                  f"ent_coef {model.ent_coef}, action std "
-                  f"{float(model.policy.log_std.exp().mean()):.2f}", flush=True)
+            print(
+                f"resumed {args.resume_from} at lr {model.lr_schedule(1.0):.1e}, "
+                f"ent_coef {model.ent_coef}, action std "
+                f"{float(model.policy.log_std.exp().mean()):.2f}",
+                flush=True,
+            )
         else:
             model = PPO("MlpPolicy", vec_env, verbose=1, **training_config)
             if args.throttle_bias:
                 with torch.no_grad():
                     model.policy.action_net.bias[0] += args.throttle_bias
-                speed = raw_env.decode_action(
-                    np.array([args.throttle_bias, 0.0]))[0]
-                print(f"initial throttle bias {args.throttle_bias:+.2f} "
-                      f"-> untrained mean asks for {speed:.2f} m/s", flush=True)
+                speed = raw_env.decode_action(np.array([args.throttle_bias, 0.0]))[0]
+                print(
+                    f"initial throttle bias {args.throttle_bias:+.2f} "
+                    f"-> untrained mean asks for {speed:.2f} m/s",
+                    flush=True,
+                )
 
         metadata = {
             "objective": "lap_time",
-            "env": {**config["env"],
-                    **({"max_speed": args.max_speed} if args.max_speed else {})},
+            "env": {
+                **config["env"],
+                **({"max_speed": args.max_speed} if args.max_speed else {}),
+            },
             "reward": config["reward"],
             "zed_sim": config.get("zed_sim", {}),
             "observation": OBSERVATION_LAYOUT,
@@ -321,8 +362,9 @@ def main() -> None:
                 save_path=str(checkpoint_dir),
                 name_prefix="lap_racer",
             ),
-            LapEvalCallback(raw_env=raw_env, metadata=metadata,
-                            save_dir=checkpoint_dir),
+            LapEvalCallback(
+                raw_env=raw_env, metadata=metadata, save_dir=checkpoint_dir
+            ),
         ]
         model.learn(total_timesteps=total_timesteps, callback=callbacks)
 

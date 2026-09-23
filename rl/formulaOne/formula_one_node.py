@@ -83,8 +83,8 @@ class FormulaOne(Node):
         self.declare_parameter("driver", "policy")
         self.declare_parameter("config", str(HERE / "config.yaml"))
         self.declare_parameter("repo_root", str(HERE.parents[1]))
-        self.declare_parameter("laps", 0)          # 0 = take it from config
-        self.declare_parameter("telemetry_period", 3.0)   # s between log lines
+        self.declare_parameter("laps", 0)  # 0 = take it from config
+        self.declare_parameter("telemetry_period", 3.0)  # s between log lines
         self.declare_parameter("anchor", "signal")  # signal | world
         self.declare_parameter("pose_timeout", 0.5)
         self.declare_parameter("status_timeout", 1.0)
@@ -132,8 +132,11 @@ class FormulaOne(Node):
         self.frame = self.param("track_frame")
 
         self.start_index = int(
-            np.clip(np.searchsorted(self.track.s, self.track.start_station),
-                    0, len(self.track.s) - 1)
+            np.clip(
+                np.searchsorted(self.track.s, self.track.start_station),
+                0,
+                len(self.track.s) - 1,
+            )
         )
 
         self.pose = None
@@ -158,7 +161,7 @@ class FormulaOne(Node):
         self.run_started_at = None
         self.lap_started_at = None
         self.last_lap_time = 0.0
-        self.anchor = None          # (dx, dy, dyaw) once latched
+        self.anchor = None  # (dx, dy, dyaw) once latched
         self.prev_action = np.zeros((1, 2))
         self.last_steer = np.zeros(1)
         # Yaw rate for the steering prior.  Differenced from the pose and
@@ -185,16 +188,19 @@ class FormulaOne(Node):
         # NOTHING from a best-effort one -- and the pose publisher is reliable
         # in Gazebo and best-effort in some ZED wrapper builds.  Subscribing
         # this way is the only setting that works against both.
-        self.create_subscription(PoseStamped, "/zed/zed_node/pose", self.on_pose,
-                                 qos_profile_sensor_data)
-        self.create_subscription(ArduinoStatus, "/arduino_bridge/status",
-                                 self.on_status, 10)
+        self.create_subscription(
+            PoseStamped, "/zed/zed_node/pose", self.on_pose, qos_profile_sensor_data
+        )
+        self.create_subscription(
+            ArduinoStatus, "/arduino_bridge/status", self.on_status, 10
+        )
         self.create_subscription(Bool, "/start_signal_detector/go", self.on_go, LATCHED)
         self.create_subscription(Bool, "/lap_counter/done", self.on_done, LATCHED)
         self.create_service(SetBool, "~/manual_start", self.on_manual)
 
-        self.drive = self.create_publisher(DriveCommand, "/drive_cmd",
-                                           qos_profile_sensor_data)
+        self.drive = self.create_publisher(
+            DriveCommand, "/drive_cmd", qos_profile_sensor_data
+        )
         self.markers = self.create_publisher(MarkerArray, "~/markers", LATCHED)
         self.path_pub = self.create_publisher(PathMsg, "~/centerline", LATCHED)
         self.car_pub = self.create_publisher(PoseStamped, "~/car", 10)
@@ -298,13 +304,20 @@ class FormulaOne(Node):
             speed = abs(float(self.status.speed))
         elif self.prev_pose is not None:
             dt = max(
-                (rclpy.time.Time.from_msg(self.pose.header.stamp)
-                 - rclpy.time.Time.from_msg(self.prev_pose.header.stamp)
-                 ).nanoseconds * 1e-9, 1e-3)
-            speed = math.hypot(
-                self.pose.pose.position.x - self.prev_pose.pose.position.x,
-                self.pose.pose.position.y - self.prev_pose.pose.position.y,
-            ) / dt
+                (
+                    rclpy.time.Time.from_msg(self.pose.header.stamp)
+                    - rclpy.time.Time.from_msg(self.prev_pose.header.stamp)
+                ).nanoseconds
+                * 1e-9,
+                1e-3,
+            )
+            speed = (
+                math.hypot(
+                    self.pose.pose.position.x - self.prev_pose.pose.position.x,
+                    self.pose.pose.position.y - self.prev_pose.pose.position.y,
+                )
+                / dt
+            )
         else:
             speed = 0.0
         return 0.0 if speed < 0.3 else speed
@@ -335,8 +348,9 @@ class FormulaOne(Node):
         )
         if self.finished or self.manual_stop or not self.go or stale:
             if stale and self.go and not self.finished:
-                self.get_logger().warn("pose is stale -- commanding neutral",
-                                       throttle_duration_sec=2.0)
+                self.get_logger().warn(
+                    "pose is stale -- commanding neutral", throttle_duration_sec=2.0
+                )
             self.send(0.0, 0.0)
             return
 
@@ -345,8 +359,7 @@ class FormulaOne(Node):
         yaw_raw = yaw_of(self.pose.pose)
         if self.anchor is None:
             self.latch(x_raw, y_raw, yaw_raw)
-            self.obs.set_station(np.array([True]),
-                                 np.array([self.track.start_station]))
+            self.obs.set_station(np.array([True]), np.array([self.track.start_station]))
             self.station = self.track.start_station
             self.prev_track_yaw = None
             self.prev_yaw_stamp = None
@@ -421,8 +434,9 @@ class FormulaOne(Node):
             # estimate rather than reporting a spurious zero.
             rate = float(self.yaw_rate[0])
         else:
-            step = math.atan2(math.sin(yaw - self.prev_track_yaw),
-                              math.cos(yaw - self.prev_track_yaw))
+            step = math.atan2(
+                math.sin(yaw - self.prev_track_yaw), math.cos(yaw - self.prev_track_yaw)
+            )
             # A car at full lock and full speed turns at under 6 rad/s;
             # anything past that is a pose jump, not a yaw rate.
             rate = max(-8.0, min(8.0, step / (stamp - self.prev_yaw_stamp)))
@@ -434,39 +448,56 @@ class FormulaOne(Node):
         self.yaw_rate = (1 - self.yaw_filter) * self.yaw_rate + self.yaw_filter * rate
 
         stamp_s = rclpy.time.Time.from_msg(self.pose.header.stamp).nanoseconds * 1e-9
-        if self.prev_obs_speed is None or self.prev_speed_stamp is None \
-                or stamp_s <= self.prev_speed_stamp:
+        if (
+            self.prev_obs_speed is None
+            or self.prev_speed_stamp is None
+            or stamp_s <= self.prev_speed_stamp
+        ):
             self.prev_obs_speed, self.prev_speed_stamp = speed, stamp_s
         else:
             raw = (speed - self.prev_obs_speed) / (stamp_s - self.prev_speed_stamp)
             raw = max(-20.0, min(20.0, raw))
-            self.speed_rate = ((1 - self.accel_filter) * self.speed_rate
-                               + self.accel_filter * raw)
+            self.speed_rate = (
+                1 - self.accel_filter
+            ) * self.speed_rate + self.accel_filter * raw
             self.prev_obs_speed, self.prev_speed_stamp = speed, stamp_s
 
         clock_s = now.nanoseconds * 1e-9
         if self.run_started_at is None:
             self.run_started_at = clock_s
             self.lap_started_at = clock_s
-        lap_progress = float(np.clip(
-            (self.distance - self.laps_done * self.track.length)
-            / self.track.length, 0.0, 1.0))
-        lap_state = np.array([[lap_progress,
-                               clock_s - self.lap_started_at,
-                               self.last_lap_time]])
+        lap_progress = float(
+            np.clip(
+                (self.distance - self.laps_done * self.track.length)
+                / self.track.length,
+                0.0,
+                1.0,
+            )
+        )
+        lap_state = np.array(
+            [[lap_progress, clock_s - self.lap_started_at, self.last_lap_time]]
+        )
         obs, frame = self.obs.compute(
-            np.array([x]), np.array([y]), np.array([yaw]),
-            np.array([speed]), self.yaw_rate, self.speed_rate, self.prev_action,
-            self.last_steer, lap_state,
+            np.array([x]),
+            np.array([y]),
+            np.array([yaw]),
+            np.array([speed]),
+            self.yaw_rate,
+            self.speed_rate,
+            self.prev_action,
+            self.last_steer,
+            lap_state,
         )
         v_cap = frame["v_cap"]
         if self.scripted is not None:
-            action = self.scripted.act(frame["station"], np.array([speed]), v_cap,
-                                       frame["v_floor"])
+            action = self.scripted.act(
+                frame["station"], np.array([speed]), v_cap, frame["v_floor"]
+            )
         else:
             action = self.policy.act(obs)
-        steer, velocity = scale_action(action, v_cap, frame["steer_ff"],
-                                       self.residual, frame["v_floor"])
+        steer, velocity = scale_action(
+            action, v_cap, frame["steer_ff"], self.residual, frame["v_floor"]
+        )
         # Belt and braces: the rule limit, enforced again on the way out.
         velocity = np.minimum(velocity, v_cap) * float(self.param("speed_scale"))
         self.prev_action = np.clip(action, -1.0, 1.0)
@@ -475,8 +506,9 @@ class FormulaOne(Node):
         # the residual -- not the network's raw output.
         self.last_steer = np.asarray(steer, dtype=float).reshape(1)
 
-        advance = (frame["station"][0] - self.station + self.track.length / 2) \
-            % self.track.length - self.track.length / 2
+        advance = (
+            frame["station"][0] - self.station + self.track.length / 2
+        ) % self.track.length - self.track.length / 2
         if abs(advance) < 2.0:
             self.distance += advance
         self.station = float(frame["station"][0])
@@ -484,17 +516,22 @@ class FormulaOne(Node):
         if laps > self.laps_done:
             self.laps_done = laps
             lap_time = clock_s - self.lap_started_at
-            delta = (f", {self.last_lap_time - lap_time:+.2f} s on the last"
-                     if self.last_lap_time > 0.0 else "")
+            delta = (
+                f", {self.last_lap_time - lap_time:+.2f} s on the last"
+                if self.last_lap_time > 0.0
+                else ""
+            )
             self.get_logger().info(
-                f"lap {laps} of {self.laps_target}  {lap_time:.2f} s{delta}")
+                f"lap {laps} of {self.laps_target}  {lap_time:.2f} s{delta}"
+            )
             self.last_lap_time = lap_time
             self.lap_started_at = clock_s
         if not self.stopping and self.distance >= self.laps_target * self.track.length:
             self.race_time = clock_s - (self.run_started_at or clock_s)
             self.get_logger().info(
                 f"FINISHED {self.laps_target} laps in {self.race_time:.2f} s "
-                f"({self.distance:.1f} m) -- coasting to a stop")
+                f"({self.distance:.1f} m) -- coasting to a stop"
+            )
             self.begin_stopping()
 
         if self.stopping:
@@ -507,7 +544,12 @@ class FormulaOne(Node):
                     f"STOPPED after {since:.2f} s and "
                     f"{self.distance - self.laps_target * self.track.length:.1f} m "
                     f"past the line"
-                    + ("" if speed <= self.stop_speed else "  (TIMED OUT, still moving)"))
+                    + (
+                        ""
+                        if speed <= self.stop_speed
+                        else "  (TIMED OUT, still moving)"
+                    )
+                )
                 self.send(0.0, 0.0)
                 return
             velocity = np.zeros_like(velocity)
@@ -569,8 +611,17 @@ class FormulaOne(Node):
             return
         text = Marker()
         text.header.frame_id = self.frame
-        text.ns, text.id, text.type, text.action = "hud", 1, Marker.TEXT_VIEW_FACING, Marker.ADD
-        text.pose.position.x, text.pose.position.y, text.pose.position.z = 20.0, 0.0, 2.0
+        text.ns, text.id, text.type, text.action = (
+            "hud",
+            1,
+            Marker.TEXT_VIEW_FACING,
+            Marker.ADD,
+        )
+        text.pose.position.x, text.pose.position.y, text.pose.position.z = (
+            20.0,
+            0.0,
+            2.0,
+        )
         text.pose.orientation.w = 1.0
         text.scale.z = 0.7
         over = speed - float(frame["v_cap"][0])

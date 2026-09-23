@@ -143,7 +143,10 @@ class TeleportHandler(BaseHTTPRequestHandler):
         try:
             listing = subprocess.run(
                 ["ros2", "service", "list"],
-                capture_output=True, text=True, timeout=10, check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
             )
             services = set(listing.stdout.split())
         except FileNotFoundError:
@@ -154,13 +157,23 @@ class TeleportHandler(BaseHTTPRequestHandler):
 
         def call(service, timeout):
             result = subprocess.run(
-                ["ros2", "service", "call", service, "std_srvs/srv/SetBool",
-                 "{data: " + ("true" if go else "false") + "}"],
-                capture_output=True, text=True, timeout=timeout, check=False,
+                [
+                    "ros2",
+                    "service",
+                    "call",
+                    service,
+                    "std_srvs/srv/SetBool",
+                    "{data: " + ("true" if go else "false") + "}",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
             )
             if result.returncode != 0 or "success=True" not in result.stdout:
                 raise RuntimeError(
-                    result.stderr.strip() or result.stdout.strip()
+                    result.stderr.strip()
+                    or result.stdout.strip()
                     or f"{service} failed"
                 )
 
@@ -181,9 +194,20 @@ class TeleportHandler(BaseHTTPRequestHandler):
             for index in range(1, steps + 1):
                 value = start + (target - start) * index / steps
                 subprocess.run(
-                    ["gz", "topic", "-t", self.SIGNAL_TOPIC,
-                     "-m", "gz.msgs.Double", "-p", f"data: {value:.6f}"],
-                    capture_output=True, text=True, timeout=5, check=False,
+                    [
+                        "gz",
+                        "topic",
+                        "-t",
+                        self.SIGNAL_TOPIC,
+                        "-m",
+                        "gz.msgs.Double",
+                        "-p",
+                        f"data: {value:.6f}",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
                 )
                 time.sleep(0.12)
 
@@ -191,8 +215,10 @@ class TeleportHandler(BaseHTTPRequestHandler):
         try:
             # Drive immediately on a manual Go, even if the camera misses the
             # visual transition.  Manual Stop also takes effect immediately.
-            for service, timeout in (("/left_wall_follower/manual_start", 10),
-                                     ("/obstacle_randomizer/start_signal", 45)):
+            for service, timeout in (
+                ("/left_wall_follower/manual_start", 10),
+                ("/obstacle_randomizer/start_signal", 45),
+            ):
                 if service in services:
                     call(service, timeout)
                     used.append(service)

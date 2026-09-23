@@ -267,8 +267,15 @@ def compute_lap_reward(
             lap_bonus += config.k_lap_record * max(0.0, best_lap_time - lap_time)
 
     total = (
-        progress + time_cost + stall + clearance_cost + touch + steering + align
-        + shaping + lap_bonus
+        progress
+        + time_cost
+        + stall
+        + clearance_cost
+        + touch
+        + steering
+        + align
+        + shaping
+        + lap_bonus
     )
     if collided:
         total -= config.collision_penalty

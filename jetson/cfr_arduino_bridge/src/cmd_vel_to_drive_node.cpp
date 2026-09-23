@@ -50,10 +50,8 @@ namespace cfr_arduino_bridge {
 
       // Measured command -> angle table, the same one sim_vehicle_node uses.
       // Empty keeps the old symmetric behaviour.
-      steering_commands_ =
-          declare_parameter<std::vector<double>>("steering_command_points", std::vector<double>{});
-      steering_angles_ =
-          declare_parameter<std::vector<double>>("steering_angle_points", std::vector<double>{});
+      steering_commands_ = declare_parameter<std::vector<double>>("steering_command_points", std::vector<double>{});
+      steering_angles_ = declare_parameter<std::vector<double>>("steering_angle_points", std::vector<double>{});
       if (steering_commands_.size() != steering_angles_.size()) {
         RCLCPP_FATAL(get_logger(), "steering_command_points and steering_angle_points must match");
         throw std::invalid_argument("steering table mismatch");
@@ -133,8 +131,7 @@ namespace cfr_arduino_bridge {
         if (angle <= steering_angles_[i]) {
           const double span = steering_angles_[i] - steering_angles_[i - 1];
           const double fraction = (angle - steering_angles_[i - 1]) / span;
-          return steering_commands_[i - 1] +
-                 fraction * (steering_commands_[i] - steering_commands_[i - 1]);
+          return steering_commands_[i - 1] + fraction * (steering_commands_[i] - steering_commands_[i - 1]);
         }
       }
       return steering_commands_.back();

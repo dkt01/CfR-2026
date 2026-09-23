@@ -82,9 +82,13 @@ def main():
     ap.add_argument("--config", type=Path, default=HERE / "config.yaml")
     ap.add_argument("--write", action="store_true")
     ap.add_argument("--field", type=int, default=64)
-    ap.add_argument("--speed-scale", type=float, default=None,
-                    help="override env.baseline_speed_scale for the sweep; "
-                         "tune the prior at the speed you want to drive")
+    ap.add_argument(
+        "--speed-scale",
+        type=float,
+        default=None,
+        help="override env.baseline_speed_scale for the sweep; "
+        "tune the prior at the speed you want to drive",
+    )
     args = ap.parse_args()
 
     # CFR_FF_HORIZON would override config.yaml inside ObservationBuilder and
@@ -94,8 +98,10 @@ def main():
 
     base = yaml.safe_load(args.config.read_text())
     if args.speed_scale is not None:
-        base = {**base, "env": {**base["env"],
-                                "baseline_speed_scale": args.speed_scale}}
+        base = {
+            **base,
+            "env": {**base["env"], "baseline_speed_scale": args.speed_scale},
+        }
         print(f"  sweeping at baseline_speed_scale {args.speed_scale}")
     trk = track_mod.build(base, ROOT)
 
@@ -106,71 +112,120 @@ def main():
     k_heads = [0.1, 0.2, 0.4]
 
     rows = []
-    total = (len(horizons) * len(leads) * len(k_lats) * len(k_rates)
-             * len(k_heads))
+    total = len(horizons) * len(leads) * len(k_lats) * len(k_rates) * len(k_heads)
     print(f"  {total} prior settings, scored on the nominal car\n")
     for i, (h, lead, kl, kr, kh) in enumerate(
-            itertools.product(horizons, leads, k_lats, k_rates, k_heads)):
-        cfg = {**base, "env": {**base["env"], "steer_prior": {
-            **base["env"]["steer_prior"], "horizon_s": h, "lead_scale": lead,
-            "k_lateral": kl, "k_rate": kr, "k_heading": kh}}}
+        itertools.product(horizons, leads, k_lats, k_rates, k_heads)
+    ):
+        cfg = {
+            **base,
+            "env": {
+                **base["env"],
+                "steer_prior": {
+                    **base["env"]["steer_prior"],
+                    "horizon_s": h,
+                    "lead_scale": lead,
+                    "k_lateral": kl,
+                    "k_rate": kr,
+                    "k_heading": kh,
+                },
+            },
+        }
         nom = drive(cfg, trk, 1, seed=0, deterministic=True)
         if not nom:
             continue
         r = nom[0]
-        rows.append(dict(h=h, lead=lead, kl=kl, kr=kr, kh=kh, rec=r,
-                         ok=bool(r["finished"]),
-                         t=r["episode"]["t"], clear=r["min_clearance"],
-                         dist=r["distance"]))
+        rows.append(
+            dict(
+                h=h,
+                lead=lead,
+                kl=kl,
+                kr=kr,
+                kh=kh,
+                rec=r,
+                ok=bool(r["finished"]),
+                t=r["episode"]["t"],
+                clear=r["min_clearance"],
+                dist=r["distance"],
+            )
+        )
         if (i + 1) % 25 == 0:
             done = sum(x["ok"] for x in rows)
-            print(f"    {i+1}/{total}   {done} get round so far", flush=True)
+            print(f"    {i + 1}/{total}   {done} get round so far", flush=True)
 
     finishers = [r for r in rows if r["ok"]]
-    print(f"\n  {len(finishers)} of {len(rows)} settings complete two laps "
-          f"on the nominal car")
+    print(
+        f"\n  {len(finishers)} of {len(rows)} settings complete two laps "
+        f"on the nominal car"
+    )
     if not finishers:
         best = sorted(rows, key=lambda r: -r["dist"])[:10]
         print("\n  NONE finish.  Furthest, so the next sweep knows where to look:")
-        print(f"  {'horizon':>8} {'lead':>6} {'k_lat':>6} {'k_rate':>7} "
-              f"{'k_head':>7} {'metres':>8}")
+        print(
+            f"  {'horizon':>8} {'lead':>6} {'k_lat':>6} {'k_rate':>7} "
+            f"{'k_head':>7} {'metres':>8}"
+        )
         for r in best:
-            print(f"  {r['h']:8.2f} {r['lead']:6.2f} {r['kl']:6.2f} "
-                  f"{r['kr']:7.2f} {r['kh']:7.2f} {r['dist']:8.1f}")
+            print(
+                f"  {r['h']:8.2f} {r['lead']:6.2f} {r['kl']:6.2f} "
+                f"{r['kr']:7.2f} {r['kh']:7.2f} {r['dist']:8.1f}"
+            )
         sys.exit(1)
 
     # Among the ones that get round, prefer clearance and then time: the
     # prior is a floor to be stable, not a lap record.  The policy makes it
     # fast.
     finishers.sort(key=lambda r: (-min(r["clear"], 0.20), r["t"]))
-    print(f"\n  {'horizon':>8} {'lead':>6} {'k_lat':>6} {'k_rate':>7} "
-          f"{'k_head':>7} {'time':>7} {'min clear':>10} {'field':>7}")
+    print(
+        f"\n  {'horizon':>8} {'lead':>6} {'k_lat':>6} {'k_rate':>7} "
+        f"{'k_head':>7} {'time':>7} {'min clear':>10} {'field':>7}"
+    )
     shown = finishers[:16]
     for r in shown:
-        cfg = {**base, "env": {**base["env"], "steer_prior": {
-            **base["env"]["steer_prior"], "horizon_s": r["h"],
-            "lead_scale": r["lead"], "k_lateral": r["kl"], "k_rate": r["kr"],
-            "k_heading": r["kh"]}}}
+        cfg = {
+            **base,
+            "env": {
+                **base["env"],
+                "steer_prior": {
+                    **base["env"]["steer_prior"],
+                    "horizon_s": r["h"],
+                    "lead_scale": r["lead"],
+                    "k_lateral": r["kl"],
+                    "k_rate": r["kr"],
+                    "k_heading": r["kh"],
+                },
+            },
+        }
         fld = drive(cfg, trk, args.field, seed=7, deterministic=False)
         r["field"] = sum(x["stopped"] for x in fld) / max(len(fld), 1)
-        print(f"  {r['h']:8.2f} {r['lead']:6.2f} {r['kl']:6.2f} {r['kr']:7.2f} "
-              f"{r['kh']:7.2f} {r['t']:7.2f} {r['clear']:+10.3f} "
-              f"{100*r['field']:6.0f}%", flush=True)
+        print(
+            f"  {r['h']:8.2f} {r['lead']:6.2f} {r['kl']:6.2f} {r['kr']:7.2f} "
+            f"{r['kh']:7.2f} {r['t']:7.2f} {r['clear']:+10.3f} "
+            f"{100 * r['field']:6.0f}%",
+            flush=True,
+        )
 
     # The field rate is the one that matters -- it is the same question the
     # trained policy is finally judged on -- with clearance breaking ties.
     win = max(shown, key=lambda r: (round(r["field"], 2), min(r["clear"], 0.20)))
-    print(f"\n  best: horizon {win['h']:.2f}  lead {win['lead']:.2f}  "
-          f"k_lateral {win['kl']:.2f}  k_rate {win['kr']:.2f}  "
-          f"k_heading {win['kh']:.2f}  "
-          f"-> {win['t']:.2f} s nominal, {100*win['field']:.0f}% field")
+    print(
+        f"\n  best: horizon {win['h']:.2f}  lead {win['lead']:.2f}  "
+        f"k_lateral {win['kl']:.2f}  k_rate {win['kr']:.2f}  "
+        f"k_heading {win['kh']:.2f}  "
+        f"-> {win['t']:.2f} s nominal, {100 * win['field']:.0f}% field"
+    )
 
     if args.write:
         text = args.config.read_text()
-        for key, val in (("horizon_s", win["h"]), ("lead_scale", win["lead"]),
-                         ("k_lateral", win["kl"]), ("k_rate", win["kr"]),
-                         ("k_heading", win["kh"])):
+        for key, val in (
+            ("horizon_s", win["h"]),
+            ("lead_scale", win["lead"]),
+            ("k_lateral", win["kl"]),
+            ("k_rate", win["kr"]),
+            ("k_heading", win["kh"]),
+        ):
             import re
+
             text = re.sub(rf"(\n    {key}: )[0-9.]+", rf"\g<1>{val}", text, count=1)
         args.config.write_text(text)
         print(f"  written to {args.config}")

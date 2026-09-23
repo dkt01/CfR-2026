@@ -54,10 +54,13 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 
 from lap_driver import PursuitDriver
 from lap_env import LapRacerEnv
-from lap_reward import LapRewardConfig
-from train_lap import (ACTION_LAYOUT, DEFAULT_CONFIG, DEFAULT_SDF,
-                       OBSERVATION_LAYOUT, build_env)
-from zed_sim import ZedSimConfig
+from train_lap import (
+    ACTION_LAYOUT,
+    DEFAULT_CONFIG,
+    DEFAULT_SDF,
+    OBSERVATION_LAYOUT,
+    build_env,
+)
 
 
 def load_samples(path: Path):
@@ -69,14 +72,23 @@ def load_samples(path: Path):
 
 def save_samples(path: Path, observations, actions) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(path, observations=np.asarray(observations, np.float32),
-                        actions=np.asarray(actions, np.float32))
+    np.savez_compressed(
+        path,
+        observations=np.asarray(observations, np.float32),
+        actions=np.asarray(actions, np.float32),
+    )
 
 
-def collect(env: LapRacerEnv, driver: PursuitDriver, steps: int,
-            perturb_prob: float, rng: np.random.Generator,
-            samples_path: Path, existing=(None, None),
-            crash_dropout: int = 10):
+def collect(
+    env: LapRacerEnv,
+    driver: PursuitDriver,
+    steps: int,
+    perturb_prob: float,
+    rng: np.random.Generator,
+    samples_path: Path,
+    existing=(None, None),
+    crash_dropout: int = 10,
+):
     """Teacher rollouts: the student's observation, the teacher's action.
 
     The last `crash_dropout` samples before a collision are thrown away: they
@@ -99,8 +111,9 @@ def collect(env: LapRacerEnv, driver: PursuitDriver, steps: int,
         observations.append(observation)
         actions.append(action.copy())
         if rng.random() < perturb_prob:
-            action = np.clip(action + rng.normal(0.0, 0.5, size=2), -1.0, 1.0
-                             ).astype(np.float32)
+            action = np.clip(action + rng.normal(0.0, 0.5, size=2), -1.0, 1.0).astype(
+                np.float32
+            )
         observation, _, terminated, truncated, info = env.step(action)
         if terminated or truncated:
             if info["collided"]:
@@ -114,16 +127,28 @@ def collect(env: LapRacerEnv, driver: PursuitDriver, steps: int,
             observation, _ = env.reset()
         if len(observations) and len(observations) % 1000 == 0:
             save_samples(samples_path, observations, actions)
-            print(f"  {len(observations)}/{steps} samples, {episodes} episodes, "
-                  f"{collisions} teacher collisions, {dropped} dropped",
-                  flush=True)
+            print(
+                f"  {len(observations)}/{steps} samples, {episodes} episodes, "
+                f"{collisions} teacher collisions, {dropped} dropped",
+                flush=True,
+            )
     save_samples(samples_path, observations, actions)
-    return (np.asarray(observations, dtype=np.float32),
-            np.asarray(actions, dtype=np.float32), episodes, collisions)
+    return (
+        np.asarray(observations, dtype=np.float32),
+        np.asarray(actions, dtype=np.float32),
+        episodes,
+        collisions,
+    )
 
 
-def clone(model: PPO, observations: np.ndarray, actions: np.ndarray,
-          epochs: int, batch_size: int, learning_rate: float) -> float:
+def clone(
+    model: PPO,
+    observations: np.ndarray,
+    actions: np.ndarray,
+    epochs: int,
+    batch_size: int,
+    learning_rate: float,
+) -> float:
     """Regress the policy's MEAN action onto the teacher's."""
     device = model.policy.device
     x = torch.as_tensor(observations, device=device)
@@ -135,7 +160,7 @@ def clone(model: PPO, observations: np.ndarray, actions: np.ndarray,
         order = torch.randperm(count, device=device)
         total = 0.0
         for start in range(0, count, batch_size):
-            batch = order[start:start + batch_size]
+            batch = order[start : start + batch_size]
             distribution = model.policy.get_distribution(x[batch])
             mean = distribution.distribution.mean
             loss = torch.nn.functional.mse_loss(mean, y[batch])
@@ -145,8 +170,7 @@ def clone(model: PPO, observations: np.ndarray, actions: np.ndarray,
             optimizer.step()
             total += loss.item() * len(batch)
         loss_value = total / count
-        print(f"  epoch {epoch + 1}/{epochs}: action MSE {loss_value:.5f}",
-              flush=True)
+        print(f"  epoch {epoch + 1}/{epochs}: action MSE {loss_value:.5f}", flush=True)
     return loss_value
 
 
@@ -154,30 +178,47 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default=str(DEFAULT_CONFIG))
     parser.add_argument("--sdf-path", default=str(DEFAULT_SDF))
-    parser.add_argument("--teleport-url",
-                        default="http://localhost:9003/api/sim/teleport")
-    parser.add_argument("--steps", type=int, default=20000,
-                        help="teacher samples to collect (20k ~ 17 min at 20 Hz)")
+    parser.add_argument(
+        "--teleport-url", default="http://localhost:9003/api/sim/teleport"
+    )
+    parser.add_argument(
+        "--steps",
+        type=int,
+        default=20000,
+        help="teacher samples to collect (20k ~ 17 min at 20 Hz)",
+    )
     parser.add_argument("--max-speed", type=float, default=2.0)
-    parser.add_argument("--plan-scale", type=float, default=0.85,
-                        help="fraction of the plan's min-time speed the "
-                             "teacher asks for; the student is meant to beat "
-                             "this, not match it")
+    parser.add_argument(
+        "--plan-scale",
+        type=float,
+        default=0.85,
+        help="fraction of the plan's min-time speed the "
+        "teacher asks for; the student is meant to beat "
+        "this, not match it",
+    )
     parser.add_argument("--perturb-prob", type=float, default=0.1)
     parser.add_argument("--epochs", type=int, default=15)
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
-    parser.add_argument("--exploration-std", type=float, default=0.3,
-                        help="log_std the cloned policy is saved with. The "
-                             "PPO default of 1.0 samples the whole action "
-                             "range and would trample the cloned behaviour "
-                             "before it earned anything.")
+    parser.add_argument(
+        "--exploration-std",
+        type=float,
+        default=0.3,
+        help="log_std the cloned policy is saved with. The "
+        "PPO default of 1.0 samples the whole action "
+        "range and would trample the cloned behaviour "
+        "before it earned anything.",
+    )
     parser.add_argument("--out", default="checkpoints_lap0/pretrained.zip")
-    parser.add_argument("--samples", default="checkpoints_lap0/teacher.npz",
-                        help="where teacher samples accumulate across sim deaths")
+    parser.add_argument(
+        "--samples",
+        default="checkpoints_lap0/teacher.npz",
+        help="where teacher samples accumulate across sim deaths",
+    )
     parser.add_argument("--collect-only", action="store_true")
-    parser.add_argument("--fit", action="store_true",
-                        help="fit the saved samples; needs no simulator")
+    parser.add_argument(
+        "--fit", action="store_true", help="fit the saved samples; needs no simulator"
+    )
     args = parser.parse_args()
 
     config = yaml.safe_load(Path(args.config).read_text())
@@ -192,21 +233,26 @@ def main() -> None:
         return
 
     env = build_env(config, args.sdf_path, args.teleport_url, args.max_speed)
-    driver = PursuitDriver(env, target_speed=args.max_speed,
-                           plan_scale=args.plan_scale)
+    driver = PursuitDriver(env, target_speed=args.max_speed, plan_scale=args.plan_scale)
     rng = np.random.default_rng()
     existing = load_samples(samples_path)
     if existing[0] is not None:
         print(f"resuming from {len(existing[0])} samples already collected")
 
     try:
-        print(f"collecting to {args.steps} teacher samples at "
-              f"{args.plan_scale:.2f}x the planned speed", flush=True)
+        print(
+            f"collecting to {args.steps} teacher samples at "
+            f"{args.plan_scale:.2f}x the planned speed",
+            flush=True,
+        )
         observations, actions, episodes, collisions = collect(
-            env, driver, args.steps, args.perturb_prob, rng, samples_path,
-            existing)
-        print(f"have {len(observations)} samples over {episodes} episodes "
-              f"({collisions} teacher collisions)", flush=True)
+            env, driver, args.steps, args.perturb_prob, rng, samples_path, existing
+        )
+        print(
+            f"have {len(observations)} samples over {episodes} episodes "
+            f"({collisions} teacher collisions)",
+            flush=True,
+        )
     finally:
         env.close()
 
@@ -214,8 +260,7 @@ def main() -> None:
         fit(args, config, observations, actions)
 
 
-def fit(args, config: dict, observations: np.ndarray,
-        actions: np.ndarray) -> None:
+def fit(args, config: dict, observations: np.ndarray, actions: np.ndarray) -> None:
     """Supervised phase. Builds the policy against a spaces-only stub env, so
     a dead simulator cannot cost a fit."""
     import gymnasium
@@ -224,23 +269,35 @@ def fit(args, config: dict, observations: np.ndarray,
         """Carries the real observation and action spaces and nothing else."""
 
         observation_space = gymnasium.spaces.Box(
-            low=0.0, high=1.0, shape=(observations.shape[1],), dtype=np.float32)
+            low=0.0, high=1.0, shape=(observations.shape[1],), dtype=np.float32
+        )
         action_space = gymnasium.spaces.Box(
-            low=-1.0, high=1.0, shape=(actions.shape[1],), dtype=np.float32)
+            low=-1.0, high=1.0, shape=(actions.shape[1],), dtype=np.float32
+        )
 
         def reset(self, *, seed=None, options=None):
             return np.zeros(self.observation_space.shape, np.float32), {}
 
         def step(self, action):
-            return (np.zeros(self.observation_space.shape, np.float32), 0.0,
-                    False, False, {})
+            return (
+                np.zeros(self.observation_space.shape, np.float32),
+                0.0,
+                False,
+                False,
+                {},
+            )
 
     training_config = dict(config["training"])
     training_config.pop("total_timesteps", None)
-    model = PPO("MlpPolicy", DummyVecEnv([lambda: Monitor(SpacesOnly())]),
-                verbose=0, **training_config)
-    loss = clone(model, observations, actions, args.epochs,
-                 args.batch_size, args.learning_rate)
+    model = PPO(
+        "MlpPolicy",
+        DummyVecEnv([lambda: Monitor(SpacesOnly())]),
+        verbose=0,
+        **training_config,
+    )
+    loss = clone(
+        model, observations, actions, args.epochs, args.batch_size, args.learning_rate
+    )
     with torch.no_grad():
         model.policy.log_std.fill_(float(np.log(args.exploration_std)))
 

@@ -54,7 +54,10 @@ from visualization_msgs.msg import Marker, MarkerArray
 
 import bale_geometry
 
-DEFAULT_SDF = Path(__file__).resolve().parents[2] / "jetson/cfr_arduino_bridge/worlds/speed_course.sdf"
+DEFAULT_SDF = (
+    Path(__file__).resolve().parents[2]
+    / "jetson/cfr_arduino_bridge/worlds/speed_course.sdf"
+)
 # The ZED's mount on the chassis, from the rgbd_camera <pose> in
 # sensors_world.py. Same number medley_racer.py uses for the point cloud it
 # renders in the browser viewer.
@@ -113,7 +116,9 @@ class RvizBridge(Node):
         t.transform.translation.z = CAMERA_MOUNT[2]
         t.transform.rotation.w = 1.0
         self._static_tf.sendTransform(t)
-        self.get_logger().info(f"point cloud frame is '{frame}'; published {BASE_FRAME} -> {frame}")
+        self.get_logger().info(
+            f"point cloud frame is '{frame}'; published {BASE_FRAME} -> {frame}"
+        )
 
     def _publish_chassis(self, stamp) -> None:
         m = Marker()
@@ -133,7 +138,12 @@ class RvizBridge(Node):
         nose = Marker()
         nose.header.frame_id = BASE_FRAME
         nose.header.stamp = stamp
-        nose.ns, nose.id, nose.type, nose.action = "chassis", 1, Marker.ARROW, Marker.ADD
+        nose.ns, nose.id, nose.type, nose.action = (
+            "chassis",
+            1,
+            Marker.ARROW,
+            Marker.ADD,
+        )
         nose.pose.position.z = 0.18
         nose.pose.orientation.w = 1.0
         nose.scale.x, nose.scale.y, nose.scale.z = 0.5, 0.06, 0.06
@@ -163,9 +173,13 @@ class RvizBridge(Node):
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--pose-topic", default="/zed/zed_node/pose")
-    parser.add_argument("--cloud-topic", default="/zed/zed_node/point_cloud/cloud_registered")
+    parser.add_argument(
+        "--cloud-topic", default="/zed/zed_node/point_cloud/cloud_registered"
+    )
     parser.add_argument("--sdf", default=str(DEFAULT_SDF))
     args = parser.parse_args()
 

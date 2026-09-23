@@ -37,12 +37,16 @@ def main() -> None:
     parser.add_argument("--episodes", type=int, default=5)
     parser.add_argument("--config", default=str(DEFAULT_CONFIG))
     parser.add_argument("--sdf-path", default=str(DEFAULT_SDF))
-    parser.add_argument("--teleport-url",
-                        default="http://localhost:9003/api/sim/teleport")
+    parser.add_argument(
+        "--teleport-url", default="http://localhost:9003/api/sim/teleport"
+    )
     parser.add_argument("--max-speed", type=float, default=None)
-    parser.add_argument("--from-start", action="store_true",
-                        help="start every episode at the SDF spawn pose, as a "
-                             "competition run does, instead of anywhere on the loop")
+    parser.add_argument(
+        "--from-start",
+        action="store_true",
+        help="start every episode at the SDF spawn pose, as a "
+        "competition run does, instead of anywhere on the loop",
+    )
     parser.add_argument("--output", default=None, help="write metrics JSON here")
     args = parser.parse_args()
 
@@ -50,12 +54,16 @@ def main() -> None:
     metadata_path = checkpoint.with_suffix(".json")
     if metadata_path.exists():
         metadata = json.loads(metadata_path.read_text())
-        print(f"checkpoint metadata: {metadata_path.name} "
-              f"(objective {metadata.get('objective', 'unknown')})")
+        print(
+            f"checkpoint metadata: {metadata_path.name} "
+            f"(objective {metadata.get('objective', 'unknown')})"
+        )
     else:
         metadata = yaml.safe_load(Path(args.config).read_text())
-        print(f"no metadata beside {checkpoint.name}; falling back to "
-              f"{Path(args.config).name}")
+        print(
+            f"no metadata beside {checkpoint.name}; falling back to "
+            f"{Path(args.config).name}"
+        )
 
     env_config = dict(metadata["env"])
     if args.max_speed is not None:
@@ -79,13 +87,15 @@ def main() -> None:
         env.close()
 
     for index, episode in enumerate(episodes, start=1):
-        print(f"  episode {index}: {episode['laps']} lap(s) "
-              f"{episode['lap_times']}, {episode['s_progress']} m in "
-              f"{episode['elapsed_s']} s, mean {episode['mean_speed']} m/s, "
-              f"clearance {episode['min_clearance']} m, "
-              f"{episode['recoveries']} recoveries"
-              + (", COLLIDED" if episode["collided"] else "")
-              + (", stuck" if episode["stuck"] else ""))
+        print(
+            f"  episode {index}: {episode['laps']} lap(s) "
+            f"{episode['lap_times']}, {episode['s_progress']} m in "
+            f"{episode['elapsed_s']} s, mean {episode['mean_speed']} m/s, "
+            f"clearance {episode['min_clearance']} m, "
+            f"{episode['recoveries']} recoveries"
+            + (", COLLIDED" if episode["collided"] else "")
+            + (", stuck" if episode["stuck"] else "")
+        )
 
     laps = [e["best_lap_s"] for e in episodes if e["best_lap_s"]]
     summary = {
@@ -93,22 +103,30 @@ def main() -> None:
         "episodes": args.episodes,
         "laps_completed": sum(e["laps"] for e in episodes),
         "best_lap_s": min(laps) if laps else None,
-        "mean_lap_s": round(statistics.fmean(
-            t for e in episodes for t in e["lap_times"]), 2) if laps else None,
+        "mean_lap_s": round(
+            statistics.fmean(t for e in episodes for t in e["lap_times"]), 2
+        )
+        if laps
+        else None,
         "mean_s_progress_m": round(
-            statistics.fmean(e["s_progress"] for e in episodes), 1),
+            statistics.fmean(e["s_progress"] for e in episodes), 1
+        ),
         "mean_speed": round(statistics.fmean(e["mean_speed"] for e in episodes), 2),
         "min_clearance_m": min(e["min_clearance"] for e in episodes),
         "mean_steer_rate_rad_s": round(
-            statistics.fmean(e["mean_steer_rate"] for e in episodes), 3),
+            statistics.fmean(e["mean_steer_rate"] for e in episodes), 3
+        ),
         "collision_rate": sum(e["collided"] for e in episodes) / args.episodes,
         "stuck_rate": sum(e["stuck"] for e in episodes) / args.episodes,
         "recoveries_per_episode": round(
-            statistics.fmean(e["recoveries"] for e in episodes), 2),
+            statistics.fmean(e["recoveries"] for e in episodes), 2
+        ),
         "per_episode": episodes,
     }
-    print("\n" + json.dumps({k: v for k, v in summary.items()
-                             if k != "per_episode"}, indent=2))
+    print(
+        "\n"
+        + json.dumps({k: v for k, v in summary.items() if k != "per_episode"}, indent=2)
+    )
     if args.output:
         Path(args.output).write_text(json.dumps(summary, indent=2))
         print(f"wrote {args.output}")

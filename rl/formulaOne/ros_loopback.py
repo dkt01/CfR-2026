@@ -57,12 +57,18 @@ class Loopback(Node):
         self.cfg = cfg
         self.track = track_mod.build(cfg, Path(self.get_parameter("repo_root").value))
 
-        i = int(np.clip(np.searchsorted(self.track.s, self.track.start_station),
-                        0, len(self.track.s) - 1))
+        i = int(
+            np.clip(
+                np.searchsorted(self.track.s, self.track.start_station),
+                0,
+                len(self.track.s) - 1,
+            )
+        )
         self.plant = Plant(cfg, 1, np.random.default_rng(0))
         self.plant.reset(
             np.array([True]),
-            np.array([self.track.x[i]]), np.array([self.track.y[i]]),
+            np.array([self.track.x[i]]),
+            np.array([self.track.y[i]]),
             np.array([math.atan2(self.track.ty[i], self.track.tx[i])]),
             np.zeros(1),
         )
@@ -71,14 +77,16 @@ class Loopback(Node):
         self.command = np.zeros(2)
         self.active = False
 
-        self.create_subscription(DriveCommand, "/drive_cmd", self.on_cmd,
-                                 qos_profile_sensor_data)
+        self.create_subscription(
+            DriveCommand, "/drive_cmd", self.on_cmd, qos_profile_sensor_data
+        )
         # RELIABLE, depth 10 -- what the ros_gz bridge publishes in Gazebo and
         # what the ZED wrapper publishes on the car.  The loopback is only
         # useful as a stand-in if it stands in on the same QoS.
         self.pose_pub = self.create_publisher(PoseStamped, "/zed/zed_node/pose", 10)
-        self.status_pub = self.create_publisher(ArduinoStatus,
-                                                "/arduino_bridge/status", 10)
+        self.status_pub = self.create_publisher(
+            ArduinoStatus, "/arduino_bridge/status", 10
+        )
         self.go_pub = self.create_publisher(Bool, "/start_signal_detector/go", LATCHED)
         self.go_pub.publish(Bool(data=False))
         self.create_timer(1.0 / self.rate, self.tick)

@@ -77,9 +77,7 @@ class LapTrack:
         described exactly the way a forward one is.
         """
         self._points = np.column_stack([self.x, self.y])
-        steps = np.linalg.norm(
-            np.roll(self._points, -1, axis=0) - self._points, axis=1
-        )
+        steps = np.linalg.norm(np.roll(self._points, -1, axis=0) - self._points, axis=1)
         self.s = np.concatenate([[0.0], np.cumsum(steps[:-1])])
         self.length = float(steps.sum()) if self.closed else float(self.s[-1])
         self.spacing = float(np.median(steps))
@@ -116,8 +114,9 @@ class LapTrack:
 
     # ------------------------------------------------------------ projection
 
-    def nearest_index(self, x: float, y: float, hint: int | None = None,
-                      window: int = 80) -> int:
+    def nearest_index(
+        self, x: float, y: float, hint: int | None = None, window: int = 80
+    ) -> int:
         """Index of the closest path sample.
 
         `hint` restricts the search to +/-`window` samples (8 m at the plan's
@@ -134,8 +133,9 @@ class LapTrack:
         deltas = self._points[offsets] - np.array([x, y])
         return int(offsets[np.argmin(np.einsum("ij,ij->i", deltas, deltas))])
 
-    def project(self, x: float, y: float, yaw: float,
-                hint: int | None = None) -> Projection:
+    def project(
+        self, x: float, y: float, yaw: float, hint: int | None = None
+    ) -> Projection:
         index = self.nearest_index(x, y, hint)
         tangent = float(self.tangent[index])
         dx, dy = x - self.x[index], y - self.y[index]
@@ -171,8 +171,9 @@ class LapTrack:
 
     # --------------------------------------------------------------- spawning
 
-    def pose_at(self, index: int, lateral: float = 0.0,
-                heading_offset: float = 0.0) -> tuple[float, float, float]:
+    def pose_at(
+        self, index: int, lateral: float = 0.0, heading_offset: float = 0.0
+    ) -> tuple[float, float, float]:
         """A world pose `lateral` metres left of the line at `index`."""
         tangent = float(self.tangent[index])
         x = self.x[index] - lateral * math.sin(tangent)
@@ -224,11 +225,15 @@ class LapCounter:
 
 if __name__ == "__main__":
     track = LapTrack()
-    print(f"loop {track.length:.1f} m, {len(track.x)} samples "
-          f"@ {track.spacing * 100:.0f} cm, plan {track.reference_lap_time:.1f} s")
-    print(f"reference speed {track.reference_speed.min():.2f}"
-          f"-{track.reference_speed.max():.2f} m/s, "
-          f"tightest radius {1.0 / np.abs(track.curvature).max():.2f} m")
+    print(
+        f"loop {track.length:.1f} m, {len(track.x)} samples "
+        f"@ {track.spacing * 100:.0f} cm, plan {track.reference_lap_time:.1f} s"
+    )
+    print(
+        f"reference speed {track.reference_speed.min():.2f}"
+        f"-{track.reference_speed.max():.2f} m/s, "
+        f"tightest radius {1.0 / np.abs(track.curvature).max():.2f} m"
+    )
 
     # Drive the plan itself and check the machinery closes a lap in the
     # planned time to within the sampling resolution.
@@ -245,8 +250,7 @@ if __name__ == "__main__":
             _, lap_time = counter.update(step.s, elapsed)
             if lap_time is not None:
                 laps.append(lap_time)
-    print(f"two laps driven at the plan's own speed: "
-          f"{[round(t, 2) for t in laps]} s")
+    print(f"two laps driven at the plan's own speed: {[round(t, 2) for t in laps]} s")
     assert counter.laps == 2, counter.laps
     assert abs(laps[0] - track.reference_lap_time) < 1.0, laps
 

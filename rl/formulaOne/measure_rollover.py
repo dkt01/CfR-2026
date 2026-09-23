@@ -49,8 +49,9 @@ TICK = 0.02
 
 def teleport(x, y, heading):
     body = json.dumps({"x": x, "y": y, "heading": heading}).encode()
-    req = urllib.request.Request(TELEPORT, data=body,
-                                 headers={"Content-Type": "application/json"})
+    req = urllib.request.Request(
+        TELEPORT, data=body, headers={"Content-Type": "application/json"}
+    )
     with urllib.request.urlopen(req, timeout=5) as r:
         return json.loads(r.read())
 
@@ -64,10 +65,12 @@ def rpy(q):
 class Driver(Node):
     def __init__(self):
         super().__init__("measure_rollover")
-        self.pub = self.create_publisher(DriveCommand, "/drive_cmd",
-                                         qos_profile_sensor_data)
-        self.create_subscription(PoseStamped, "/zed/zed_node/pose", self.on_pose,
-                                 qos_profile_sensor_data)
+        self.pub = self.create_publisher(
+            DriveCommand, "/drive_cmd", qos_profile_sensor_data
+        )
+        self.create_subscription(
+            PoseStamped, "/zed/zed_node/pose", self.on_pose, qos_profile_sensor_data
+        )
         self.steer = self.speed = 0.0
         self.samples = []
         self.recording = False
@@ -77,8 +80,9 @@ class Driver(Node):
         if not self.recording:
             return
         roll, pitch = rpy(m.pose.orientation)
-        self.samples.append((time.time(), m.pose.position.x, m.pose.position.y,
-                             roll, pitch))
+        self.samples.append(
+            (time.time(), m.pose.position.x, m.pose.position.y, roll, pitch)
+        )
 
     def tick(self):
         msg = DriveCommand()
@@ -112,13 +116,13 @@ def one(node, x, y, speed, cmd, settle, hold, reversal=0.0):
     node.steer, node.speed, node.recording, node.samples = 0.0, 0.0, False, []
     spin(node, 1.0)
     node.steer, node.speed = 0.0, speed
-    spin(node, settle)                      # up to speed, straight
+    spin(node, settle)  # up to speed, straight
 
     node.recording, node.samples = True, []
     node.steer = cmd
     if reversal > 0.0:
         spin(node, reversal)
-        node.steer = -cmd                   # THE REVERSAL
+        node.steer = -cmd  # THE REVERSAL
         spin(node, hold)
     else:
         spin(node, hold)
@@ -150,13 +154,22 @@ def main():
     ap.add_argument("--y", type=float, default=-14.0)
     ap.add_argument("--settle", type=float, default=3.5)
     ap.add_argument("--hold", type=float, default=2.5)
-    ap.add_argument("--speeds", type=float, nargs="+",
-                    default=[2.0, 2.5, 3.0, 3.5, 4.0, 4.5])
-    ap.add_argument("--cmd", type=float, default=-1.0,
-                    help="steering command to hold (default full right lock)")
-    ap.add_argument("--reversal", type=float, default=0.0,
-                    help="hold the lock this long, then swing to the opposite "
-                         "lock in one tick (0 = steady lock, the old test)")
+    ap.add_argument(
+        "--speeds", type=float, nargs="+", default=[2.0, 2.5, 3.0, 3.5, 4.0, 4.5]
+    )
+    ap.add_argument(
+        "--cmd",
+        type=float,
+        default=-1.0,
+        help="steering command to hold (default full right lock)",
+    )
+    ap.add_argument(
+        "--reversal",
+        type=float,
+        default=0.0,
+        help="hold the lock this long, then swing to the opposite "
+        "lock in one tick (0 = steady lock, the old test)",
+    )
     args = ap.parse_args()
 
     yaml.safe_load((HERE / "config.yaml").read_text())
@@ -167,20 +180,26 @@ def main():
     spin(node, 4.0)
     seen, node.samples, node.recording = list(node.samples), [], False
     if not seen:
-        node.destroy_node(); rclpy.shutdown()
+        node.destroy_node()
+        rclpy.shutdown()
         raise SystemExit(
             "  No pose on /zed/zed_node/pose for this ROS_DOMAIN_ID.\n"
             f"  Refusing to POST to port {TELEPORT_PORT}: that endpoint is not\n"
-            "  domain-scoped, so it may belong to a different simulation.")
+            "  domain-scoped, so it may belong to a different simulation."
+        )
 
-    what = (f"lock {args.cmd:+.2f} for {args.reversal:.2f}s then REVERSED"
-            if args.reversal > 0 else f"constant lock {args.cmd:+.2f}")
+    what = (
+        f"lock {args.cmd:+.2f} for {args.reversal:.2f}s then REVERSED"
+        if args.reversal > 0
+        else f"constant lock {args.cmd:+.2f}"
+    )
     print(f"\n  {what}, increasing speed\n")
     print(f"  {'speed':>6} {'achieved v':>11} {'lat accel':>11} {'max roll':>10}")
     rolled_at = None
     for speed in args.speeds:
-        got = one(node, args.x, args.y, speed, args.cmd, args.settle,
-                  args.hold, args.reversal)
+        got = one(
+            node, args.x, args.y, speed, args.cmd, args.settle, args.hold, args.reversal
+        )
         if got is None:
             print(f"  {speed:6.2f}   too few samples, skipped")
             continue
@@ -191,18 +210,23 @@ def main():
             rolled_at = a_y if rolled_at is None else min(rolled_at, a_y)
         elif roll_deg > 15.0:
             flag = "   <- lifting"
-        print(f"  {speed:6.2f} {v:11.2f} {a_y:9.2f} g={a_y/9.81:4.2f} "
-              f"{roll_deg:9.1f}d{flag}")
+        print(
+            f"  {speed:6.2f} {v:11.2f} {a_y:9.2f} g={a_y / 9.81:4.2f} "
+            f"{roll_deg:9.1f}d{flag}"
+        )
 
-    node.destroy_node(); rclpy.shutdown()
+    node.destroy_node()
+    rclpy.shutdown()
     print()
     if rolled_at:
-        print(f"  ROLLS at {rolled_at:.2f} m/s^2 ({rolled_at/9.81:.2f} g).")
-        print(f"  Put a margin under it in config.yaml:")
-        print(f"      track.rollover_accel: {0.85*rolled_at:.1f}")
+        print(f"  ROLLS at {rolled_at:.2f} m/s^2 ({rolled_at / 9.81:.2f} g).")
+        print("  Put a margin under it in config.yaml:")
+        print(f"      track.rollover_accel: {0.85 * rolled_at:.1f}")
     else:
-        print("  Never went over in this sweep.  Widen --speeds or try the "
-              "other lock (steering is asymmetric).")
+        print(
+            "  Never went over in this sweep.  Widen --speeds or try the "
+            "other lock (steering is asymmetric)."
+        )
     print()
 
 

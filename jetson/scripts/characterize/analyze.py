@@ -373,7 +373,9 @@ def analyze_skidpad(run, options):
             f"geometric wheel angle at this command by it (as tangents) for "
             f"tire_scrub; on its own it cannot tell scrub from linkage."
         )
-        vehicle[f"lateral.understeer_gradient_{side}_{command:.2f}".replace(".", "p", 1)] = gradient
+        vehicle[
+            f"lateral.understeer_gradient_{side}_{command:.2f}".replace(".", "p", 1)
+        ] = gradient
         series.append(
             {
                 "label": f"{side} {command:.2f}",

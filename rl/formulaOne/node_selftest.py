@@ -41,7 +41,9 @@ failures = []
 
 
 def check(name, ok, detail=""):
-    print(f"[{'  ok  ' if ok else ' FAIL '}] {name}" + (f"   {detail}" if detail else ""))
+    print(
+        f"[{'  ok  ' if ok else ' FAIL '}] {name}" + (f"   {detail}" if detail else "")
+    )
     if not ok:
         failures.append(name)
 
@@ -59,10 +61,12 @@ class Monitor(Node):
         self.samples = []
         self.hint = np.zeros(1, dtype=np.int64)
         self.pose = None
-        self.create_subscription(DriveCommand, "/drive_cmd", self.on_cmd,
-                                 qos_profile_sensor_data)
-        self.create_subscription(PoseStamped, "/zed/zed_node/pose", self.on_pose,
-                                 qos_profile_sensor_data)
+        self.create_subscription(
+            DriveCommand, "/drive_cmd", self.on_cmd, qos_profile_sensor_data
+        )
+        self.create_subscription(
+            PoseStamped, "/zed/zed_node/pose", self.on_pose, qos_profile_sensor_data
+        )
 
     def on_pose(self, msg):
         self.pose = msg
@@ -77,17 +81,22 @@ class Monitor(Node):
         yaw = np.array([np.arctan2(2 * (q.w * q.z), 1 - 2 * q.z**2)])
         self.hint, station, _ = self.track.project(x, y, self.hint)
         clear = self.track.body_clearance(x, y, yaw, self.hl, self.hw)[0]
-        self.samples.append((station[0], self.track.v_cap[self.hint][0],
-                             msg.velocity, clear))
+        self.samples.append(
+            (station[0], self.track.v_cap[self.hint][0], msg.velocity, clear)
+        )
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--policy", type=Path, default=None)
-    ap.add_argument("--seconds", type=float, default=140.0)   # two laps at the
-                    # scripted floor is ~72 s, plus the coast to rest
-    ap.add_argument("--domain", type=int, default=77,
-                    help="ROS_DOMAIN_ID to run on; must be one nothing else uses")
+    ap.add_argument("--seconds", type=float, default=140.0)  # two laps at the
+    # scripted floor is ~72 s, plus the coast to rest
+    ap.add_argument(
+        "--domain",
+        type=int,
+        default=77,
+        help="ROS_DOMAIN_ID to run on; must be one nothing else uses",
+    )
     args = ap.parse_args()
 
     # On its own domain, always.  A simulator left running elsewhere on the
@@ -105,7 +114,9 @@ def main():
 
     from rclpy.parameter import Parameter
 
-    overrides = [Parameter("driver", value="baseline" if args.policy is None else "policy")]
+    overrides = [
+        Parameter("driver", value="baseline" if args.policy is None else "policy")
+    ]
     if args.policy is not None:
         overrides.append(Parameter("policy", value=str(args.policy)))
 
@@ -130,40 +141,63 @@ def main():
 
     print()
     arming = [c for c in monitor.commands[:20]]
-    check("arms the Arduino before it drives",
-          bool(arming) and all(c[0] for c in arming) and all(abs(c[2]) < 1e-6 for c in arming[:5]),
-          "auto_ready true with zero velocity while waiting for green")
-    check("published DriveCommand throughout", len(monitor.commands) > 100,
-          f"{len(monitor.commands)} commands")
+    check(
+        "arms the Arduino before it drives",
+        bool(arming)
+        and all(c[0] for c in arming)
+        and all(abs(c[2]) < 1e-6 for c in arming[:5]),
+        "auto_ready true with zero velocity while waiting for green",
+    )
+    check(
+        "published DriveCommand throughout",
+        len(monitor.commands) > 100,
+        f"{len(monitor.commands)} commands",
+    )
 
     s = np.array(monitor.samples)
     moving = s[s[:, 2] > 0.1] if len(s) else np.empty((0, 4))
     check("drove", len(moving) > 50, f"{len(moving)} commands with throttle")
     if len(moving):
         excess = (moving[:, 2] - moving[:, 1]).max()
-        check("never commanded above the rule cap", excess <= 1e-6,
-              f"worst {excess:+.4f} m/s over")
-        check("steering stayed in range",
-              max(abs(c[1]) for c in monitor.commands) <= 1.0 + 1e-6)
-        check("never touched a bale", s[:, 3].min() > 0.0,
-              f"min clearance {s[:, 3].min():.3f} m")
-    check("completed the run", finished and laps >= cfg["env"]["laps"],
-          f"{laps} laps, {distance:.1f} m")
+        check(
+            "never commanded above the rule cap",
+            excess <= 1e-6,
+            f"worst {excess:+.4f} m/s over",
+        )
+        check(
+            "steering stayed in range",
+            max(abs(c[1]) for c in monitor.commands) <= 1.0 + 1e-6,
+        )
+        check(
+            "never touched a bale",
+            s[:, 3].min() > 0.0,
+            f"min clearance {s[:, 3].min():.3f} m",
+        )
+    check(
+        "completed the run",
+        finished and laps >= cfg["env"]["laps"],
+        f"{laps} laps, {distance:.1f} m",
+    )
     # The run is two laps AND a stop, and the node has to do the stop the same
     # way the trainer does: throttle to zero, steering still live, until the
     # car is at rest.  Cutting steering at the line -- which is what this node
     # used to do -- coasts 15 m straight into the bales it was turning away
     # from, and `finished` would still have been True.
-    check("stopped after the last lap rather than freezing the wheels",
-          stopping and race_time is not None,
-          f"race {race_time:.1f} s, then coasted "
-          f"{distance - cfg['env']['laps'] * trk.length:.1f} m to rest"
-          if race_time else "never entered the stopping phase")
+    check(
+        "stopped after the last lap rather than freezing the wheels",
+        stopping and race_time is not None,
+        f"race {race_time:.1f} s, then coasted "
+        f"{distance - cfg['env']['laps'] * trk.length:.1f} m to rest"
+        if race_time
+        else "never entered the stopping phase",
+    )
     if len(moving):
         tail = [c for c in monitor.commands[-40:]]
-        check("commanded zero throttle while coasting to a stop",
-              all(abs(c[2]) < 1e-6 for c in tail),
-              f"last {len(tail)} commands")
+        check(
+            "commanded zero throttle while coasting to a stop",
+            all(abs(c[2]) < 1e-6 for c in tail),
+            f"last {len(tail)} commands",
+        )
 
     print()
     if failures:

@@ -46,7 +46,10 @@ from mpc_tracker import MpcConfig, MpcTracker
 
 GRAVITY = 9.81
 DEFAULT_PATH = Path(__file__).resolve().parent / "course_path.json"
-DEFAULT_SDF = Path(__file__).resolve().parents[2] / "jetson/cfr_arduino_bridge/worlds/speed_course.sdf"
+DEFAULT_SDF = (
+    Path(__file__).resolve().parents[2]
+    / "jetson/cfr_arduino_bridge/worlds/speed_course.sdf"
+)
 
 # Live corridor centering on top of the planned line. course_path.py's speed
 # profile assumes the corridor is exactly where the SDF says and the car
@@ -58,7 +61,7 @@ DEFAULT_SDF = Path(__file__).resolve().parents[2] / "jetson/cfr_arduino_bridge/w
 # would react to a live scan, but applied as a bias on top of the planned
 # racing line rather than replacing it.
 WALL_FOLLOW_MARGIN = 0.25  # m; corridor is ~0.95 m wide, car is 0.30 m wide --
-                           # start correcting well before the bodywork is close
+# start correcting well before the bodywork is close
 WALL_FOLLOW_GAIN = 0.6  # m of aim-point shift per m of margin violation
 WALL_FOLLOW_MAX_SHIFT = 0.15  # m, caps this at a nudge, not a replacement path
 WALL_FOLLOW_RANGE = 2.0  # m; how far side_clearance looks for a bale
@@ -202,9 +205,15 @@ class PathRacer(Node):
         if left < WALL_FOLLOW_MARGIN:
             violation -= WALL_FOLLOW_MARGIN - left  # too close on the left -> aim right
         if right < WALL_FOLLOW_MARGIN:
-            violation += WALL_FOLLOW_MARGIN - right  # too close on the right -> aim left
+            violation += (
+                WALL_FOLLOW_MARGIN - right
+            )  # too close on the right -> aim left
         return float(
-            np.clip(violation * WALL_FOLLOW_GAIN, -WALL_FOLLOW_MAX_SHIFT, WALL_FOLLOW_MAX_SHIFT)
+            np.clip(
+                violation * WALL_FOLLOW_GAIN,
+                -WALL_FOLLOW_MAX_SHIFT,
+                WALL_FOLLOW_MAX_SHIFT,
+            )
         )
 
     def _set_direction(self, index: int, yaw: float) -> None:

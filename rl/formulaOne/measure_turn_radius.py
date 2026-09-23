@@ -24,7 +24,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import sys
 import time
 import urllib.request
 from pathlib import Path
@@ -52,8 +51,9 @@ TELEPORT = f"http://127.0.0.1:{TELEPORT_PORT}/api/sim/teleport"
 
 def teleport(x, y, heading):
     body = json.dumps({"x": x, "y": y, "heading": heading}).encode()
-    req = urllib.request.Request(TELEPORT, data=body,
-                                 headers={"Content-Type": "application/json"})
+    req = urllib.request.Request(
+        TELEPORT, data=body, headers={"Content-Type": "application/json"}
+    )
     with urllib.request.urlopen(req, timeout=5) as r:
         return json.loads(r.read())
 
@@ -71,12 +71,14 @@ def fit_circle(x, y):
 class Driver(Node):
     def __init__(self):
         super().__init__("measure_turn_radius")
-        self.pub = self.create_publisher(DriveCommand, "/drive_cmd",
-                                         qos_profile_sensor_data)
+        self.pub = self.create_publisher(
+            DriveCommand, "/drive_cmd", qos_profile_sensor_data
+        )
         self.poses = []
         self.recording = False
-        self.create_subscription(PoseStamped, "/zed/zed_node/pose", self.on_pose,
-                                 qos_profile_sensor_data)
+        self.create_subscription(
+            PoseStamped, "/zed/zed_node/pose", self.on_pose, qos_profile_sensor_data
+        )
         self.steer = 0.0
         self.speed = 0.0
         self.create_timer(0.02, self.tick)
@@ -120,8 +122,11 @@ def main():
     # Refuse to teleport anything until a simulator is confirmed alive on OUR
     # ROS_DOMAIN_ID.  Without this the script will happily drive a simulation
     # belonging to someone else that merely happens to hold the port.
-    print(f"  checking for a simulator on ROS_DOMAIN_ID="
-          f"{os.environ.get('ROS_DOMAIN_ID', '0')} ...", flush=True)
+    print(
+        f"  checking for a simulator on ROS_DOMAIN_ID="
+        f"{os.environ.get('ROS_DOMAIN_ID', '0')} ...",
+        flush=True,
+    )
     seen = []
     node.recording = True
     spin(node, 4.0)
@@ -138,14 +143,15 @@ def main():
 
     print(f"\n  {'cmd':>6} {'speed':>6} {'model R':>9} {'gazebo R':>9} {'ratio':>7}")
     rows = []
-    sweep = [(s, 2.0) for s in (1.0, 0.8, 0.6, 0.4, 0.25,
-                                -0.25, -0.4, -0.6, -0.8, -1.0)]
+    sweep = [
+        (s, 2.0) for s in (1.0, 0.8, 0.6, 0.4, 0.25, -0.25, -0.4, -0.6, -0.8, -1.0)
+    ]
     for steer, speed in sweep:
         teleport(args.x, args.y, 0.0)
         node.steer, node.speed, node.recording, node.poses = 0.0, 0.0, False, []
         spin(node, 1.5)
         node.steer, node.speed = steer, speed
-        spin(node, args.settle)              # past the dead time, up to speed
+        spin(node, args.settle)  # past the dead time, up to speed
         node.recording = True
         spin(node, args.record)
         node.recording = False
@@ -160,18 +166,21 @@ def main():
         eff = p["wheelbase"] + p["understeer_gradient"] * speed**2
         model = abs(eff / math.tan(angle))
         rows.append((steer, speed, model, gz))
-        print(f"  {steer:6.2f} {speed:6.2f} {model:8.2f}m {gz:8.2f}m "
-              f"{gz/model:7.2f}")
+        print(f"  {steer:6.2f} {speed:6.2f} {model:8.2f}m {gz:8.2f}m {gz / model:7.2f}")
 
     node.destroy_node()
     rclpy.shutdown()
     if rows:
         ratios = np.array([r[3] / r[2] for r in rows])
         print(f"\n  Gazebo turns {np.median(ratios):.2f}x the radius plant.py predicts")
-        print(f"  (1.00 = the model is right; >1 = the car understeers more than modelled)")
+        print(
+            "  (1.00 = the model is right; >1 = the car understeers more than modelled)"
+        )
         tightest = min(r[3] for r in rows if abs(r[0]) == 1.0)
-        print(f"  tightest circle Gazebo achieved: {tightest:.2f} m "
-              f"-- the course's hairpin needs 1.48 m")
+        print(
+            f"  tightest circle Gazebo achieved: {tightest:.2f} m "
+            f"-- the course's hairpin needs 1.48 m"
+        )
 
 
 if __name__ == "__main__":

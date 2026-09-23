@@ -41,27 +41,40 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default=str(HERE / "config_lap.yaml"))
     parser.add_argument("--sdf-path", default=str(DEFAULT_SDF))
-    parser.add_argument("--teleport-url",
-                        default="http://localhost:9003/api/sim/teleport")
+    parser.add_argument(
+        "--teleport-url", default="http://localhost:9003/api/sim/teleport"
+    )
     parser.add_argument("--laps", type=int, default=2)
     parser.add_argument("--target-speed", type=float, default=3.2)
     parser.add_argument("--lookahead", type=float, default=1.2)
-    parser.add_argument("--plan-scale", type=float, default=1.0,
-                        help="fraction of the plan's min-time speed to ask for")
-    parser.add_argument("--no-plan-speed", action="store_true",
-                        help="ignore the plan's speed profile (the driver then "
-                             "arrives at hairpins at straight-line speed)")
-    parser.add_argument("--scan-source", default="analytic",
-                        choices=["analytic", "cloud"])
+    parser.add_argument(
+        "--plan-scale",
+        type=float,
+        default=1.0,
+        help="fraction of the plan's min-time speed to ask for",
+    )
+    parser.add_argument(
+        "--no-plan-speed",
+        action="store_true",
+        help="ignore the plan's speed profile (the driver then "
+        "arrives at hairpins at straight-line speed)",
+    )
+    parser.add_argument(
+        "--scan-source", default="analytic", choices=["analytic", "cloud"]
+    )
     parser.add_argument("--time-limit", type=float, default=180.0)
     parser.add_argument("--output", default=None)
     args = parser.parse_args()
 
     config = yaml.safe_load(Path(args.config).read_text())
     env_config = dict(config["env"])
-    env_config.update(scan_source=args.scan_source, randomize_start=False,
-                      wedged_start_prob=0.0, max_laps=args.laps,
-                      episode_time_limit_s=args.time_limit)
+    env_config.update(
+        scan_source=args.scan_source,
+        randomize_start=False,
+        wedged_start_prob=0.0,
+        max_laps=args.laps,
+        episode_time_limit_s=args.time_limit,
+    )
 
     environment = LapRacerEnv(
         sdf_path=args.sdf_path,
@@ -70,9 +83,13 @@ def main() -> None:
         zed_config=ZedSimConfig(**config.get("zed_sim", {})),
         **env_config,
     )
-    driver = PursuitDriver(environment, args.lookahead, args.target_speed,
-                           use_plan_speed=not args.no_plan_speed,
-                           plan_scale=args.plan_scale)
+    driver = PursuitDriver(
+        environment,
+        args.lookahead,
+        args.target_speed,
+        use_plan_speed=not args.no_plan_speed,
+        plan_scale=args.plan_scale,
+    )
 
     try:
         environment.reset()

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """The scripted driver: the centerline prior, plus a coast-feasible speed profile.
 
 This is the floor a learned policy has to beat, and it is deliberately made of
@@ -114,7 +113,8 @@ class BaselineDriver:
         self.track = track
         self.cfg = config
         self.v_ref = feasible_profile(track, config) * float(
-            config["env"]["baseline_speed_scale"])
+            config["env"]["baseline_speed_scale"]
+        )
         self.dead_time = float(config["plant"]["command_dead_time"])
 
     def reset(self, n=1):

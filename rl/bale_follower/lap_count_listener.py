@@ -6,6 +6,7 @@ LapCount message a competition run and the field-card procedure both read --
 as opposed to path_racer.py's own arc-length bookkeeping, which this is meant
 to cross-check.
 """
+
 from __future__ import annotations
 
 import argparse

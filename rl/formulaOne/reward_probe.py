@@ -52,12 +52,13 @@ def main():
 
     if args.policy:
         from policy import NumpyPolicy
+
         net = NumpyPolicy.load(args.policy)
-        act = lambda env, obs: net.act(obs)          # noqa: E731
+        act = lambda env, obs: net.act(obs)  # noqa: E731
         label = str(args.policy)
     else:
         drv = BaselineDriver(trk, cfg)
-        act = lambda env, obs: env.scripted_action(drv)   # noqa: E731
+        act = lambda env, obs: env.scripted_action(drv)  # noqa: E731
         label = "scripted baseline"
 
     # reward.step returns the terms, but the env does not keep them, so the
@@ -70,13 +71,19 @@ def main():
 
     def spy(**kw):
         total, terms = inner(**kw)
-        history.append((float(np.ravel(total)[0]),
-                        {k: float(np.ravel(v)[0]) for k, v in terms.items()},
-                        dict(speed=float(kw["speed"][0]),
-                             v_cap=float(kw["v_cap"][0]),
-                             clearance=float(kw["clearance"][0]),
-                             lateral=float(kw["lateral"][0]),
-                             stopping=float(np.ravel(kw["stopping"])[0]))))
+        history.append(
+            (
+                float(np.ravel(total)[0]),
+                {k: float(np.ravel(v)[0]) for k, v in terms.items()},
+                dict(
+                    speed=float(kw["speed"][0]),
+                    v_cap=float(kw["v_cap"][0]),
+                    clearance=float(kw["clearance"][0]),
+                    lateral=float(kw["lateral"][0]),
+                    stopping=float(np.ravel(kw["stopping"])[0]),
+                ),
+            )
+        )
         return total, terms
 
     env.reward.step = lambda **kw: spy(**kw)
@@ -96,13 +103,17 @@ def main():
     ret = sum(totals.values())
 
     print(f"\n  {label}")
-    print(f"  {len(history)} ticks, return {ret:.1f}   "
-          f"(+{pos:.0f} earned, -{neg:.0f} paid)")
+    print(
+        f"  {len(history)} ticks, return {ret:.1f}   "
+        f"(+{pos:.0f} earned, -{neg:.0f} paid)"
+    )
     if rec:
-        print(f"  race {rec['race_time']:.2f} s, stopped={rec['stopped']}, "
-              f"clearance {rec['min_clearance']:+.3f} m, "
-              f"cte {rec['mean_cte']:.3f}/{rec['max_cte']:.3f} m, "
-              f"jerk {rec['steer_jerk_rms']:.4f}")
+        print(
+            f"  race {rec['race_time']:.2f} s, stopped={rec['stopped']}, "
+            f"clearance {rec['min_clearance']:+.3f} m, "
+            f"cte {rec['mean_cte']:.3f}/{rec['max_cte']:.3f} m, "
+            f"jerk {rec['steer_jerk_rms']:.4f}"
+        )
 
     print(f"\n  {'term':<12} {'total':>9} {'share':>7}   {'per second':>11}")
     secs = len(history) * env.dt_nominal
@@ -112,7 +123,7 @@ def main():
         flag = ""
         if v < 0 and 0 < share < 3:
             flag = "  <- under 3% of the cost side: not constraining anything"
-        print(f"  {n:<12} {v:+9.1f} {share:6.1f}%   {v/secs:+11.2f}{flag}")
+        print(f"  {n:<12} {v:+9.1f} {share:6.1f}%   {v / secs:+11.2f}{flag}")
 
     # The four states that decide a lap.
     racing = [h for h in history if h[2]["stopping"] < 0.5]
@@ -122,12 +133,15 @@ def main():
         ("closest to a bale", min(racing, key=lambda h: h[2]["clearance"])),
         ("worst cross-track", max(racing, key=lambda h: abs(h[2]["lateral"]))),
     ]
-    print(f"\n  {'':<20} {'v':>5} {'clear':>7} {'cte':>7}   "
-          + " ".join(f"{n[:9]:>9}" for n in names))
+    print(
+        f"\n  {'':<20} {'v':>5} {'clear':>7} {'cte':>7}   "
+        + " ".join(f"{n[:9]:>9}" for n in names)
+    )
     for why, (total, terms, st) in picks:
-        print(f"  {why:<20} {st['speed']:5.2f} {st['clearance']:+7.3f} "
-              f"{st['lateral']:+7.3f}   "
-              + " ".join(f"{terms[n]:>9.2f}" for n in names))
+        print(
+            f"  {why:<20} {st['speed']:5.2f} {st['clearance']:+7.3f} "
+            f"{st['lateral']:+7.3f}   " + " ".join(f"{terms[n]:>9.2f}" for n in names)
+        )
     print()
 
 

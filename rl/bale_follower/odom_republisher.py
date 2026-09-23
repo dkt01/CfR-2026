@@ -9,6 +9,7 @@ validates that `path_racer.py`'s `_on_odom` handler is wired correctly and
 drives identically to the TF path, which is the part of "does --pose-msg odom
 work" that is actually testable without the physical Orin.
 """
+
 from __future__ import annotations
 
 import argparse

@@ -46,10 +46,12 @@ class Recorder(Node):
         self.cmd = None
         self.poses = []
         self.cmds = []
-        self.create_subscription(DriveCommand, "/drive_cmd", self.on_cmd,
-                                 qos_profile_sensor_data)
-        self.create_subscription(PoseStamped, "/zed/zed_node/pose", self.on_pose,
-                                 qos_profile_sensor_data)
+        self.create_subscription(
+            DriveCommand, "/drive_cmd", self.on_cmd, qos_profile_sensor_data
+        )
+        self.create_subscription(
+            PoseStamped, "/zed/zed_node/pose", self.on_pose, qos_profile_sensor_data
+        )
 
     def on_cmd(self, msg):
         self.cmd = (float(msg.steering), float(msg.velocity), bool(msg.auto_ready))
@@ -78,6 +80,7 @@ def main():
     rclpy.init()
     node = Recorder()
     import time as wall
+
     stop = wall.time() + args.seconds
     while wall.time() < stop:
         rclpy.spin_once(node, timeout_sec=0.05)
@@ -106,23 +109,30 @@ def main():
     sane = (dt > 1e-3) & (dt < 0.2)
     moving = sane & (speed > 1.5)
     use = moving & (np.abs(predicted) > 0.15)
-    print(f"\n  {len(poses)} poses | {sane.sum()} sane dt | {moving.sum()} moving "
-          f"(>1.5 m/s) | {use.sum()} cornering (|predicted| > 0.15 rad/s)")
+    print(
+        f"\n  {len(poses)} poses | {sane.sum()} sane dt | {moving.sum()} moving "
+        f"(>1.5 m/s) | {use.sum()} cornering (|predicted| > 0.15 rad/s)"
+    )
     if moving.sum() < 20:
         raise SystemExit(
             "  The car was barely moving for this window -- it had already "
             "beached, or the run had not started. Time the measurement to "
-            "begin at the green light.")
+            "begin at the green light."
+        )
     if use.sum() < 20:
         raise SystemExit(f"  only {use.sum()} cornering samples; widen the window")
     ratio = achieved[use] / predicted[use]
 
-    print(f"\n  {use.sum()} cornering samples, speed {speed[use].min():.1f}"
-          f"-{speed[use].max():.1f} m/s\n")
-    print(f"  achieved / predicted yaw rate")
+    print(
+        f"\n  {use.sum()} cornering samples, speed {speed[use].min():.1f}"
+        f"-{speed[use].max():.1f} m/s\n"
+    )
+    print("  achieved / predicted yaw rate")
     print(f"    median   {np.median(ratio):.3f}")
     print(f"    mean     {ratio.mean():.3f}")
-    print(f"    p10-p90  {np.percentile(ratio,10):.3f} - {np.percentile(ratio,90):.3f}")
+    print(
+        f"    p10-p90  {np.percentile(ratio, 10):.3f} - {np.percentile(ratio, 90):.3f}"
+    )
     print()
     for lo, hi in ((1.5, 3.0), (3.0, 4.2), (4.2, 6.0)):
         m = use & (speed > lo) & (speed <= hi)
@@ -132,14 +142,15 @@ def main():
     print()
     shortfall = 1.0 - np.median(ratio)
     if shortfall > 0.10:
-        print(f"  Gazebo delivers {100*shortfall:.0f}% LESS yaw rate than plant.py")
-        print(f"  predicts. That is a missing term in the model, not a mis-set")
-        print(f"  parameter -- randomising understeer cannot span it.")
+        print(f"  Gazebo delivers {100 * shortfall:.0f}% LESS yaw rate than plant.py")
+        print("  predicts. That is a missing term in the model, not a mis-set")
+        print("  parameter -- randomising understeer cannot span it.")
     else:
-        print(f"  plant.py matches Gazebo to {100*abs(shortfall):.0f}% in yaw rate.")
+        print(f"  plant.py matches Gazebo to {100 * abs(shortfall):.0f}% in yaw rate.")
     if args.out:
-        np.savez(args.out, t=t, x=x, y=y, yaw=yaw, steer=cmds[:, 0],
-                 velocity=cmds[:, 1])
+        np.savez(
+            args.out, t=t, x=x, y=y, yaw=yaw, steer=cmds[:, 0], velocity=cmds[:, 1]
+        )
         print(f"\n  raw log -> {args.out}")
 
 

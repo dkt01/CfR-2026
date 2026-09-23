@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Batched model of the whole actuation chain, from DriveCommand to pose.
 
 This is a transcription of what is already on the car, not a new model:
@@ -59,7 +58,9 @@ class Plant:
         # it would add a parameter the policy cannot observe a consequence of.
         # steering_tau is the opposite - see `nominal` below.
         self.steering_slew = float(p["steering_slew"])
-        self.steering_limit_nominal = max(abs(self.steer_ang[0]), abs(self.steer_ang[-1]))
+        self.steering_limit_nominal = max(
+            abs(self.steer_ang[0]), abs(self.steer_ang[-1])
+        )
         self.nominal = dict(
             dead_time=float(p["command_dead_time"]),
             coast_f0=float(p["coast_f0"]) / float(p["mass"]),
@@ -125,10 +126,22 @@ class Plant:
         """Place the cars in `mask` and give them a fresh plant."""
         if not hasattr(self, "dead_time"):
             z = np.zeros(self.n)
-            for name in ("dead_time", "coast_f0", "coast_f1", "accel", "slew",
-                         "understeer", "tire_scrub", "steer_gain", "steer_asym",
-                         "steer_offset", "steer_limit", "dropout", "yaw_tau",
-                         "steer_tau"):
+            for name in (
+                "dead_time",
+                "coast_f0",
+                "coast_f1",
+                "accel",
+                "slew",
+                "understeer",
+                "tire_scrub",
+                "steer_gain",
+                "steer_asym",
+                "steer_offset",
+                "steer_limit",
+                "dropout",
+                "yaw_tau",
+                "steer_tau",
+            ):
                 setattr(self, name, z.copy())
             self.yaw_rate = z.copy()
             self.x, self.y, self.yaw = z.copy(), z.copy(), z.copy()
@@ -215,7 +228,9 @@ class Plant:
         # R_gazebo = tire_scrub * (L + K v^2) / tan(delta), so tire_scrub
         # multiplies the effective wheelbase exactly the way K v^2 does --
         # it is a second, speed-independent term in the same denominator.
-        eff_wheelbase = (self.wheelbase + self.understeer * self.speed**2) * self.tire_scrub
+        eff_wheelbase = (
+            self.wheelbase + self.understeer * self.speed**2
+        ) * self.tire_scrub
         kinematic_rate = self.speed * np.tan(self.steer_angle) / eff_wheelbase
         # THE CHASSIS DOES NOT ADOPT THAT YAW RATE THE INSTANT THE WHEELS ARE
         # POINTED.  Measured (measure_step_steer.py, fitted by fit_yaw_lag.py):

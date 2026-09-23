@@ -23,31 +23,49 @@ def generate_launch_description():
     args = [
         DeclareLaunchArgument("policy", default_value=str(HERE / "runs/v1/policy.npz")),
         DeclareLaunchArgument("config", default_value=str(HERE / "config.yaml")),
-        DeclareLaunchArgument("driver", default_value="policy",
-                              description="policy | baseline"),
-        DeclareLaunchArgument("laps", default_value="0", description="0 takes it from config"),
-        DeclareLaunchArgument("anchor", default_value="signal",
-                              description="signal latches the start pose; world trusts the frame"),
+        DeclareLaunchArgument(
+            "driver", default_value="policy", description="policy | baseline"
+        ),
+        DeclareLaunchArgument(
+            "laps", default_value="0", description="0 takes it from config"
+        ),
+        DeclareLaunchArgument(
+            "anchor",
+            default_value="signal",
+            description="signal latches the start pose; world trusts the frame",
+        ),
         DeclareLaunchArgument("use_sim_time", default_value="true"),
         DeclareLaunchArgument("rviz", default_value="true"),
         DeclareLaunchArgument("speed_scale", default_value="1.0"),
     ]
 
     driver = ExecuteProcess(
-        cmd=["python3", str(HERE / "formula_one_node.py"),
-             "--ros-args",
-             "-p", ["policy:=", LaunchConfiguration("policy")],
-             "-p", ["config:=", LaunchConfiguration("config")],
-             "-p", ["driver:=", LaunchConfiguration("driver")],
-             "-p", ["laps:=", LaunchConfiguration("laps")],
-             "-p", ["anchor:=", LaunchConfiguration("anchor")],
-             "-p", ["speed_scale:=", LaunchConfiguration("speed_scale")],
-             "-p", ["use_sim_time:=", LaunchConfiguration("use_sim_time")]],
+        cmd=[
+            "python3",
+            str(HERE / "formula_one_node.py"),
+            "--ros-args",
+            "-p",
+            ["policy:=", LaunchConfiguration("policy")],
+            "-p",
+            ["config:=", LaunchConfiguration("config")],
+            "-p",
+            ["driver:=", LaunchConfiguration("driver")],
+            "-p",
+            ["laps:=", LaunchConfiguration("laps")],
+            "-p",
+            ["anchor:=", LaunchConfiguration("anchor")],
+            "-p",
+            ["speed_scale:=", LaunchConfiguration("speed_scale")],
+            "-p",
+            ["use_sim_time:=", LaunchConfiguration("use_sim_time")],
+        ],
         output="screen",
     )
 
     rviz = Node(
-        package="rviz2", executable="rviz2", name="formula_one_rviz",
+        package="rviz2",
+        executable="rviz2",
+        name="formula_one_rviz",
         arguments=["-d", str(HERE / "rviz/formula_one.rviz")],
         parameters=[{"use_sim_time": LaunchConfiguration("use_sim_time")}],
         condition=IfCondition(LaunchConfiguration("rviz")),

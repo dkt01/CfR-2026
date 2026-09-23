@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Run a trained policy with numpy alone.
 
 The Orin does not need torch to drive.  `export_policy.py` flattens the
@@ -29,7 +28,9 @@ class NumpyPolicy:
     def __init__(self, weights, biases, activation="tanh", meta=None):
         self.weights = weights
         self.biases = biases
-        self.activation = np.tanh if activation == "tanh" else lambda v: np.maximum(v, 0)
+        self.activation = (
+            np.tanh if activation == "tanh" else lambda v: np.maximum(v, 0)
+        )
         self.meta = meta or {}
 
     @classmethod

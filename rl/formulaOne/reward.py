@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """What driving well is worth, term by term.
 
 Kept separate from the env so that `reward_probe.py` can price a handful of
@@ -49,7 +48,9 @@ class Reward:
         # means a run from before the knee existed, whose lateral term was
         # purely quadratic; `inf` reproduces that exactly, so an old run
         # replays under the reward it was actually trained on.
-        self.lateral_knee = float(r.get("lateral_knee", float("inf"))) / self.lateral_scale
+        self.lateral_knee = (
+            float(r.get("lateral_knee", float("inf"))) / self.lateral_scale
+        )
         self.lap_bonus = float(r["lap_bonus"])
         self.finish_bonus = float(r["finish_bonus"])
         self.stop_bonus = float(r["stop_bonus"])
@@ -69,9 +70,24 @@ class Reward:
             return e**2
         return np.where(e <= k, e**2, k**2 + 2.0 * k * (e - k))
 
-    def step(self, dt, advance, speed, v_cap, clearance, lateral, steer_step,
-             steer_jerk, lapped, finished, crashed, stalled, stopping,
-             stopped, lap_gain):
+    def step(
+        self,
+        dt,
+        advance,
+        speed,
+        v_cap,
+        clearance,
+        lateral,
+        steer_step,
+        steer_jerk,
+        lapped,
+        finished,
+        crashed,
+        stalled,
+        stopping,
+        stopped,
+        lap_gain,
+    ):
         """Per-step reward for a batch, plus the terms that made it up.
 
         `stopping` is 1.0 for the cars that have finished their two laps and

@@ -108,14 +108,19 @@ class LapRacerEnv(BaleFollowerEnv):
         status_topic: str = "/arduino_bridge/status",
         **kwargs,
     ) -> None:
-        super().__init__(*args, stuck_window_s=stuck_window_s,
-                         stuck_distance=stuck_distance, **kwargs)
+        super().__init__(
+            *args,
+            stuck_window_s=stuck_window_s,
+            stuck_distance=stuck_distance,
+            **kwargs,
+        )
         self.track = LapTrack(course_path_json) if course_path_json else LapTrack()
         # The plan is a loop with no inherent direction; the SDF spawn heading
         # is what says which way round the course is driven.
         if self.track.orient_to(*self.spawn_pose):
-            print("lap_env: planned loop reversed to match the spawn heading",
-                  flush=True)
+            print(
+                "lap_env: planned loop reversed to match the spawn heading", flush=True
+            )
         self.counter = LapCounter(self.track)
         self.lap_reward_config = lap_reward_config or LapRewardConfig()
         self.max_laps = max_laps
@@ -186,17 +191,22 @@ class LapRacerEnv(BaleFollowerEnv):
         if self._status_stamp < 0.0:
             self._status_misses += 1
             if self._status_misses == 1:
-                print("WARNING: speed_source=status but no ArduinoStatus yet; "
-                      "using the true speed", flush=True)
+                print(
+                    "WARNING: speed_source=status but no ArduinoStatus yet; "
+                    "using the true speed",
+                    flush=True,
+                )
             elif self._status_misses >= 200:
                 raise RuntimeError(
                     "speed_source=status but /arduino_bridge/status has "
-                    "produced nothing in 200 steps")
+                    "produced nothing in 200 steps"
+                )
             return true_speed
         return self._status_speed
 
-    def _apply_traction(self, speed: float, steer_fraction: float,
-                        dt: float | None = None) -> float:
+    def _apply_traction(
+        self, speed: float, steer_fraction: float, dt: float | None = None
+    ) -> float:
         """As `BaleFollowerEnv._apply_traction`, but on the measured period."""
         dt = self._dt_estimate if dt is None else dt
         a_max = self.traction * GRAVITY
@@ -225,9 +235,7 @@ class LapRacerEnv(BaleFollowerEnv):
 
     def encode_action(self, speed: float, steer_rate_fraction: float) -> np.ndarray:
         throttle = (speed + self.reverse_speed) / (self.max_speed + self.reverse_speed)
-        return np.array(
-            [2.0 * throttle - 1.0, steer_rate_fraction], dtype=np.float32
-        )
+        return np.array([2.0 * throttle - 1.0, steer_rate_fraction], dtype=np.float32)
 
     # -------------------------------------------------------- observations
 
@@ -248,8 +256,7 @@ class LapRacerEnv(BaleFollowerEnv):
             self._scan_history.appendleft(normalized)
 
         speed_norm = np.clip(
-            (signed_speed + self.reverse_speed)
-            / (self.max_speed + self.reverse_speed),
+            (signed_speed + self.reverse_speed) / (self.max_speed + self.reverse_speed),
             0.0,
             1.0,
         )
@@ -257,8 +264,17 @@ class LapRacerEnv(BaleFollowerEnv):
         steer_norm = (self._cmd_steer_fraction + 1.0) / 2.0
         return np.concatenate(
             frames
-            + [np.array([speed_norm, yaw_norm, steer_norm,
-                         1.0 if self._recovering else 0.0], dtype=np.float32)]
+            + [
+                np.array(
+                    [
+                        speed_norm,
+                        yaw_norm,
+                        steer_norm,
+                        1.0 if self._recovering else 0.0,
+                    ],
+                    dtype=np.float32,
+                )
+            ]
         ).astype(np.float32)
 
     def _scan_at(self, pose: Pose2D) -> np.ndarray:
@@ -287,8 +303,11 @@ class LapRacerEnv(BaleFollowerEnv):
             if self.scan_source == "cloud":
                 self._cloud_misses += 1
                 if self._cloud_misses == 1:
-                    print("WARNING: scan_source=cloud but no cloud yet; "
-                          "using analytic scan", flush=True)
+                    print(
+                        "WARNING: scan_source=cloud but no cloud yet; "
+                        "using analytic scan",
+                        flush=True,
+                    )
                 elif self._cloud_misses >= 200:
                     raise RuntimeError(
                         f"scan_source=cloud but {self.cloud_topic} has produced "
@@ -301,7 +320,9 @@ class LapRacerEnv(BaleFollowerEnv):
                 pose.x + self.scan_origin_x * math.cos(pose.yaw),
                 pose.y + self.scan_origin_x * math.sin(pose.yaw),
                 pose.yaw,
-                self.num_lidar_bins, self.lidar_fov_deg, self.lidar_max_range,
+                self.num_lidar_bins,
+                self.lidar_fov_deg,
+                self.lidar_max_range,
             )
         else:
             self._cloud_hits += 1
@@ -392,8 +413,11 @@ class LapRacerEnv(BaleFollowerEnv):
             # the episode starts from wherever the car already is. The start
             # distribution degrades for one episode; the run survives.
             self._failed_teleports += 1
-            print(f"reset: {error} -- starting in place "
-                  f"({self._failed_teleports} so far)", flush=True)
+            print(
+                f"reset: {error} -- starting in place "
+                f"({self._failed_teleports} so far)",
+                flush=True,
+            )
         self._settle(0.3)
 
         pose = self._wait_for_pose(since=time.monotonic())
@@ -460,9 +484,6 @@ class LapRacerEnv(BaleFollowerEnv):
         # should not slew the actuator limits with it.
         self._dt_estimate = float(
             np.clip(0.9 * self._dt_estimate + 0.1 * dt, 0.005, 0.25)
-        )
-        step_distance = math.hypot(
-            pose.x - self._prev_pose.x, pose.y - self._prev_pose.y
         )
         forward = (pose.x - self._prev_pose.x) * math.cos(self._prev_pose.yaw) + (
             pose.y - self._prev_pose.y

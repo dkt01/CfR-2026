@@ -196,9 +196,7 @@ def lidar_scan(
     )
 
 
-def _segment_point_distance(
-    a: np.ndarray, b: np.ndarray, points: np.ndarray
-) -> float:
+def _segment_point_distance(a: np.ndarray, b: np.ndarray, points: np.ndarray) -> float:
     """Smallest distance from any of `points` (Nx2) to the segment a-b."""
     edge = b - a
     length_sq = float(edge @ edge)
@@ -221,7 +219,9 @@ def _obb_gap(corners_a: np.ndarray, corners_b: np.ndarray) -> float:
     best = math.inf
     for source, target in ((corners_a, corners_b), (corners_b, corners_a)):
         for i in range(4):
-            best = min(best, _segment_point_distance(target[i], target[(i + 1) % 4], source))
+            best = min(
+                best, _segment_point_distance(target[i], target[(i + 1) % 4], source)
+            )
     return best
 
 

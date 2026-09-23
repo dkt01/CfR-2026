@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """The policy's input vector, built in exactly one place.
 
 Both sides of the sim-to-real boundary import this file: `env.py` calls it for
@@ -39,13 +38,13 @@ OBS_DIM = 36
 # Normalisers.  Fixed constants rather than running statistics: a policy that
 # depends on a normaliser fitted during training needs that normaliser shipped
 # with it and applied identically, which is one more thing to get wrong.
-_LATERAL_SCALE = 0.5     # m -- half the corridor, near enough
-_ROOM_SCALE = 0.6        # m -- distance to a wall along the track normal
-_CLEAR_SCALE = 0.3       # m -- body clearance to the nearest bale
-_KAPPA_SCALE = 2.0       # 1/m -- |k| peaks at 0.68 on this course
-_PACE_SCALE = 5.0        # s -- how far ahead or behind the last lap's pace
-_RATE_SCALE = 2.0        # rad/s -- how far the chassis is behind its wheels
-_ACCEL_SCALE = 2.0       # m/s^2 -- how hard the car is actually slowing
+_LATERAL_SCALE = 0.5  # m -- half the corridor, near enough
+_ROOM_SCALE = 0.6  # m -- distance to a wall along the track normal
+_CLEAR_SCALE = 0.3  # m -- body clearance to the nearest bale
+_KAPPA_SCALE = 2.0  # 1/m -- |k| peaks at 0.68 on this course
+_PACE_SCALE = 5.0  # s -- how far ahead or behind the last lap's pace
+_RATE_SCALE = 2.0  # rad/s -- how far the chassis is behind its wheels
+_ACCEL_SCALE = 2.0  # m/s^2 -- how hard the car is actually slowing
 
 
 class ObservationBuilder:
@@ -98,10 +97,12 @@ class ObservationBuilder:
         # curvature smoothing, so it gets the same treatment curvature did.
         k = track.kappa
         dk = (np.roll(k, -1) - np.roll(k, 1)) / (2.0 * track.ds)
-        win = max(int(round(float(config["track"]["curvature_smooth_m"]) / track.ds)), 1)
+        win = max(
+            int(round(float(config["track"]["curvature_smooth_m"]) / track.ds)), 1
+        )
         kern = np.ones(win) / win
         pad = np.concatenate([dk[-win:], dk, dk[:win]])
-        self.dkappa = np.convolve(pad, kern, mode="same")[win:win + len(dk)]
+        self.dkappa = np.convolve(pad, kern, mode="same")[win : win + len(dk)]
         # How far ahead the prior evaluates itself.  Three delays stack up
         # between deciding on a command and the car actually being somewhere
         # else: command_dead_time (0.19 s) before the wheels move,
@@ -110,8 +111,9 @@ class ObservationBuilder:
         # a tuned constant in config.yaml rather than their sum, because the
         # lead term below already cancels part of the third one and summing
         # them double-counts it.  CFR_FF_HORIZON overrides it for a sweep.
-        self.ff_horizon = float(os.environ.get(
-            "CFR_FF_HORIZON", config["env"]["steer_prior"]["horizon_s"]))
+        self.ff_horizon = float(
+            os.environ.get("CFR_FF_HORIZON", config["env"]["steer_prior"]["horizon_s"])
+        )
         prior = config["env"]["steer_prior"]
         self.k_lateral = float(prior["k_lateral"])
         self.k_heading = float(prior["k_heading"])
@@ -186,8 +188,9 @@ class ObservationBuilder:
         eff_wheelbase = (self.wheelbase + self.understeer * speed**2) * self.tire_scrub
 
         # Where the yaw rate is HEADED, from the command already in flight.
-        last_angle = np.interp(np.clip(last_steer, -1.0, 1.0),
-                               self.steer_pts, self.steer_ang)
+        last_angle = np.interp(
+            np.clip(last_steer, -1.0, 1.0), self.steer_pts, self.steer_ang
+        )
         rate_kin = speed * np.tan(last_angle) / eff_wheelbase
         # Integral of the first-order relaxation from yaw_rate toward it.
         decay = np.exp(-h / max(self.yaw_tau, 1e-6))
@@ -209,16 +212,20 @@ class ObservationBuilder:
         # dw/dt = (w_kin - w)/tau needs an angle set by k + tau*v*dk/ds -- but
         # at 5 m/s into a hairpin mouth that term alone is 1.2 1/m against a
         # curvature of 0.68 and saturates the lock, so it is scaled.
-        kappa_lead = (t.at(station_p, t.kappa) + self.lead_scale * self.yaw_tau
-                      * speed * t.at(station_p, self.dkappa))
+        kappa_lead = t.at(
+            station_p, t.kappa
+        ) + self.lead_scale * self.yaw_tau * speed * t.at(station_p, self.dkappa)
         angle = np.arctan(eff_wheelbase * kappa_lead)
         # Stanley form: firm in a 2.5 m/s hairpin, gentle on a 5.2 m/s
         # straight, from one constant.  The yaw-rate term is damping: with a
         # 0.34 s chassis lag in the loop, position-and-heading feedback alone
         # is a second-order system with almost no damping in it, and it rings.
         rate_error = yaw_rate - speed * t.at(station_p, t.kappa)
-        angle = angle - self.k_heading * psi - self.k_rate * rate_error - np.arctan(
-            self.k_lateral * lateral / np.maximum(speed, self.speed_floor)
+        angle = (
+            angle
+            - self.k_heading * psi
+            - self.k_rate * rate_error
+            - np.arctan(self.k_lateral * lateral / np.maximum(speed, self.speed_floor))
         )
         angle = np.clip(angle, self.steer_ang[0], self.steer_ang[-1])
         # Through the measured table, so the command means the same thing here
@@ -227,8 +234,9 @@ class ObservationBuilder:
         # channel of its own.
         return np.interp(angle, self.steer_ang, self.steer_pts), rate_kin - yaw_rate
 
-    def compute(self, x, y, yaw, speed, yaw_rate, speed_rate, prev_action,
-                last_steer, lap_state):
+    def compute(
+        self, x, y, yaw, speed, yaw_rate, speed_rate, prev_action, last_steer, lap_state
+    ):
         """(B, OBS_DIM) plus the frame quantities the caller also wants.
 
         `lap_state` is (B, 3): how far through the current lap the car is
@@ -266,11 +274,15 @@ class ObservationBuilder:
 
         cap_ahead = t.lookahead(station, self.lookahead, t.v_cap)
         kappa_ahead = t.lookahead(station, self.lookahead, t.kappa)
-        steer_ff, rate_lag = self.steer_prior(station, x, y, yaw, speed,
-                                              yaw_rate, last_steer)
+        steer_ff, rate_lag = self.steer_prior(
+            station, x, y, yaw, speed, yaw_rate, last_steer
+        )
 
-        accel_channel = ([np.clip(speed_rate / _ACCEL_SCALE, -3.0, 3.0)[:, None]]
-                         if self.observe_accel else [])
+        accel_channel = (
+            [np.clip(speed_rate / _ACCEL_SCALE, -3.0, 3.0)[:, None]]
+            if self.observe_accel
+            else []
+        )
         obs = np.concatenate(
             [
                 (speed / self.v_ref)[:, None],
@@ -338,9 +350,17 @@ class ObservationBuilder:
             axis=1,
         )
         frame = dict(
-            index=idx, station=station, lateral=lateral, psi=psi,
-            v_cap=v_cap_now, v_floor=v_floor_now, clearance=clear, steer_ff=steer_ff,
-            room_left=room_left, room_right=room_right, pace=pace,
+            index=idx,
+            station=station,
+            lateral=lateral,
+            psi=psi,
+            v_cap=v_cap_now,
+            v_floor=v_floor_now,
+            clearance=clear,
+            steer_ff=steer_ff,
+            room_left=room_left,
+            room_right=room_right,
+            pace=pace,
             rate_lag=rate_lag,
         )
         return np.clip(obs, -10.0, 10.0).astype(np.float32), frame
@@ -393,9 +413,13 @@ def speed_floor(track, config):
     # speed afterwards.
     yellow = ~red & (feasible < float(cfg["v_straight"]) - 1e-6)
 
-    raw = np.where(red, float(cfg["speed_floor_hairpin"]),
-                   np.where(yellow, float(cfg["speed_floor_taper"]),
-                            float(cfg["speed_floor_open"])))
+    raw = np.where(
+        red,
+        float(cfg["speed_floor_hairpin"]),
+        np.where(
+            yellow, float(cfg["speed_floor_taper"]), float(cfg["speed_floor_open"])
+        ),
+    )
     return np.minimum(raw, feasible)
 
 

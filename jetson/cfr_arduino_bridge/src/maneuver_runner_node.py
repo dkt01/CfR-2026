@@ -1107,9 +1107,7 @@ class ManeuverRunner(Node):
         it out at a laptop a week later costs the trip.
         """
         span = (
-            time.monotonic() - self.started_monotonic
-            if self.started_monotonic
-            else 0.0
+            time.monotonic() - self.started_monotonic if self.started_monotonic else 0.0
         )
         if span <= 0.0:
             return

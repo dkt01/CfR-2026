@@ -71,19 +71,34 @@ def _install_stubs() -> None:
     rclpy.executors = types.ModuleType("rclpy.executors")
     rclpy.executors.SingleThreadedExecutor = _Executor
     rclpy.qos = types.ModuleType("rclpy.qos")
-    rclpy.qos.QoSProfile = lambda depth=1: types.SimpleNamespace(depth=depth,
-                                                                 reliability=None)
+    rclpy.qos.QoSProfile = lambda depth=1: types.SimpleNamespace(
+        depth=depth, reliability=None
+    )
     rclpy.qos.ReliabilityPolicy = types.SimpleNamespace(BEST_EFFORT=1)
 
     def _message(name):
         module = types.ModuleType(name)
-        for attribute in ("Twist", "TFMessage", "PointCloud2", "Clock",
-                          "ArduinoStatus"):
-            setattr(module, attribute, type(attribute, (), {
-                "__init__": lambda self: setattr(self, "linear",
-                                                 types.SimpleNamespace(x=0.0))
-                or setattr(self, "angular", types.SimpleNamespace(z=0.0)),
-            }))
+        for attribute in (
+            "Twist",
+            "TFMessage",
+            "PointCloud2",
+            "Clock",
+            "ArduinoStatus",
+        ):
+            setattr(
+                module,
+                attribute,
+                type(
+                    attribute,
+                    (),
+                    {
+                        "__init__": lambda self: (
+                            setattr(self, "linear", types.SimpleNamespace(x=0.0))
+                            or setattr(self, "angular", types.SimpleNamespace(z=0.0))
+                        ),
+                    },
+                ),
+            )
         return module
 
     spaces = types.ModuleType("gymnasium.spaces")
@@ -93,8 +108,11 @@ def _install_stubs() -> None:
             self.low, self.high, self.shape, self.dtype = low, high, shape, dtype
 
         def contains(self, value):
-            return (value.shape == self.shape and float(value.min()) >= self.low
-                    and float(value.max()) <= self.high)
+            return (
+                value.shape == self.shape
+                and float(value.min()) >= self.low
+                and float(value.max()) <= self.high
+            )
 
     spaces.Box = _Box
     gymnasium = types.ModuleType("gymnasium")
@@ -174,8 +192,13 @@ class FakeCar:
             self.x, self.y, self.yaw = x, y, yaw
 
     def pose(self) -> Pose2D:
-        return Pose2D(x=self.x, y=self.y, yaw=self.yaw, stamp=self.sim_time,
-                      sim_stamp=self.sim_time)
+        return Pose2D(
+            x=self.x,
+            y=self.y,
+            yaw=self.yaw,
+            stamp=self.sim_time,
+            sim_stamp=self.sim_time,
+        )
 
 
 def make_env(config: dict, sdf_path: str, **overrides) -> tuple[LapRacerEnv, FakeCar]:
@@ -215,11 +238,13 @@ def make_env(config: dict, sdf_path: str, **overrides) -> tuple[LapRacerEnv, Fak
 # (PursuitDriver lives in lap_driver.py, shared with lap_live_check.py)
 
 
-def pure_pursuit(environment: LapRacerEnv, car: FakeCar, lookahead: float,
-                 target_speed: float) -> np.ndarray:
+def pure_pursuit(
+    environment: LapRacerEnv, car: FakeCar, lookahead: float, target_speed: float
+) -> np.ndarray:
     """The shared scripted driver, so this test and the live one agree."""
     return PursuitDriver(environment, lookahead, target_speed).action(
-        car.x, car.y, car.yaw)
+        car.x, car.y, car.yaw
+    )
 
 
 def main() -> None:
@@ -227,13 +252,16 @@ def main() -> None:
 
     here = Path(__file__).resolve().parent
     config = yaml.safe_load((here / "config_lap.yaml").read_text())
-    sdf = str(Path(here).parents[1] / "jetson/cfr_arduino_bridge/worlds/speed_course.sdf")
+    sdf = str(
+        Path(here).parents[1] / "jetson/cfr_arduino_bridge/worlds/speed_course.sdf"
+    )
 
     # ------------------------------------------------- 0: body clearance
     # The measurement the whole "never touch a bale" side of the reward rests
     # on, against a single synthetic bale where the right answer is known.
-    bale = bale_geometry.Bale(index=0, x=0.0, y=0.0, yaw=0.0,
-                              half_x=0.4572, half_y=0.2286)
+    bale = bale_geometry.Bale(
+        index=0, x=0.0, y=0.0, yaw=0.0, half_x=0.4572, half_y=0.2286
+    )
     for gap in (0.0, 0.1, 0.25, 0.5):
         nose = bale.half_x + bale_geometry.CHASSIS_LENGTH / 2 + gap
         measured = bale_geometry.body_clearance([bale], nose, 0.0, 0.0)
@@ -243,20 +271,29 @@ def main() -> None:
     # reward does not use the scan for contact.
     flank = bale.half_y + bale_geometry.CHASSIS_WIDTH / 2 + 0.08
     body = bale_geometry.body_clearance([bale], 0.0, flank, 0.0)
-    scan_min = float(bale_geometry.lidar_scan(
-        [bale], 0.0, flank, 0.0, 36, 110.0, 6.0).min())
+    scan_min = float(
+        bale_geometry.lidar_scan([bale], 0.0, flank, 0.0, 36, 110.0, 6.0).min()
+    )
     assert abs(body - 0.08) < 1e-6 and scan_min > 0.25, (body, scan_min)
-    print(f"body clearance: 8 cm off the flank reads {body:.3f} m, "
-          f"where the forward scan reads {scan_min:.3f} m")
+    print(
+        f"body clearance: 8 cm off the flank reads {body:.3f} m, "
+        f"where the forward scan reads {scan_min:.3f} m"
+    )
 
     # ---------------------------------------------------- 1: a flying lap
-    environment, car = make_env(config, sdf, randomize_start=False,
-                                wedged_start_prob=0.0, episode_time_limit_s=120.0,
-                                max_laps=1)
+    environment, car = make_env(
+        config,
+        sdf,
+        randomize_start=False,
+        wedged_start_prob=0.0,
+        episode_time_limit_s=120.0,
+        max_laps=1,
+    )
     observation, _ = environment.reset()
     assert environment.observation_space.contains(observation), observation.shape
-    assert observation.shape == (config["env"]["num_lidar_bins"]
-                                 * (1 + config["env"]["scan_history"]) + 4,)
+    assert observation.shape == (
+        config["env"]["num_lidar_bins"] * (1 + config["env"]["scan_history"]) + 4,
+    )
 
     totals: dict[str, float] = {}
     reward_total = 0.0
@@ -274,33 +311,43 @@ def main() -> None:
             totals[key] = totals.get(key, 0.0) + value
         rates.append(info["steer_rate"])
         clearances.append(info["min_clearance"])
-        scans.append(observation[:config["env"]["num_lidar_bins"]].copy())
+        scans.append(observation[: config["env"]["num_lidar_bins"]].copy())
         steps += 1
         if terminated or truncated:
             break
 
-    print(f"lap run: {steps} steps, {info['laps']} lap(s) in "
-          f"{environment._episode_time:.1f} s sim, "
-          f"{info['s_progress']:.1f} m of arc, reward {reward_total:.0f}")
-    print(f"  lap times {info['lap_times']}, min body clearance "
-          f"{min(clearances):.3f} m, mean servo rate "
-          f"{sum(rates) / len(rates):.2f} rad/s")
-    print("  reward by term: " + ", ".join(
-        f"{k} {v:+.0f}" for k, v in sorted(totals.items())))
+    print(
+        f"lap run: {steps} steps, {info['laps']} lap(s) in "
+        f"{environment._episode_time:.1f} s sim, "
+        f"{info['s_progress']:.1f} m of arc, reward {reward_total:.0f}"
+    )
+    print(
+        f"  lap times {info['lap_times']}, min body clearance "
+        f"{min(clearances):.3f} m, mean servo rate "
+        f"{sum(rates) / len(rates):.2f} rad/s"
+    )
+    print(
+        "  reward by term: "
+        + ", ".join(f"{k} {v:+.0f}" for k, v in sorted(totals.items()))
+    )
 
     # The camera is slower than the control loop, so the policy must be
     # seeing a repeated scan on some steps -- roughly 1 - 15/20 of them.
-    repeated = sum(
-        1 for a, b in zip(scans, scans[1:]) if np.array_equal(a, b)
-    ) / max(1, len(scans) - 1)
-    expected = max(0.0, 1.0 - config["env"]["scan_update_hz"]
-                   / config["env"]["control_hz"])
-    print(f"  scan held between camera frames on {repeated:.0%} of steps "
-          f"(camera {config['env']['scan_update_hz']:.0f} Hz against a "
-          f"{config['env']['control_hz']:.0f} Hz loop, expected ~{expected:.0%})")
+    repeated = sum(1 for a, b in zip(scans, scans[1:]) if np.array_equal(a, b)) / max(
+        1, len(scans) - 1
+    )
+    expected = max(
+        0.0, 1.0 - config["env"]["scan_update_hz"] / config["env"]["control_hz"]
+    )
+    print(
+        f"  scan held between camera frames on {repeated:.0%} of steps "
+        f"(camera {config['env']['scan_update_hz']:.0f} Hz against a "
+        f"{config['env']['control_hz']:.0f} Hz loop, expected ~{expected:.0%})"
+    )
     assert abs(repeated - expected) < 0.12, (
         f"scan repeated on {repeated:.0%} of steps, expected ~{expected:.0%}: "
-        "the camera-rate hold is not doing what it claims")
+        "the camera-rate hold is not doing what it claims"
+    )
 
     assert info["laps"] == 1, f"scripted driver did not complete a lap: {info}"
     assert not info["collided"], "scripted driver hit a bale"
@@ -321,8 +368,11 @@ def main() -> None:
         action = pure_pursuit(environment, car, lookahead=1.2, target_speed=3.2)
         observation, _, terminated, truncated, info = environment.step(action)
         if info["lap_time"] is not None:
-            first, second = (info["lap_time"], second) if first is None else \
-                (first, info["lap_time"])
+            first, second = (
+                (info["lap_time"], second)
+                if first is None
+                else (first, info["lap_time"])
+            )
         if terminated or truncated:
             break
     assert first and second and abs(first - second) < 1.5, (first, second)
@@ -335,20 +385,26 @@ def main() -> None:
 
     def wedged_env():
         """A fresh env, parked in a wedge with the recovery flag up."""
-        environment, car = make_env(config, sdf, randomize_start=True,
-                                    wedged_start_prob=1.0,
-                                    episode_time_limit_s=30.0)
+        environment, car = make_env(
+            config,
+            sdf,
+            randomize_start=True,
+            wedged_start_prob=1.0,
+            episode_time_limit_s=30.0,
+        )
         environment.reset(seed=7)
         for step in range(120):
             _, _, terminated, truncated, info = environment.step(
-                np.array([1.0, 0.0], dtype=np.float32))
+                np.array([1.0, 0.0], dtype=np.float32)
+            )
             if info["recovering"]:
                 return environment, car, step + 1
             if terminated or truncated:
                 break
         raise AssertionError(
             "a car that cannot move never entered recovery "
-            f"(collided={info.get('collided')}, stuck={info.get('stuck')})")
+            f"(collided={info.get('collided')}, stuck={info.get('stuck')})"
+        )
 
     def drive(environment, action, steps):
         total = 0.0
@@ -360,10 +416,12 @@ def main() -> None:
         return total
 
     environment, car, entered_at = wedged_env()
-    print(f"  wedged spawn: heading error {environment._prev_heading_error:+.2f} "
-          f"rad, clearance "
-          f"{bale_geometry.body_clearance(car.bales, car.x, car.y, car.yaw):.3f} m; "
-          f"recovery entered after {entered_at} steps of no progress")
+    print(
+        f"  wedged spawn: heading error {environment._prev_heading_error:+.2f} "
+        f"rad, clearance "
+        f"{bale_geometry.body_clearance(car.bales, car.x, car.y, car.yaw):.3f} m; "
+        f"recovery entered after {entered_at} steps of no progress"
+    )
 
     # Reversing inverts the steering: yaw rate is (v/L)*tan(delta), so with
     # v < 0 the lock that closes the heading error is the one that SIGNS WITH
@@ -378,14 +436,18 @@ def main() -> None:
     idle = drive(idle_env, idle_env.encode_action(0.0, 0.0), 30)
     idle_env.close()
 
-    print(f"  reversing out: heading error {before:+.2f} -> {turned:+.2f} rad, "
-          f"reward {backing_out:+.1f} against {idle:+.1f} for sitting still")
+    print(
+        f"  reversing out: heading error {before:+.2f} -> {turned:+.2f} rad, "
+        f"reward {backing_out:+.1f} against {idle:+.1f} for sitting still"
+    )
     assert abs(turned) < abs(before), (
         "reversing with lock on did not turn the car back down the course: "
-        f"{before:+.2f} -> {turned:+.2f}")
+        f"{before:+.2f} -> {turned:+.2f}"
+    )
     assert backing_out > idle, (
         "backing out must pay better than sitting in the wedge, or the "
-        "policy has no reason to try")
+        "policy has no reason to try"
+    )
 
     # And driving away again has to clear the flag, after
     # `recovery_exit_distance` of forward travel. The car is put back on the
@@ -414,13 +476,17 @@ def main() -> None:
     per_step = environment.steer_rate_fraction_per_s / environment.control_hz
     environment.step(np.array([0.0, 1.0], dtype=np.float32))
     assert abs(environment._cmd_steer_fraction - per_step) < 1e-6, (
-        environment._cmd_steer_fraction, per_step)
+        environment._cmd_steer_fraction,
+        per_step,
+    )
     lock_steps = math.ceil(1.0 / per_step)
     for _ in range(lock_steps):
         environment.step(np.array([0.0, 1.0], dtype=np.float32))
     assert environment._cmd_steer_fraction == 1.0
-    print(f"  steering integrator: {per_step:.3f} of full lock per step, "
-          f"lock to lock in {2 * lock_steps / environment.control_hz:.2f} s")
+    print(
+        f"  steering integrator: {per_step:.3f} of full lock per step, "
+        f"lock to lock in {2 * lock_steps / environment.control_hz:.2f} s"
+    )
     environment.close()
 
     print("\nself-test passed")

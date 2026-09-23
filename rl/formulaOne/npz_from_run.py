@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import math
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -97,8 +96,12 @@ def yaw_series(run, source):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("run", type=Path, help="a run directory from characterize.launch.py")
-    ap.add_argument("--out", type=Path, required=True, help="directory for the .npz files")
+    ap.add_argument(
+        "run", type=Path, help="a run directory from characterize.launch.py"
+    )
+    ap.add_argument(
+        "--out", type=Path, required=True, help="directory for the .npz files"
+    )
     ap.add_argument("--source", choices=("odom", "pose", "imu"), default="odom")
     ap.add_argument("--prefix", default="step_", help="step labels to export")
     args = ap.parse_args()
@@ -133,8 +136,10 @@ def main():
         if kind == "rate":
             pre = block[t < 0.0]
             if len(pre):
-                block = block - float(np.mean(pre))   # gyro bias, see module docstring
-            yaw = np.concatenate([[0.0], np.cumsum(np.diff(t) * (block[1:] + block[:-1]) / 2)])
+                block = block - float(np.mean(pre))  # gyro bias, see module docstring
+            yaw = np.concatenate(
+                [[0.0], np.cumsum(np.diff(t) * (block[1:] + block[:-1]) / 2)]
+            )
         else:
             yaw = block
         yaw = yaw - float(np.interp(0.0, t, yaw))

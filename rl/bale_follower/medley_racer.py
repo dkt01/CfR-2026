@@ -69,7 +69,10 @@ import bale_geometry
 from env import MAX_STEERING_ANGLE, WHEELBASE, _unpause_world, _yaw_from_quaternion
 
 GRAVITY = 9.81
-DEFAULT_SDF = Path(__file__).resolve().parents[2] / "jetson/cfr_arduino_bridge/worlds/speed_course.sdf"
+DEFAULT_SDF = (
+    Path(__file__).resolve().parents[2]
+    / "jetson/cfr_arduino_bridge/worlds/speed_course.sdf"
+)
 
 # Follow-the-gap scan. FOV and max range match config_lap.yaml's lidar
 # (150 deg / 6 m is a forward-biased window -- the corridor behind the car
@@ -270,8 +273,12 @@ def corridor_target(
         # The span has to be wide enough for the body, not just for a ray:
         # a scan is infinitely thin lines and a corner just inside the
         # nominal opening still clips a fender.
-        needed_half_angle = math.atan2(car_half_width + CLEARANCE_MARGIN, max(depth, 0.1))
-        needed_bins = max(MIN_GAP_BINS, int(math.ceil(2.0 * needed_half_angle / max(bin_width, 1e-3))))
+        needed_half_angle = math.atan2(
+            car_half_width + CLEARANCE_MARGIN, max(depth, 0.1)
+        )
+        needed_bins = max(
+            MIN_GAP_BINS, int(math.ceil(2.0 * needed_half_angle / max(bin_width, 1e-3)))
+        )
         if hi - lo + 1 >= needed_bins:
             chosen = (lo, hi, depth)
             break
@@ -294,7 +301,9 @@ def corridor_target(
     right = ranges[offsets <= -side]
     if len(left) and len(right):
         imbalance = float(left.min()) - float(right.min())
-        bearing += float(np.clip(CENTERING_GAIN * imbalance, -CENTERING_MAX, CENTERING_MAX))
+        bearing += float(
+            np.clip(CENTERING_GAIN * imbalance, -CENTERING_MAX, CENTERING_MAX)
+        )
     bearing = float(np.clip(bearing, offsets[0], offsets[-1]))
 
     # Low-pass so a span whose centre hops a bin tick-to-tick does not read
@@ -314,7 +323,9 @@ def pure_pursuit_steer(bearing: float, lookahead: float) -> float:
     return max(-MAX_STEERING_ANGLE, min(MAX_STEERING_ANGLE, delta))
 
 
-def speed_target(delta: float, gap_range: float, traction: float, max_speed: float) -> float:
+def speed_target(
+    delta: float, gap_range: float, traction: float, max_speed: float
+) -> float:
     """Live speed cap: friction circle on the commanded curvature, and a
     braking-distance cap on the actually-sensed range in that direction.
     Neither is a number computed offline against an assumption -- both are
@@ -393,7 +404,9 @@ def plan_command(
     # bend; the cone is "what's actually coming up if I do nothing".
     half_cone = math.radians(FORWARD_CONE_DEG) / 2.0
     forward_mask = np.abs(offsets) <= half_cone
-    forward_min_range = float(ranges[forward_mask].min()) if forward_mask.any() else gap_range
+    forward_min_range = (
+        float(ranges[forward_mask].min()) if forward_mask.any() else gap_range
+    )
     braking_range = min(gap_range, forward_min_range)
     v_target = speed_target(delta_for_speed, braking_range, traction, max_speed)
     return bearing, delta_cmd, v_target, gap_range, braking_range
@@ -433,12 +446,14 @@ class SpeedSteerSmoother:
         for k in range(n):
             opti.subject_to(v[k + 1] == v[k] + a[k] * SMOOTH_DT)
             opti.subject_to(opti.bounded(-a_max, a[k], a_max))
-            opti.subject_to(opti.bounded(-MAX_STEERING_ANGLE, delta[k], MAX_STEERING_ANGLE))
+            opti.subject_to(
+                opti.bounded(-MAX_STEERING_ANGLE, delta[k], MAX_STEERING_ANGLE)
+            )
             prev = delta0 if k == 0 else delta[k - 1]
             opti.subject_to(opti.bounded(-rate, delta[k] - prev, rate))
             # Friction circle: the joint constraint a clamp cannot see.
             lateral = v[k + 1] ** 2 * casadi.tan(delta[k]) / WHEELBASE
-            opti.subject_to(lateral ** 2 <= a_max ** 2)
+            opti.subject_to(lateral**2 <= a_max**2)
             cost += (v[k + 1] - v_target) ** 2 + 4.0 * (delta[k] - delta_target) ** 2
             cost += 0.01 * a[k] ** 2 + 0.1 * (delta[k] - prev) ** 2
         opti.subject_to(opti.bounded(0.0, v, self.max_speed))
@@ -462,7 +477,9 @@ class SpeedSteerSmoother:
         self._delta_prev = 0.0
         self._v_prev = 0.0
 
-    def solve(self, v_meas: float, v_target: float, delta_target: float) -> tuple[float, float]:
+    def solve(
+        self, v_meas: float, v_target: float, delta_target: float
+    ) -> tuple[float, float]:
         opti = self._opti
         v, a, delta = self._vars
         v0, delta0, v_target_p, delta_target_p = self._params
@@ -481,8 +498,16 @@ class SpeedSteerSmoother:
             # buys that this fallback cannot.
             a_max = self.traction * GRAVITY
             rate = MAX_STEERING_RATE * SMOOTH_DT
-            v_cmd = float(np.clip(v_target, self._v_prev - a_max * SMOOTH_DT, self._v_prev + a_max * SMOOTH_DT))
-            d_cmd = float(np.clip(delta_target, self._delta_prev - rate, self._delta_prev + rate))
+            v_cmd = float(
+                np.clip(
+                    v_target,
+                    self._v_prev - a_max * SMOOTH_DT,
+                    self._v_prev + a_max * SMOOTH_DT,
+                )
+            )
+            d_cmd = float(
+                np.clip(delta_target, self._delta_prev - rate, self._delta_prev + rate)
+            )
             self._v_prev, self._delta_prev = v_cmd, d_cmd
             return v_cmd, d_cmd
         # End of the horizon, not v[1]. /cmd_vel carries a speed SETPOINT that
@@ -516,7 +541,9 @@ class _KinematicCar:
         self.yaw += self.v / WHEELBASE * math.tan(delta_cmd) * dt
 
 
-def run_self_test(traction: float, max_speed: float, duration_s: float, debug: bool) -> None:
+def run_self_test(
+    traction: float, max_speed: float, duration_s: float, debug: bool
+) -> None:
     """No ROS, no Gazebo: drives a kinematic car around the real bale
     geometry using this module's own control law, the way lap_env_selftest.py
     tests lap_env's bookkeeping without a vehicle. Checks it does not hit a
@@ -559,8 +586,15 @@ def run_self_test(traction: float, max_speed: float, duration_s: float, debug: b
             travel_heading + TRAVEL_TRACK_GAIN * _wrap_angle(car.yaw - travel_heading)
         )
         bearing, delta_target, v_target_value, gap_range, braking_range = plan_command(
-            ranges, offsets, bearing, car.v, car_half_width, traction, max_speed,
-            car.yaw, travel_heading,
+            ranges,
+            offsets,
+            bearing,
+            car.v,
+            car_half_width,
+            traction,
+            max_speed,
+            car.yaw,
+            travel_heading,
         )
         v_cmd, delta_cmd = smoother.solve(car.v, v_target_value, delta_target)
 
@@ -569,7 +603,9 @@ def run_self_test(traction: float, max_speed: float, duration_s: float, debug: b
         distance += math.hypot(car.x - prev_x, car.y - prev_y)
 
         if bale_geometry.check_collision(bales, car.x, car.y, car.yaw):
-            print(f"COLLISION at t={now:.1f}s, ({car.x:.2f},{car.y:.2f}) -- self-test FAILED")
+            print(
+                f"COLLISION at t={now:.1f}s, ({car.x:.2f},{car.y:.2f}) -- self-test FAILED"
+            )
             return
         clearance = bale_geometry.body_clearance(bales, car.x, car.y, car.yaw)
         min_clearance = min(min_clearance, clearance)
@@ -597,7 +633,9 @@ def run_self_test(traction: float, max_speed: float, duration_s: float, debug: b
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--world-name", default="cfr_speed_course")
     parser.add_argument("--pose-topic", default=None)
     parser.add_argument(
@@ -628,7 +666,11 @@ def main() -> None:
     parser.add_argument("--max-speed", type=float, default=5.0)
     parser.add_argument("--control-hz", type=float, default=20.0)
     parser.add_argument("--debug", action="store_true")
-    parser.add_argument("--self-test", action="store_true", help="no ROS/Gazebo; drive a kinematic stand-in")
+    parser.add_argument(
+        "--self-test",
+        action="store_true",
+        help="no ROS/Gazebo; drive a kinematic stand-in",
+    )
     parser.add_argument("--self-test-seconds", type=float, default=90.0)
     args = parser.parse_args()
 
@@ -674,7 +716,9 @@ def main() -> None:
             self._car_half_width = bale_geometry.CHASSIS_WIDTH / 2.0
 
             if args.pose_msg == "pose":
-                self.create_subscription(PoseStamped, args.pose_topic, self._on_pose_stamped, 10)
+                self.create_subscription(
+                    PoseStamped, args.pose_topic, self._on_pose_stamped, 10
+                )
             elif args.pose_msg == "tf":
                 self.create_subscription(TFMessage, args.pose_topic, self._on_tf, 10)
             else:
@@ -714,7 +758,9 @@ def main() -> None:
             self._update_pose(
                 p.position.x,
                 p.position.y,
-                _yaw_from_quaternion(p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w),
+                _yaw_from_quaternion(
+                    p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w
+                ),
             )
 
         def _on_tf(self, msg: TFMessage) -> None:
@@ -734,14 +780,20 @@ def main() -> None:
                 return
             t = msg.transforms[0].transform
             q = t.rotation
-            self._update_pose(t.translation.x, t.translation.y, _yaw_from_quaternion(q.x, q.y, q.z, q.w))
+            self._update_pose(
+                t.translation.x,
+                t.translation.y,
+                _yaw_from_quaternion(q.x, q.y, q.z, q.w),
+            )
 
         def _on_odom(self, msg: Odometry) -> None:
             p = msg.pose.pose
             self._update_pose(
                 p.position.x,
                 p.position.y,
-                _yaw_from_quaternion(p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w),
+                _yaw_from_quaternion(
+                    p.orientation.x, p.orientation.y, p.orientation.z, p.orientation.w
+                ),
             )
 
         def _check_boxed_in(self, now: float, x: float, y: float) -> bool:
@@ -782,10 +834,18 @@ def main() -> None:
                 - self._extents,
                 0.0,
             )
-            self._bearing, delta_target, v_target_value, gap_range, braking_range = plan_command(
-                ranges, self._offsets, self._bearing, self._v_meas,
-                self._car_half_width, args.traction, args.max_speed,
-                yaw, self._travel_heading,
+            self._bearing, delta_target, v_target_value, gap_range, braking_range = (
+                plan_command(
+                    ranges,
+                    self._offsets,
+                    self._bearing,
+                    self._v_meas,
+                    self._car_half_width,
+                    args.traction,
+                    args.max_speed,
+                    yaw,
+                    self._travel_heading,
+                )
             )
 
             # No reversing: the speed law's CREEP_SPEED floor means the car is
@@ -799,7 +859,9 @@ def main() -> None:
                 )
                 self._pose_history.clear()
 
-            v_cmd, delta_cmd = self._smoother.solve(self._v_meas, v_target_value, delta_target)
+            v_cmd, delta_cmd = self._smoother.solve(
+                self._v_meas, v_target_value, delta_target
+            )
 
             twist = Twist()
             twist.linear.x = v_cmd

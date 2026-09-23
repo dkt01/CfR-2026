@@ -21,10 +21,16 @@ import numpy as np
 
 
 class PursuitDriver:
-    def __init__(self, environment, lookahead: float = 1.2,
-                 target_speed: float = 3.2, corner_scale: float = 0.6,
-                 use_plan_speed: bool = True, plan_scale: float = 1.0,
-                 brake_horizon_m: float = 4.0) -> None:
+    def __init__(
+        self,
+        environment,
+        lookahead: float = 1.2,
+        target_speed: float = 3.2,
+        corner_scale: float = 0.6,
+        use_plan_speed: bool = True,
+        plan_scale: float = 1.0,
+        brake_horizon_m: float = 4.0,
+    ) -> None:
         self.env = environment
         self.lookahead = lookahead
         self.target_speed = target_speed
@@ -55,20 +61,28 @@ class PursuitDriver:
         # The action is a steering RATE, so ask for the rate that closes the
         # gap to the angle wanted, saturating at the servo's limit.
         per_step = environment.steer_rate_fraction_per_s / environment.control_hz
-        rate = float(np.clip(
-            (wanted_fraction - environment._cmd_steer_fraction) / per_step,
-            -1.0, 1.0))
+        rate = float(
+            np.clip(
+                (wanted_fraction - environment._cmd_steer_fraction) / per_step,
+                -1.0,
+                1.0,
+            )
+        )
         if self.use_plan_speed:
             horizon = max(1, int(self.brake_horizon_m / track.spacing))
             window = (index + np.arange(horizon)) % len(track.x)
             speed = float(track.reference_speed[window].min()) * self.plan_scale
             speed = min(speed, self.target_speed)
         else:
-            speed = self.target_speed * (
-                1.0 - self.corner_scale * abs(wanted_fraction))
+            speed = self.target_speed * (1.0 - self.corner_scale * abs(wanted_fraction))
         speed = min(speed, environment.max_speed)
-        return np.array([
-            2.0 * (speed + environment.reverse_speed)
-            / (environment.max_speed + environment.reverse_speed) - 1.0,
-            rate,
-        ], dtype=np.float32)
+        return np.array(
+            [
+                2.0
+                * (speed + environment.reverse_speed)
+                / (environment.max_speed + environment.reverse_speed)
+                - 1.0,
+                rate,
+            ],
+            dtype=np.float32,
+        )

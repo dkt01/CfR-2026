@@ -43,7 +43,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -124,21 +123,21 @@ def _dilate(mask: np.ndarray, width: int) -> np.ndarray:
 class Track:
     """Everything about the course that training and deployment must share."""
 
-    s: np.ndarray            # (N,) arc length, uniform ds, driving direction
-    x: np.ndarray            # (N,) centerline
+    s: np.ndarray  # (N,) arc length, uniform ds, driving direction
+    x: np.ndarray  # (N,) centerline
     y: np.ndarray
-    tx: np.ndarray           # (N,) unit tangent
+    tx: np.ndarray  # (N,) unit tangent
     ty: np.ndarray
-    kappa: np.ndarray        # (N,) signed curvature, + is left
-    v_cap: np.ndarray        # (N,) m/s, the rule limit at this station
-    hairpin: np.ndarray      # (N,) bool
-    half_left: np.ndarray    # (N,) m to the bale face on the left
+    kappa: np.ndarray  # (N,) signed curvature, + is left
+    v_cap: np.ndarray  # (N,) m/s, the rule limit at this station
+    hairpin: np.ndarray  # (N,) bool
+    half_left: np.ndarray  # (N,) m to the bale face on the left
     half_right: np.ndarray
     length: float
     ds: float
-    start_station: float     # s of the parked car
-    sdf: np.ndarray          # (H, W) metres to the nearest bale, + outside
-    sdf_origin: tuple        # (x0, y0) of cell (0, 0)
+    start_station: float  # s of the parked car
+    sdf: np.ndarray  # (H, W) metres to the nearest bale, + outside
+    sdf_origin: tuple  # (x0, y0) of cell (0, 0)
     sdf_res: float
 
     # ---------------------------------------------------------------- Frenet
@@ -310,13 +309,21 @@ def build(config: dict, repo_root: Path, cache_dir: Path | None = None) -> Track
     if cache.exists():
         blob = np.load(cache, allow_pickle=False)
         return Track(
-            s=blob["s"], x=blob["x"], y=blob["y"], tx=blob["tx"], ty=blob["ty"],
-            kappa=blob["kappa"], v_cap=blob["v_cap"],
+            s=blob["s"],
+            x=blob["x"],
+            y=blob["y"],
+            tx=blob["tx"],
+            ty=blob["ty"],
+            kappa=blob["kappa"],
+            v_cap=blob["v_cap"],
             hairpin=blob["hairpin"].astype(bool),
-            half_left=blob["half_left"], half_right=blob["half_right"],
-            length=float(blob["length"]), ds=float(blob["ds"]),
+            half_left=blob["half_left"],
+            half_right=blob["half_right"],
+            length=float(blob["length"]),
+            ds=float(blob["ds"]),
             start_station=float(blob["start_station"]),
-            sdf=blob["sdf"], sdf_origin=tuple(blob["sdf_origin"]),
+            sdf=blob["sdf"],
+            sdf_origin=tuple(blob["sdf_origin"]),
             sdf_res=float(blob["sdf_res"]),
         )
 
@@ -364,17 +371,41 @@ def build(config: dict, repo_root: Path, cache_dir: Path | None = None) -> Track
     start_station = float(s[int(np.argmin(d2))])
 
     track = Track(
-        s=s, x=x, y=y, tx=tx, ty=ty, kappa=kappa, v_cap=v_cap, hairpin=hairpin,
-        half_left=half_left, half_right=half_right, length=length, ds=ds,
-        start_station=start_station, sdf=grid.astype(np.float32),
-        sdf_origin=origin, sdf_res=res,
+        s=s,
+        x=x,
+        y=y,
+        tx=tx,
+        ty=ty,
+        kappa=kappa,
+        v_cap=v_cap,
+        hairpin=hairpin,
+        half_left=half_left,
+        half_right=half_right,
+        length=length,
+        ds=ds,
+        start_station=start_station,
+        sdf=grid.astype(np.float32),
+        sdf_origin=origin,
+        sdf_res=res,
     )
     np.savez_compressed(
         cache,
-        s=s, x=x, y=y, tx=tx, ty=ty, kappa=kappa, v_cap=v_cap,
-        hairpin=hairpin, half_left=half_left, half_right=half_right,
-        length=length, ds=ds, start_station=start_station,
-        sdf=track.sdf, sdf_origin=np.array(origin), sdf_res=res,
+        s=s,
+        x=x,
+        y=y,
+        tx=tx,
+        ty=ty,
+        kappa=kappa,
+        v_cap=v_cap,
+        hairpin=hairpin,
+        half_left=half_left,
+        half_right=half_right,
+        length=length,
+        ds=ds,
+        start_station=start_station,
+        sdf=track.sdf,
+        sdf_origin=np.array(origin),
+        sdf_res=res,
     )
     return track
 
@@ -387,11 +418,15 @@ if __name__ == "__main__":
     cfg = yaml.safe_load((here / "config.yaml").read_text())
     t = build(cfg, root)
     print(f"length        {t.length:.2f} m at ds {t.ds} ({len(t.s)} stations)")
-    print(f"min radius    {1/np.abs(t.kappa).max():.2f} m")
-    print(f"corridor      {(t.half_left+t.half_right).min():.2f}..."
-          f"{(t.half_left+t.half_right).max():.2f} m")
-    print(f"hairpin       {100*t.hairpin.mean():.0f}% of the lap")
-    print(f"v_cap         2.5 over {100*(t.v_cap<2.55).mean():.0f}%, "
-          f"5.2 over {100*(t.v_cap>5.15).mean():.0f}%")
+    print(f"min radius    {1 / np.abs(t.kappa).max():.2f} m")
+    print(
+        f"corridor      {(t.half_left + t.half_right).min():.2f}..."
+        f"{(t.half_left + t.half_right).max():.2f} m"
+    )
+    print(f"hairpin       {100 * t.hairpin.mean():.0f}% of the lap")
+    print(
+        f"v_cap         2.5 over {100 * (t.v_cap < 2.55).mean():.0f}%, "
+        f"5.2 over {100 * (t.v_cap > 5.15).mean():.0f}%"
+    )
     print(f"start station {t.start_station:.2f} m")
     print(f"sdf           {t.sdf.shape} at {t.sdf_res} m")
