@@ -45,6 +45,11 @@ class Reward:
         self.w_steer_jerk = float(r["steer_jerk"])
         self.w_lateral = float(r["lateral"])
         self.lateral_scale = float(r["lateral_scale"])
+        # Knee in the same normalised units the cost is computed in.  Absent
+        # means a run from before the knee existed, whose lateral term was
+        # purely quadratic; `inf` reproduces that exactly, so an old run
+        # replays under the reward it was actually trained on.
+        self.lateral_knee = float(r.get("lateral_knee", float("inf"))) / self.lateral_scale
         self.lap_bonus = float(r["lap_bonus"])
         self.finish_bonus = float(r["finish_bonus"])
         self.stop_bonus = float(r["stop_bonus"])
@@ -52,6 +57,17 @@ class Reward:
         self.lap_improve_cap = float(r["lap_improve_cap"])
         self.crash = float(r["crash"])
         self.stall = float(r["stall"])
+
+    def _lateral_cost(self, lateral):
+        """Huber in the centerline error: e^2 below the knee, linear above."""
+        e = np.abs(lateral) / self.lateral_scale
+        k = self.lateral_knee
+        if not np.isfinite(k):
+            # No knee: the purely quadratic term runs from before the knee
+            # existed.  Returned early rather than left to `np.where`, which
+            # evaluates BOTH branches and turns inf - inf into a silent nan.
+            return e**2
+        return np.where(e <= k, e**2, k**2 + 2.0 * k * (e - k))
 
     def step(self, dt, advance, speed, v_cap, clearance, lateral, steer_step,
              steer_jerk, lapped, finished, crashed, stalled, stopping,
@@ -75,11 +91,16 @@ class Reward:
             "time": -self.w_time * dt * racing,
             "overspeed": -(self.w_over_lin * over + self.w_over_quad * over**2) * dt,
             "graze": -self.w_graze * bite**2 * dt,
-            # Hold the centerline.  Quadratic, so it is nearly free to be a
-            # couple of centimetres out and expensive to be half a corridor
-            # out -- a shape that asks for zero cross-track error without
-            # asking for a twitch every time the estimate moves 5 mm.
-            "lateral": -self.w_lateral * (lateral / self.lateral_scale) ** 2 * dt,
+            # Hold the centerline: quadratic near zero, LINEAR past the knee.
+            #
+            # Quadratic near zero is what asks for zero cross-track error
+            # without asking for a twitch every time the estimate moves 5 mm.
+            # Linear past the knee is what stops that same shape deciding the
+            # lap: unbounded growth made a corner's unavoidable error worth
+            # more than the whole speed incentive, so the policy crawled.
+            # Continuous in value AND slope at the knee, so there is no step
+            # for the value function to have to learn around.
+            "lateral": -self.w_lateral * self._lateral_cost(lateral) * dt,
             # Divided by dt, not multiplied: these are differences of a
             # command sampled every dt, so squaring them and dividing gives a
             # rate that does not change meaning if control_hz does.

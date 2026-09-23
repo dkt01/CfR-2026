@@ -36,9 +36,11 @@ import rclpy
 import yaml
 from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
 from rcl_interfaces.srv import SetParameters
+from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
+from sensor_msgs.msg import Imu
 
 from cfr_interfaces.msg import ArduinoStatus, DriveCommand
 
@@ -55,6 +57,7 @@ BAG_TOPICS = [
     "/cmd_vel",
     "/arduino_bridge/status",
     "/zed/zed_node/odom",
+    "/zed/zed_node/pose",
     "/zed/zed_node/imu/data",
 ]
 
@@ -87,6 +90,60 @@ CSV_COLUMNS = [
     "odom_wz",
     "dist_along",
     "dist_total",
+    # telemetry.csv is a RESAMPLE: every row carries whatever the last odometry
+    # message happened to be, so a camera publishing slower than the control
+    # rate shows up as repeated values that no consumer can tell from fresh
+    # ones.  This is the message's own header stamp, which makes a repeat
+    # visible - and it is why the 2026-09-18 step_steer yaw-rate fit was an
+    # artifact rather than a measurement.
+    "odom_stamp",
+]
+
+# Sensor streams, written ONE ROW PER MESSAGE at whatever rate the camera
+# publishes rather than resampled onto the control grid.
+#
+# A steering step is the one manoeuvre where the resample is not enough.  The
+# chassis yaw lag being fitted is a few hundred milliseconds and its command
+# dead time ~0.19 s, so on a 50 Hz grid fed by a 15 Hz camera the whole
+# transient is three or four distinct samples and any first-order fit is
+# fitting the resampler.  These files cost nothing and are what a lag fit
+# should be run against.
+#
+# Both ZED pose topics are recorded, because they are not interchangeable:
+# `~/odom` is raw visual odometry and is never corrected, so it is continuous
+# and safe to differentiate; `~/pose` is the map-frame pose the SDK JUMPS when
+# it closes a loop.  Fit on odom, cross-check on pose.
+POSE_COLUMNS = [
+    "source",
+    "t_msg",
+    "t_ros",
+    "phase",
+    "step_index",
+    "step_label",
+    "cmd_steering",
+    "cmd_velocity",
+    "x",
+    "y",
+    "yaw",
+    "vx",
+    "wz",
+]
+
+# Gyroscope z is a DIRECT yaw-rate measurement at the IMU's own rate - no
+# differentiation, no visual odometry, nothing to smooth.  For turn-in timing
+# it is the best channel on the car, and the only cost of recording it is this
+# file.
+IMU_COLUMNS = [
+    "t_msg",
+    "t_ros",
+    "phase",
+    "step_index",
+    "step_label",
+    "cmd_steering",
+    "cmd_velocity",
+    "wz",
+    "ax",
+    "ay",
 ]
 
 
@@ -266,6 +323,13 @@ class ManeuverRunner(Node):
         self.create_subscription(
             Odometry, "odom", self._on_odom, qos_profile_sensor_data
         )
+        # Recorded, not used for control: the runner's distance guard and
+        # return leg stay on `odom` alone, so a camera that stops publishing
+        # `pose` cannot change how the car behaves, only what is written down.
+        self.create_subscription(
+            PoseStamped, "pose", self._on_pose, qos_profile_sensor_data
+        )
+        self.create_subscription(Imu, "imu", self._on_imu, qos_profile_sensor_data)
         self.parameter_client = self.create_client(
             SetParameters, f"{self.bridge_node}/set_parameters"
         )
@@ -280,6 +344,22 @@ class ManeuverRunner(Node):
         )
         self.csv_writer = csv.writer(self.csv_file)
         self.csv_writer.writerow(CSV_COLUMNS)
+        self.pose_file = open(
+            os.path.join(self.run_dir, "pose.csv"), "w", encoding="utf-8", newline=""
+        )
+        self.pose_writer = csv.writer(self.pose_file)
+        self.pose_writer.writerow(POSE_COLUMNS)
+        self.imu_file = open(
+            os.path.join(self.run_dir, "imu.csv"), "w", encoding="utf-8", newline=""
+        )
+        self.imu_writer = csv.writer(self.imu_file)
+        self.imu_writer.writerow(IMU_COLUMNS)
+        # Counted so the runner can say, at the end of the run and in
+        # metadata.yaml, what rate it ACTUALLY got - the one number that
+        # decides whether a step-response run is worth analysing, and the one
+        # nobody can recover afterwards from a file of repeated values.
+        self.pose_counts = {"pose": 0, "odom": 0}
+        self.imu_count = 0
 
         self.bag_process = self._start_bag()
         self._write_metadata()
@@ -356,6 +436,80 @@ class ManeuverRunner(Node):
     def _on_odom(self, msg):
         self.odom = msg
         self.odom_time = time.monotonic()
+        orientation = msg.pose.pose.orientation
+        self._write_pose_row(
+            "odom",
+            msg.header,
+            msg.pose.pose.position.x,
+            msg.pose.pose.position.y,
+            yaw_from_quaternion(
+                orientation.w, orientation.x, orientation.y, orientation.z
+            ),
+            msg.twist.twist.linear.x,
+            msg.twist.twist.angular.z,
+        )
+
+    def _on_pose(self, msg):
+        orientation = msg.pose.orientation
+        self._write_pose_row(
+            "pose",
+            msg.header,
+            msg.pose.position.x,
+            msg.pose.position.y,
+            yaw_from_quaternion(
+                orientation.w, orientation.x, orientation.y, orientation.z
+            ),
+            None,
+            None,
+        )
+
+    def _on_imu(self, msg):
+        self.imu_count += 1
+        self.imu_writer.writerow(
+            self._sensor_context(msg.header)
+            + [
+                f"{msg.angular_velocity.z:.6f}",
+                f"{msg.linear_acceleration.x:.4f}",
+                f"{msg.linear_acceleration.y:.4f}",
+            ]
+        )
+
+    def _sensor_context(self, header):
+        """Message stamp, receive stamp, and where in the profile it landed.
+
+        Both clocks are written down.  The header stamp is the camera's, which
+        is what a lag measurement has to be timed against; the receive stamp is
+        this node's, which is what joins the row to telemetry.csv.  The gap
+        between them is the transport latency, and it is the thing that would
+        otherwise be silently folded into the measured dead time.
+        """
+        step_label = ""
+        if self.phase == self.RUNNING and self.step_index < len(self.profile.steps):
+            step_label = self.profile.steps[self.step_index]["label"]
+        stamp = header.stamp.sec + header.stamp.nanosec / 1e9
+        return [
+            f"{stamp:.6f}",
+            f"{self.get_clock().now().nanoseconds / 1e9:.6f}",
+            self.phase,
+            self.step_index if self.phase == self.RUNNING else "",
+            step_label,
+            f"{self.command[0]:.4f}",
+            f"{self.command[1]:.4f}",
+        ]
+
+    def _write_pose_row(self, source, header, x, y, yaw, vx, wz):
+        self.pose_counts[source] += 1
+        self.pose_writer.writerow(
+            [source]
+            + self._sensor_context(header)
+            + [
+                f"{x:.5f}",
+                f"{y:.5f}",
+                f"{yaw:.6f}",
+                "" if vx is None else f"{vx:.4f}",
+                "" if wz is None else f"{wz:.6f}",
+            ]
+        )
 
     # ------------------------------------------------------------- recording
 
@@ -917,6 +1071,11 @@ class ManeuverRunner(Node):
         else:
             row += [0, "", "", "", "", ""]
         row += [f"{along:.4f}", f"{total:.4f}"]
+        if odom is not None:
+            stamp = odom.header.stamp
+            row.append(f"{stamp.sec + stamp.nanosec / 1e9:.6f}")
+        else:
+            row.append("")
         self.csv_writer.writerow(row)
 
     def done(self):
@@ -930,9 +1089,41 @@ class ManeuverRunner(Node):
         try:
             self._write_metadata(final=True)
         finally:
+            self._say_sensor_rates()
             self.csv_file.close()
+            self.pose_file.close()
+            self.imu_file.close()
             self.say(f"run directory: {self.run_dir}  result: {self.result}")
             self.log_file.close()
+
+    def _say_sensor_rates(self):
+        """Print what the sensors ACTUALLY delivered, while still at the car.
+
+        A step-response run stands or falls on this and on nothing else.  The
+        2026-09-18 session recorded a yaw-rate time constant of 1.76 s, nine
+        times the truth, because the camera was publishing far slower than the
+        50 Hz grid it was being written onto and nothing in the run directory
+        said so.  Finding that out in the car park costs one more run; finding
+        it out at a laptop a week later costs the trip.
+        """
+        span = (
+            time.monotonic() - self.started_monotonic
+            if self.started_monotonic
+            else 0.0
+        )
+        if span <= 0.0:
+            return
+        for name, count in sorted(self.pose_counts.items()):
+            self.say(f"  ~/{name}: {count} messages, {count / span:.1f} Hz")
+        self.say(f"  ~/imu: {self.imu_count} messages, {self.imu_count / span:.1f} Hz")
+        slowest = min(self.pose_counts.values()) / span
+        if slowest < 25.0:
+            self.warn(
+                f"pose published at only {slowest:.1f} Hz. That resolves a "
+                f"0.3 s transient with ~{0.3 * slowest:.0f} samples, which is "
+                f"not enough to fit a lag to. Raise the ZED frame rate before "
+                f"trusting any step-response number from this run."
+            )
 
 
 def main(argv=None):

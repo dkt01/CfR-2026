@@ -19,55 +19,14 @@ track:
   lateral_accel: 4.5        # m/s^2 ceiling on the sweepers (0.46 g of mu 1.0)
   hairpin_gap_close_m: 1.5  # weld zones split by one noisy curvature sample
   hairpin_dilate_m: 0.5     # square the ragged ends of a zone
-  # MINIMUM SPEEDS -- the floor, in the same two zones the cap uses.
-  # A hairpin station (the RED sections in RViz, capped at v_hairpin) must
-  # not be driven below `speed_floor_hairpin`; everywhere else (GREEN) not
-  # below `speed_floor_open`.
-  #
-  # These exist because four training runs all found the same answer to
-  # "drive fast without touching bales": don't drive fast.  The policy sat at
-  # 3 m/s on straights with a 5.2 cap.  A floor removes that option by
-  # construction rather than by reward weight -- `scale_action` maps the
-  # throttle onto [floor, cap], so no action in or out of distribution can
-  # ask for less.  It is the same trick that makes the CAP structural.
-  #
-  # The floor is clipped by the coast-feasible profile before use, so it can
-  # never demand a speed the car would then be unable to shed in time for the
-  # next hairpin -- see speed_floor() in observation.py.
-  # Three zones, and they are exactly the three colours RViz already draws:
-  # the centerline is a linear red->green ramp on v_cap, so
-  #
-  #   RED     v_cap at the hairpin limit (v_hairpin)        floor 2.0
-  #   YELLOW  v_cap between the two, the curvature taper    floor 2.6
-  #   GREEN   v_cap at the straight limit (v_straight)      floor 4.0
-  #
-  # The yellow band matters more than it looks.  With a single green floor of
-  # 3.5 applied right up to the hairpin mouth, the car arrived at the
-  # station-104 chicane carrying line error from the fast approach and came
-  # through at 0.049 m -- and dropping the RED floor did not help (0.038 m at
-  # 1.2 m/s), while dropping the approach did (0.100 m).  The taper zone is
-  # where the speed has to come off, so it gets its own floor.
-  # NOTE the ordering: RED is FASTER than YELLOW.  That is deliberate and it
-  # is a racing instruction, not a typo -- shed the speed in the approach
-  # (yellow, where the car is still travelling nearly straight and braking is
-  # cheap), then hold a constant speed through the corner itself (red).
-  #
-  # RED WAS 2.5 AND THAT MADE THE TASK UNLEARNABLE.  2.5 equals v_hairpin, so
-  # the floor met the cap and the throttle had no freedom in the hairpins at
-  # all.  Driven at the floor the steering prior cleared the station-104
-  # chicane by 58 mm -- and a policy's steering residual (rms 0.31) costs more
-  # margin than that, so every attempt to explore steering crashed.  Two full
-  # 30M runs, one resumed and one from scratch, 61 evaluations, ZERO
-  # completions; mean episode length peaked at 236 steps against the ~1400 a
-  # run needs, so the policy never once saw past that chicane.
-  #
-  # Measured clearance at the floor against this number:
-  #     2.10 -> ~0.16 m      2.30 -> 0.127 m      2.45 -> 0.069 m
-  #     2.20 ->  0.150 m     2.35 -> 0.114 m      2.50 -> 0.058 m  (unlearnable)
-  # Each 0.1 m/s here is worth about 0.8 s of lap time and 30 mm of margin.
-  speed_floor_hairpin: 2.05  # m/s, red
-  speed_floor_taper: 2.6    # m/s, yellow
-  speed_floor_open: 5.0     # m/s, green
+  # Speed floors, copied verbatim from config.yaml 2026-09-22.  They were
+  # missing entirely: this file predates the floor landing in observation.py,
+  # so speed_floor() raised KeyError and every low-drift run died at env
+  # construction.  This variant exists to isolate pose drift, so these have to
+  # match config.yaml exactly - see there for the clearance table behind them.
+  speed_floor_hairpin: 2.1  # m/s, red
+  speed_floor_taper: 1.9    # m/s, yellow
+  speed_floor_open: 4.5     # m/s, green
   sdf_res: 0.02             # m, bale distance field
   sdf_margin: 2.0           # m of field beyond the outermost bale
   vehicle_start: [20.15, 4.76]   # generate_speed_course.py VEHICLE_START
@@ -112,27 +71,7 @@ plant:
   steering_command_points: [-1.0, -0.5, 0.0, 0.5, 1.0]
   steering_angle_points: [-0.382, -0.191, 0.0, 0.256, 0.512]
   steering_tau: 0.05        # s, servo first-order lag
-  # Road-wheel slew CEILING, from the 2075R datasheet (0.17 s per 60 deg =
-  # 6.16 rad/s at the servo shaft).  Was 8.7, which had the road wheel slewing
-  # faster than the servo driving it - that needs a linkage which amplifies
-  # angular velocity, and Ackermann linkages reduce.  Still a ceiling: with a
-  # typical ~2:1 linkage the real figure is nearer 3 rad/s, and A6 pins it.
-  # Kept a scalar, not randomised - but NOT because it is harmless.  Counting
-  # ticks where the steady command rate exceeds the limit (0.03% here, 0.11%
-  # at 2.63) is the wrong statistic: it binds on the LARGE changes, turn-in
-  # and recovery, and compounds through the servo and chassis lags after it.
-  # At 2.5 m/s and command 0.35, t50 of the yaw rate is 0.555 s at 8.7,
-  # 0.605 s here and 0.800 s at 3.0; the scripted floor goes 12.5% / 4.7% /
-  # 0.0%.  It is a scalar because it is a CEILING with one true value that A6
-  # will supply, not a spread - randomising a bound is not the same as
-  # admitting uncertainty about it.
-  #
-  # OWED: steer_prior was swept at 8.7.  A 1-D probe of horizon_s at 6.16 puts
-  # the optimum at 0.40 rather than the 0.35 below and recovers 4.7% -> 7.8%,
-  # so a full sweep_prior.py re-run is due before the next training run.  Left
-  # unchanged here because a six-point probe is not the 576-setting sweep the
-  # current numbers came from.  See vehicle.yaml steering.slew_rate.
-  steering_slew: 6.16       # rad/s, road wheel
+  steering_slew: 8.7        # rad/s
 
 env:
   control_hz: 20.0          # matches path_follower's control_rate_hz
@@ -413,58 +352,25 @@ randomize:
   # itself.  Widening this without that channel would cost lap time for
   # nothing.
   yaw_tau_scale: [0.6, 1.6]
-  # SERVO lag, absolute seconds - not a scale, because the nominal 0.05 is a
-  # `guess` in vehicle.yaml (experiment A7, never run) and multiplying a guess
-  # implies it is the centre of something.
-  #
-  # WHY IT IS RANDOMISED AT ALL, after eleven runs with it fixed: it is nearly
-  # as load-bearing as the chassis lag and nobody has measured it.  Swept
-  # through plant.py at 2.5 m/s and command 0.35 - hairpin entry, where every
-  # driver this project has had went into the bales - the time to half the
-  # steady yaw rate runs 0.435 s at tau = 0 to 0.795 s at tau = 0.15.  That
-  # 0.36 s is 0.90 m of travel and the corridor is 0.92 m wide.
-  #
-  # WHY IT IS THIS NARROW, which is NOT what the uncertainty deserves.  The
-  # honest range for an unmeasured quantity is more like [0.03, 0.15].  It is
-  # not affordable.  Scored per car (2026-09-22, 64-96 cars, seed fixed):
-  #
-  #   range          scripted floor   v11_red21   correlation of tau with
-  #                                               finishing cleanly
-  #   [0.05, 0.05]        10.4%         23.4%     -      (fixed, the old model)
-  #   [0.04, 0.08]         9.4%         20.3%     -0.29
-  #   [0.03, 0.15]         4.2%          9.4%     -0.40
-  #   [0.03, 0.30]         3.1%          3.1%     -
-  #
-  # At [0.03, 0.15] tau correlates -0.40 with finishing, which would make it
-  # the second strongest limiter on the whole frontier behind pose drift's
-  # -0.50 - and measure_feasibility.py's own rule is that a range which
-  # dominates there is a range to question.  This is the `understeer` mistake
-  # exactly: 0.05 was picked by reasoning about a crash rather than by
-  # measurement and made the task partly impossible.
-  #
-  # Being observable did not rescue it.  observation.py's rate_lag channel is
-  # built from `last_steer`, the COMMAND, so servo lag is inside it as well as
-  # chassis lag - but v11_red21, which reads that channel, degraded MORE than
-  # the fixed-gain scripted prior did, not less.  A policy trained across the
-  # range might learn to use it; one trained at a fixed tau demonstrably has
-  # not, and that is not an argument worth a training run to settle.
-  #
-  # The risk is ONE-SIDED: the correlation is negative, so it is slow servos
-  # that fail, not fast ones.  If A7 comes back near 0.15 the answer is not a
-  # wider range here, it is re-tuning steer_prior's horizon_s and lead_scale
-  # for the measured value - they were swept against tau = 0.05.
-  #
-  # [0.04, 0.08] covers the figures a 2075R datasheet implies (0.054, and most
-  # of 0.070-0.085) at a cost of ~3 points of clean finish.  It is a holding
-  # position, not an answer.  REPLACE IT WITH A MEASUREMENT: A7 is one 240 fps
-  # film of a SMALL steering step, the cheapest item in the campaign, and that
-  # second half of A7 is the half that matters.  Widening this back out is one
-  # line if a measurement justifies it.
+  # Kept identical to config.yaml on purpose: this variant isolates POSE
+  # DRIFT, so every other range has to match or it measures two changes.
   steering_tau: [0.04, 0.08]    # s
   pose_noise_xy: [0.0, 0.022]   # m, 1 sigma -- vehicle.yaml odom_position_noise
   pose_noise_yaw: [0.0, 0.010]  # rad
   pose_latency: [0.02, 0.10]    # s
-  pose_drift_m_per_lap: [0.0, 0.12]
+  # EXPERIMENT ONLY -- see DEPLOY.md and measure_feasibility.py.
+  # The shipped config.yaml keeps 0.12.  This variant asks what the policy
+  # could do IF the ZED's loop-closed drift were held to 0.04 m/lap, because
+  # measure_feasibility.py found drift to be the single dominant axis
+  # (corr -0.50 with the fastest clean speed, against -0.27 for the next) and
+  # structurally uncorrectable: every obstacle channel the policy has is
+  # computed from the drifted pose against the map, so nothing in the
+  # observation reveals it.
+  #
+  # DO NOT promote this to config.yaml without measuring the real car's
+  # drift.  Narrowing a range because it is inconvenient is how a policy that
+  # looks good in simulation gets shipped.
+  pose_drift_m_per_lap: [0.0, 0.04]
   pose_drift_rad_per_lap: [0.0, 0.03]
   start_lateral: [-0.16, 0.16]  # m, where the car actually sits at the line
   start_heading: [-0.09, 0.09]  # rad

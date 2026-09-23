@@ -342,6 +342,9 @@ right**, so the bubble has to be clear on both sides, not just ahead.
 | `steer_authority` | 15 m radius, both sides | crawl speed, arcs are tight; 15 m is abort margin, not typical excursion |
 | `skidpad` | 20 m radius, both sides — **at least 6 m clear left and right specifically** | a strongly understeering car at 3.0 m/s can run out to a 6 m radius arc, either direction |
 | `step_steer` | 32 m radius, both sides | alternating left/right slalom, returns to start; 32 m is abort margin |
+| `steer_authority_fast` | 26 m radius, both sides | the S2 re-run; 26 m covers the case where full lock really is 0.40 rad |
+| `skidpad_chicane` | 20 m radius, both sides | the S3 re-run, at chicane and hairpin speeds |
+| `step_steer_fine` | 24 m radius, both sides | the S1 re-run; closed polygons rather than a slalom, so it does not run downrange |
 
 | Order | Command | Why |
 | --- | --- | --- |
@@ -349,6 +352,16 @@ right**, so the bubble has to be clear on both sides, not just ahead.
 | 2 | `profile:=steer_authority` | **The most valuable run in the campaign** |
 | 3 | `profile:=skidpad` | Understeer, plus a free lower bound on lateral grip |
 | 4 | `profile:=step_steer` | Validates the A3 inertia estimate |
+
+**The lateral results from the first campaign did not survive.** The steering
+map came out non-monotonic, the step-steer time constant was a fit artifact,
+and `tire_scrub` has never been measured on the car at all - see
+[characterization-results.md](characterization-results.md) section 6.
+`steer_authority_fast`, `skidpad_chicane` and `step_steer_fine` replace
+`steer_authority`, `skidpad` and `step_steer` for a re-run;
+[characterization-steering.md](characterization-steering.md) is the procedure,
+including the A6 dependency that `skidpad_chicane` is worthless without and the
+camera frame rate that `step_steer_fine` stands or falls on.
 
 ```bash
 ros2 launch cfr_arduino_bridge characterize.launch.py profile:=zed_static

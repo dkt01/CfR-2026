@@ -124,6 +124,10 @@ class FormulaOne(Node):
         self.laps_target = int(self.param("laps")) or int(self.cfg["env"]["laps"])
         self.residual = float(self.cfg["env"]["steer_residual"])
         self.yaw_filter = float(self.cfg["env"]["yaw_rate_filter"])
+        # Defaulted for configs saved before this existed -- same reason as
+        # env.py's copy, and the two must agree or the policy sees a
+        # differently-filtered input on the car than it trained on.
+        self.accel_filter = float(self.cfg["env"].get("speed_rate_filter", 0.25))
         self.control_period = 1.0 / float(self.cfg["env"]["control_hz"])
         self.frame = self.param("track_frame")
 
@@ -164,6 +168,12 @@ class FormulaOne(Node):
         self.prev_track_yaw = None
         self.prev_yaw_stamp = None
         self.yaw_rate = np.zeros(1)
+        # Achieved dv/dt, the same channel env.py feeds -- see observation.py
+        # for why the policy needs it.  Differenced off the POSE stamps, so it
+        # sits on the same clock as the yaw rate rather than on wall time.
+        self.speed_rate = np.zeros(1)
+        self.prev_obs_speed = None
+        self.prev_speed_stamp = None
         self.last_track_xy = None
         self.station = None
         self.distance = 0.0
@@ -363,6 +373,9 @@ class FormulaOne(Node):
                 self.prev_track_yaw = None
                 self.prev_yaw_stamp = None
                 self.yaw_rate = np.zeros(1)
+                self.speed_rate = np.zeros(1)
+                self.prev_obs_speed = None
+                self.prev_speed_stamp = None
                 self.prev_action = np.zeros((1, 2))
                 self.last_steer = np.zeros(1)
                 if self.scripted is not None:
@@ -420,6 +433,17 @@ class FormulaOne(Node):
             self.prev_yaw_stamp = stamp
         self.yaw_rate = (1 - self.yaw_filter) * self.yaw_rate + self.yaw_filter * rate
 
+        stamp_s = rclpy.time.Time.from_msg(self.pose.header.stamp).nanoseconds * 1e-9
+        if self.prev_obs_speed is None or self.prev_speed_stamp is None \
+                or stamp_s <= self.prev_speed_stamp:
+            self.prev_obs_speed, self.prev_speed_stamp = speed, stamp_s
+        else:
+            raw = (speed - self.prev_obs_speed) / (stamp_s - self.prev_speed_stamp)
+            raw = max(-20.0, min(20.0, raw))
+            self.speed_rate = ((1 - self.accel_filter) * self.speed_rate
+                               + self.accel_filter * raw)
+            self.prev_obs_speed, self.prev_speed_stamp = speed, stamp_s
+
         clock_s = now.nanoseconds * 1e-9
         if self.run_started_at is None:
             self.run_started_at = clock_s
@@ -432,15 +456,17 @@ class FormulaOne(Node):
                                self.last_lap_time]])
         obs, frame = self.obs.compute(
             np.array([x]), np.array([y]), np.array([yaw]),
-            np.array([speed]), self.yaw_rate, self.prev_action, self.last_steer,
-            lap_state,
+            np.array([speed]), self.yaw_rate, self.speed_rate, self.prev_action,
+            self.last_steer, lap_state,
         )
         v_cap = frame["v_cap"]
         if self.scripted is not None:
-            action = self.scripted.act(frame["station"], np.array([speed]), v_cap)
+            action = self.scripted.act(frame["station"], np.array([speed]), v_cap,
+                                       frame["v_floor"])
         else:
             action = self.policy.act(obs)
-        steer, velocity = scale_action(action, v_cap, frame["steer_ff"], self.residual)
+        steer, velocity = scale_action(action, v_cap, frame["steer_ff"],
+                                       self.residual, frame["v_floor"])
         # Belt and braces: the rule limit, enforced again on the way out.
         velocity = np.minimum(velocity, v_cap) * float(self.param("speed_scale"))
         self.prev_action = np.clip(action, -1.0, 1.0)

@@ -53,6 +53,10 @@ class FormulaOneEnv:
         self.stop_timeout = float(env["stop_timeout_s"])
         self.residual = float(env["steer_residual"])
         self.yaw_filter = float(env["yaw_rate_filter"])
+        # Defaulted, like `observe_accel`: a config.yaml snapshot saved into a
+        # run directory before this existed has no such key, and those runs
+        # still have to be replayable.
+        self.accel_filter = float(env.get("speed_rate_filter", 0.25))
 
         veh = config["vehicle"]
         self.half_length = float(veh["length"]) / 2
@@ -66,7 +70,10 @@ class FormulaOneEnv:
         self.plant = Plant(self.cfg, self.n, self.rng)
         self.reward = Reward(config)
         self.obs_builder = ObservationBuilder(track, config, self.n)
-        self.obs_dim = obs_mod.OBS_DIM
+        # The BUILDER's width, not the module default: it depends on config
+        # (see `observe_accel`), and a policy trained before that channel
+        # existed must still load.
+        self.obs_dim = self.obs_builder.obs_dim
         self.act_dim = 2
 
         self.target_distance = self.laps * track.length
@@ -104,6 +111,8 @@ class FormulaOneEnv:
         self.sensed_y = np.zeros(self.n)
         self.sensed_yaw = np.zeros(self.n)
         self.yaw_rate = np.zeros(self.n)
+        self.speed_rate = np.zeros(self.n)
+        self.prev_obs_speed = np.zeros(self.n)
         self.dt = np.full(self.n, self.dt_nominal)
         self.latency_steps = np.zeros(self.n, dtype=np.int32)
         self.noise_xy = z.copy()
@@ -120,6 +129,7 @@ class FormulaOneEnv:
         self.ep_lateral_max = z.copy()
         self.ep_steer_jerk_sum = z.copy()
         self.ep_steps = z.copy()
+        self.ep_floor_deficit = z.copy()
 
     # ----------------------------------------------------------------- reset
 
@@ -201,6 +211,7 @@ class FormulaOneEnv:
         self.ep_lateral_max[mask] = 0.0
         self.ep_steer_jerk_sum[mask] = 0.0
         self.ep_steps[mask] = 0.0
+        self.ep_floor_deficit[mask] = 0.0
         idx = np.searchsorted(self.track.s, station % self.track.length)
         self.hint[mask] = np.clip(idx, 0, len(self.track.s) - 1)
         self.obs_builder.set_station(mask, station)
@@ -208,6 +219,11 @@ class FormulaOneEnv:
         self.sensed_x[mask], self.sensed_y[mask] = x, y
         self.sensed_yaw[mask] = yaw
         self.yaw_rate[mask] = 0.0
+        # Seed the previous speed with the speed the car is actually placed
+        # at, so a car dropped in mid-course at 4 m/s does not read as having
+        # just accelerated from rest.
+        self.speed_rate[mask] = 0.0
+        self.prev_obs_speed[mask] = np.where(speed < 0.3, 0.0, speed)
 
     def reset(self):
         self._reset_idx(np.ones(self.n, dtype=bool))
@@ -264,7 +280,18 @@ class FormulaOneEnv:
         rate = np.clip(step / self.dt, -8.0, 8.0)
         rate = (1 - self.yaw_filter) * self.yaw_rate + self.yaw_filter * rate
 
+        # Achieved acceleration, from the speed the POLICY sees (tachometer
+        # blind spot included), differenced once per control step for the same
+        # reason the yaw rate is: computing it inside `_observe` would
+        # difference a step against itself on every terminal tick.
+        obs_speed = np.where(p.speed < 0.3, 0.0, p.speed)
+        raw_accel = np.clip((obs_speed - self.prev_obs_speed) / self.dt, -20.0, 20.0)
+        accel = ((1 - self.accel_filter) * self.speed_rate
+                 + self.accel_filter * raw_accel)
+
         keep = np.ones(self.n, dtype=bool) if mask is None else mask
+        self.speed_rate = np.where(keep, accel, self.speed_rate)
+        self.prev_obs_speed = np.where(keep, obs_speed, self.prev_obs_speed)
         self.sensed_x = np.where(keep, x, self.sensed_x)
         self.sensed_y = np.where(keep, y, self.sensed_y)
         self.sensed_yaw = np.where(keep, yaw, self.sensed_yaw)
@@ -277,7 +304,8 @@ class FormulaOneEnv:
         speed = np.where(p.speed < 0.3, 0.0, p.speed)
         obs, self.frame = self.obs_builder.compute(
             self.sensed_x, self.sensed_y, self.sensed_yaw, speed,
-            self.yaw_rate, self.prev_action, self.last_steer, self._lap_state(),
+            self.yaw_rate, self.speed_rate, self.prev_action, self.last_steer,
+            self._lap_state(),
         )
         return obs
 
@@ -303,7 +331,8 @@ class FormulaOneEnv:
         # car is actually judged by.  Using truth here instead would train a
         # policy that silently depends on perfect localisation.
         steer_cmd, speed_cmd = scale_action(
-            action, self.frame["v_cap"], self.frame["steer_ff"], self.residual
+            action, self.frame["v_cap"], self.frame["steer_ff"], self.residual,
+            self.frame["v_floor"],
         )
         # TWO LAPS DONE MEANS STOP.  The throttle is taken away and the
         # steering is not: the car has no brakes, so it has fifteen metres of
@@ -424,6 +453,23 @@ class FormulaOneEnv:
                                          np.abs(lateral_true) * live)
         self.ep_steer_jerk_sum += steer_jerk**2
         self.ep_steps += 1
+        # How far under the floor the car actually ran, while racing.  The
+        # floor is structural on the COMMAND, so any shortfall here is the
+        # car failing to reach what it asked for -- accelerating out of a
+        # corner, or a draw whose slew rate cannot keep up -- not the policy
+        # disobeying it.
+        # Only while NOT meaningfully accelerating.  The floor binds the
+        # command, and the car takes the bridge's 2.0 m/s^2 to get there, so
+        # counting every wind-up would report 3.5 m/s of "shortfall" at a
+        # standing start and after every corner exit.  Cars below 1 m/s are
+        # excluded for the same reason -- at the line the car is stationary
+        # and the floor is 3.5, which is not a violation, it is a launch.
+        # What this measures is settled-but-too-slow.
+        winding_up = (self.speed_rate > 0.5) | (p.speed < 1.0)
+        self.ep_floor_deficit = np.maximum(
+            self.ep_floor_deficit,
+            np.where(live & ~winding_up,
+                     np.maximum(self.frame["v_floor"] - p.speed, 0.0), 0.0))
 
         terminated = crashed | stopped | stop_failed | stalled
         truncated = timed_out & ~terminated
@@ -462,6 +508,7 @@ class FormulaOneEnv:
                     "mean_cte": float(self.ep_lateral_sum[i]
                                       / max(self.ep_lateral_n[i], 1)),
                     "max_cte": float(self.ep_lateral_max[i]),
+                    "floor_deficit": float(self.ep_floor_deficit[i]),
                     "steer_jerk_rms": float(np.sqrt(
                         self.ep_steer_jerk_sum[i] / max(self.ep_steps[i], 1))),
                 }
@@ -481,7 +528,8 @@ class FormulaOneEnv:
 
     def scripted_action(self, driver):
         """Action array from the scripted baseline, in the policy's own space."""
-        return driver.act(self.frame["station"], self.plant.speed, self.frame["v_cap"])
+        return driver.act(self.frame["station"], self.plant.speed,
+                          self.frame["v_cap"], self.frame["v_floor"])
 
     def snapshot(self):
         """Per-car truth, for plotting and for the self-test."""

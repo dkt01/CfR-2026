@@ -37,7 +37,18 @@ ROOT = HERE.parents[1]
 
 
 def drive(cfg, trk, n, seed, deterministic, random_start=False):
-    """Run the scripted driver to the end and return the episode records."""
+    """Run the scripted driver to the end and return the episode records.
+
+    The driver's speed comes from `env.baseline_speed_scale`, and that is the
+    single most important thing about this sweep: gains tuned against a slow
+    driver are gains that are only good when driven slowly.
+
+    The first version of this file swept at 0.85, whose top speed is 3.76 m/s,
+    and the resulting prior held 0.182 m of clearance there and 0.032 m at
+    5.08 m/s.  A policy given that prior learns to drive at 3 m/s -- not
+    because the reward told it to, but because that is where its steering
+    still works.  Sweep at the speed you actually want to drive.
+    """
     from baseline import BaselineDriver
     from env import FormulaOneEnv
 
@@ -71,6 +82,9 @@ def main():
     ap.add_argument("--config", type=Path, default=HERE / "config.yaml")
     ap.add_argument("--write", action="store_true")
     ap.add_argument("--field", type=int, default=64)
+    ap.add_argument("--speed-scale", type=float, default=None,
+                    help="override env.baseline_speed_scale for the sweep; "
+                         "tune the prior at the speed you want to drive")
     args = ap.parse_args()
 
     # CFR_FF_HORIZON would override config.yaml inside ObservationBuilder and
@@ -79,10 +93,14 @@ def main():
     import track as track_mod
 
     base = yaml.safe_load(args.config.read_text())
+    if args.speed_scale is not None:
+        base = {**base, "env": {**base["env"],
+                                "baseline_speed_scale": args.speed_scale}}
+        print(f"  sweeping at baseline_speed_scale {args.speed_scale}")
     trk = track_mod.build(base, ROOT)
 
     horizons = [0.25, 0.35, 0.45, 0.55]
-    leads = [0.0, 0.25, 0.5]
+    leads = [0.0, 0.25, 0.5, 0.75]
     k_lats = [0.4, 0.8, 1.6, 2.4]
     k_rates = [0.0, 0.08, 0.16]
     k_heads = [0.1, 0.2, 0.4]

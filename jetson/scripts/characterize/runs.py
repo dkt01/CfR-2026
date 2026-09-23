@@ -35,6 +35,7 @@ _NUMERIC = {
     "odom_wz",
     "dist_along",
     "dist_total",
+    "odom_stamp",
 }
 _INTEGER = {
     "step_index",

@@ -87,11 +87,20 @@ class BaselineDriver:
     it into the bales.  Stepping the whole profile down buys clearance
     smoothly and predictably:
 
-        scale   two laps   min clearance
-        1.00     57.1 s       0.056 m     <- inside the graze band
-        0.90     63.1 s       0.116 m
-        0.85     66.7 s       0.131 m     <- here
-        0.80     70.7 s       0.179 m
+        scale   top speed   two laps   min clearance
+        0.80     4.16 m/s     70.3 s       0.156 m
+        0.85     4.42 m/s     66.2 s       0.142 m
+        0.90     4.68 m/s     62.7 s       0.127 m   <- here
+        0.95     4.94 m/s     59.5 s       0.099 m   inside the graze band
+        1.00     5.20 m/s     56.8 s       0.063 m   inside the graze band
+
+    Every number above is an ABSOLUTE fraction of the coast-feasible profile.
+    0.90 is the fastest one that still clears the 0.12 m graze band.
+
+    It used to be 0.85, and could not have been higher: with the prior's
+    feedforward lead at 0.25 the whole profile had to be backed off to stay
+    out of that band.  Raising the lead to 0.50 is what bought the extra
+    speed -- see the table in config.yaml.
 
     The floor's job is to be a stable reference and a bootstrap, not to set a
     lap record.  The POLICY is the thing that gets to decide, corner by
@@ -111,12 +120,23 @@ class BaselineDriver:
     def reset(self, n=1):
         pass
 
-    def act(self, station, speed, v_cap):
-        """(B, 2): zero steering residual, and the profile's throttle."""
+    def act(self, station, speed, v_cap, v_floor=None):
+        """(B, 2): zero steering residual, and the profile's throttle.
+
+        The throttle is the INVERSE of `observation.scale_action`, which maps
+        it onto [floor, cap].  Inverting the wrong mapping does not fail
+        loudly -- it just asks for a different speed than intended: when the
+        floor went in and this still divided by the cap alone, the scripted
+        driver silently began commanding
+        `floor * (1 - want/cap)` more than its own profile, overspeeding by
+        1.4 m/s and crashing six seconds in.
+        """
         t = self.track
         # Ask for the speed that will be right where the command LANDS, not
         # where the car is now: 0.19 s of dead time is a metre at racing speed.
         ahead = (station + speed * self.dead_time) % t.length
         want = t.at(ahead, self.v_ref)
-        throttle = 2.0 * np.clip(want / np.maximum(v_cap, 1e-6), 0.0, 1.0) - 1.0
+        lo = np.zeros_like(v_cap) if v_floor is None else np.minimum(v_floor, v_cap)
+        span = np.maximum(v_cap - lo, 1e-6)
+        throttle = 2.0 * np.clip((want - lo) / span, 0.0, 1.0) - 1.0
         return np.stack([np.zeros_like(throttle), throttle], axis=1)

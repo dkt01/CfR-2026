@@ -45,7 +45,11 @@ Visualization Manager:
         Depth: 10
         Durability Policy: Volatile
         Reliability Policy: Reliable
-      Shape: Arrow
+      Shape: Axes
+      Axes Length: 1
+      Axes Radius: 0.4
+      # Arrow geometry is kept so switching Shape back in the GUI restores the
+      # old look instead of RViz's defaults; it is ignored while Shape is Axes.
       Color: 60; 200; 255
       Shaft Length: 0.5
       Shaft Radius: 0.08

@@ -39,7 +39,7 @@ track:
   #
   #   RED     v_cap at the hairpin limit (v_hairpin)        floor 2.0
   #   YELLOW  v_cap between the two, the curvature taper    floor 2.6
-  #   GREEN   v_cap at the straight limit (v_straight)      floor 4.0
+  #   GREEN   v_cap at the straight limit (v_straight)      floor 4.2
   #
   # The yellow band matters more than it looks.  With a single green floor of
   # 3.5 applied right up to the hairpin mouth, the car arrived at the
@@ -66,7 +66,7 @@ track:
   #     2.20 ->  0.150 m     2.35 -> 0.114 m      2.50 -> 0.058 m  (unlearnable)
   # Each 0.1 m/s here is worth about 0.8 s of lap time and 30 mm of margin.
   speed_floor_hairpin: 2.05  # m/s, red
-  speed_floor_taper: 2.6    # m/s, yellow
+  speed_floor_taper: 1.9    # m/s, yellow
   speed_floor_open: 5.0     # m/s, green
   sdf_res: 0.02             # m, bale distance field
   sdf_margin: 2.0           # m of field beyond the outermost bale

@@ -12,6 +12,8 @@ that runs on the Orin with numpy alone — **no torch on the car**.
 | Speed cap | **2.5 m/s** in the hairpins, **5.2 m/s** everywhere else |
 | Coast-feasible optimum (braking only) | 55.5 s for two laps |
 | Scripted baseline (the floor) | 66.5 s race · 0.137 m clearance · 0.031 m mean CTE · 19% under randomisation |
+| **Trained policy** (`runs/v3.5/policy.npz`) | **101.15 s in Gazebo, two laps, stopped 5.1 m past the line, min clearance 0.145 m — lap 2 was 1.75 s faster than lap 1** |
+| | offline: 60.9% field finish · 99.65 s · 0.032 m mean CTE · 0.0074 steer jerk |
 
 **The car has no brakes.** Deceleration is coast drag only — 9.3 m of track to
 go from 5.2 to 2.5 m/s. Every hairpin has to be set up nearly ten metres
@@ -254,9 +256,29 @@ without it:
   floor now drives `baseline_speed_scale` of it, and the measured trade is
   tabulated in `BaselineDriver`.
 
-**Still open:** the model now predicts the Gazebo failure, and the policy
-trained against it has to be run in Gazebo to confirm it predicts the
-*success* too. `./validate.sh` is that test.
+**Closed.** `runs/v3.5/policy.npz` drives two laps of the Gazebo Speed Course
+in 101.15 s and stops 5.1 m past the line, minimum clearance 0.145 m — outside
+the 0.12 m graze band for the whole run. The model predicted the failure, and
+now it predicts the success.
+
+For the record, what it took after the lag went in — none of it retraining
+alone:
+
+| run | change | field finish | at |
+|---|---|---|---|
+| v1 | the config as it stood | 57% | 110.6 s |
+| v2 | + linear LR decay | 34% | 87.1 s |
+| v3 | + `time` 4.0 → 2.0 | 69.5% | 116.7 s |
+| **v3.5** | + Huber `lateral`, `time` 3.0, resumed from v3 | **60.9%** | **99.7 s** |
+| v4 | same reward, fresh, + `dv/dt` channel | 52% | 113.0 s |
+
+Read that table by *band*, not by row: at a matched ~100 s lap, v3 scored 49%
+and v3.5 scored 59%. In the 60–75 s band the reward changes moved the floor
+from 21% (v2) to 30%. v4 is the one negative result — feeding the policy its
+own achieved deceleration raised top speed 2.7 → 3.3 m/s and still scored
+below v3.5, so the straights are limited by something other than not knowing
+the drag. It is kept behind `observe_accel: false` so the next person does not
+spend a run rediscovering that.
 
 ## On the car
 

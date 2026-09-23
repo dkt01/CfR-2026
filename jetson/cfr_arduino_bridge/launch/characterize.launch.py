@@ -110,16 +110,28 @@ def _launch_setup(context, *args, **kwargs):
         remappings=[("~/drive_cmd", "/drive_cmd")],
     )
 
-    zed = ExecuteProcess(
-        cmd=[
-            "ros2",
-            "launch",
-            "zed_wrapper",
-            "zed_camera.launch.py",
-            f"camera_model:={LaunchConfiguration('zed_model').perform(context)}",
-        ],
-        output="screen",
-    )
+    # Whatever the wrapper is launched with is what the run measures, so the
+    # override file is a launch argument rather than a fact about the Orin.
+    # It is empty by default - stock wrapper defaults, which is what every run
+    # so far used - and `zed/config/cfr_zed2i.yaml` is the race configuration.
+    # They are NOT interchangeable for step-response work: the race file turns
+    # on `area_memory`, and a loop closure lands as a step in `~/pose` that a
+    # yaw-rate derivative reads as the car snapping sideways.  See
+    # docs/characterization-steering.md.
+    zed_cmd = [
+        "ros2",
+        "launch",
+        "zed_wrapper",
+        "zed_camera.launch.py",
+        f"camera_model:={LaunchConfiguration('zed_model').perform(context)}",
+    ]
+    zed_params = LaunchConfiguration("zed_params").perform(context)
+    if zed_params:
+        zed_params = os.path.abspath(os.path.expanduser(zed_params))
+        if not os.path.isfile(zed_params):
+            raise RuntimeError(f"no ZED override file at {zed_params}")
+        zed_cmd.append(f"ros_params_override_path:={zed_params}")
+    zed = ExecuteProcess(cmd=zed_cmd, output="screen")
 
     # Gazebo stand-in for the Arduino + ZED, so the characterization procedure
     # itself - arming, the safety envelope, gains handshake, CSV/bag output -
@@ -206,6 +218,9 @@ def _launch_setup(context, *args, **kwargs):
                 .lower()
                 == "true",
                 "bridge_node": bridge_node_name,
+                "control_rate_hz": float(
+                    LaunchConfiguration("control_rate_hz").perform(context)
+                ),
                 "use_sim_time": use_sim,
             }
         ],
@@ -213,6 +228,8 @@ def _launch_setup(context, *args, **kwargs):
             ("drive_cmd", "/drive_cmd"),
             ("status", "/arduino_bridge/status"),
             ("odom", LaunchConfiguration("odom_topic").perform(context)),
+            ("pose", LaunchConfiguration("pose_topic").perform(context)),
+            ("imu", LaunchConfiguration("imu_topic").perform(context)),
         ],
     )
 
@@ -280,6 +297,34 @@ def generate_launch_description():
                 "odom_topic",
                 default_value="/zed/zed_node/odom",
                 description="Odometry the runner uses for distance and aborts",
+            ),
+            DeclareLaunchArgument(
+                "pose_topic",
+                default_value="/zed/zed_node/pose",
+                description="Map-frame pose, recorded at its native rate into "
+                "pose.csv. Not used for control.",
+            ),
+            DeclareLaunchArgument(
+                "imu_topic",
+                default_value="/zed/zed_node/imu/data",
+                description="IMU, recorded at its native rate into imu.csv. "
+                "Gyro z is the highest-rate yaw channel on the car.",
+            ),
+            DeclareLaunchArgument(
+                "control_rate_hz",
+                default_value="50.0",
+                description="Runner tick and telemetry.csv row rate. Raising it "
+                "does NOT raise the camera's rate - telemetry.csv resamples "
+                "whatever arrived last, so a faster grid over a slow camera is "
+                "more rows carrying the same values. Raise the ZED's own rate "
+                "for that (zed_params) and read pose.csv.",
+            ),
+            DeclareLaunchArgument(
+                "zed_params",
+                default_value="",
+                description="Path to a ZED wrapper ros_params_override_path "
+                "YAML. Empty means the wrapper's own defaults, which is what "
+                "every run before 2026-09-22 used.",
             ),
             DeclareLaunchArgument(
                 "use_zed", default_value="true", description="Start the ZED camera node"

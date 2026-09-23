@@ -42,7 +42,15 @@ def main():
     if not layers:
         raise SystemExit("no Linear layers found; is this a PPO MlpPolicy?")
 
-    blob = {"n_layers": len(layers), "obs_dim": obs_mod.OBS_DIM, "activation": "tanh"}
+    # From the FIRST LAYER's shape, not from a module constant.  The constant
+    # tracks whatever config.yaml says today; the checkpoint was trained
+    # against whatever it said then, and exporting the two against each other
+    # is how a 35-wide policy gets shipped claiming to be 36-wide.
+    # `layers` holds torch Linear MODULES, so the input width is
+    # `in_features` -- indexing it like an array raised TypeError and took a
+    # 39-minute training run's export with it.
+    obs_dim = int(layers[0].in_features)
+    blob = {"n_layers": len(layers), "obs_dim": obs_dim, "activation": "tanh"}
     for i, layer in enumerate(layers):
         # Transposed once, here, so the runtime is a plain `obs @ w + b`.
         blob[f"w{i}"] = layer.weight.detach().cpu().numpy().T.astype(np.float64)
@@ -60,7 +68,7 @@ def main():
     from policy import NumpyPolicy
 
     check = NumpyPolicy.load(out)
-    probe = np.random.default_rng(0).normal(0, 1, (64, obs_mod.OBS_DIM)).astype(np.float32)
+    probe = np.random.default_rng(0).normal(0, 1, (64, obs_dim)).astype(np.float32)
     with torch.no_grad():
         want, _, _ = model.policy(torch.as_tensor(probe), deterministic=True)
     want = np.clip(want.cpu().numpy(), -1.0, 1.0)

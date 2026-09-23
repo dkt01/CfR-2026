@@ -165,13 +165,31 @@ def analyze_zed_static(run, options):
 
 
 def analyze_steer_authority(run, options):
+    """B1 - effective steering angle against command.
+
+    Speed comes through `_speed_column`, NOT from `odom_vx` directly.  The
+    2026-09-18 run took it straight off the ZED and produced a non-monotonic
+    map - full lock reading less angle than half lock - because it ran at
+    0.6 m/s, which is the one regime where both speed sensors fail at once
+    (section 0 of characterization-results.md).  delta = atan(L*yaw_rate/v)
+    divides by that speed, so a fabricated v is an error on every row.
+
+    Yaw rate stays on `odom_wz`: ZED yaw is the one channel that held up
+    through the whole campaign.
+    """
     wheelbase = _wheelbase(run)
     summary, points = [], []
+    sources = set()
     for segment in run.segments():
         if segment.label in (None, "settle", "between", "straight_reference"):
             continue
         command = fits.steady_state(*segment.pair("t_ros", "cmd_steering"))["mean"]
-        speed = fits.steady_state(*segment.pair("t_ros", "odom_vx"))
+        speed_times, speed_values, source = _speed_column(segment, options)
+        if not speed_times:
+            summary.append(f"{segment.label}: no usable speed channel, skipped")
+            continue
+        sources.add(source)
+        speed = fits.steady_state(speed_times, speed_values)
         yaw_rate = fits.steady_state(*segment.pair("t_ros", "odom_wz"))
         if abs(speed["mean"]) < 0.05:
             summary.append(f"{segment.label}: car never moved, skipped")
@@ -189,10 +207,24 @@ def analyze_steer_authority(run, options):
             f"delta {delta:+.4f} rad ({math.degrees(delta):+.2f} deg)"
         )
 
+    if sources:
+        summary.append("")
+        summary.append(f"speed channel: {', '.join(sorted(sources))}")
+
     if len(points) < 2:
         return {"summary": summary or ["no usable arcs"], "vehicle": {}, "plots": []}
 
     points.sort()
+    # A map that is not monotonic is not a map.  The 2026-09-18 run produced
+    # exactly this and it was read as a measurement for two days, so say it
+    # here rather than leaving it to be noticed in the plot.
+    for (c0, d0), (c1, d1) in zip(points, points[1:]):
+        if c0 < c1 and d1 < d0 - 1e-6:
+            summary.append(
+                f"NON-MONOTONIC: command {c1:+.2f} reads {d1:.4f} rad, LESS "
+                f"than {c0:+.2f}'s {d0:.4f}. Steering authority cannot fall "
+                f"with command; this run measured something else."
+            )
     left = [delta for command, delta in points if command > 0.9]
     right = [delta for command, delta in points if command < -0.9]
     slope, intercept, r_squared = fit_line(
@@ -258,56 +290,103 @@ def analyze_steer_authority(run, options):
 
 
 def analyze_skidpad(run, options):
+    """B2 - understeer gradient, and the zero-speed angle each command holds.
+
+    Two things changed here after the 2026-09-18 session.
+
+    **Speed comes through `_speed_column`.**  It used to be read straight off
+    `odom_vx`, the channel section 0 of characterization-results.md found
+    fabricating up to 4.6% of its samples in motion.  Both the radius and the
+    lateral acceleration below are built from it.
+
+    **The sign of the gradient is corrected at this call site.**  The standard
+    form is `delta_wheel = L/R + K*a_y`, and `fits.fit_understeer` fits exactly
+    that - but what it is handed here is `delta_eff = atan(L/R)`, which is the
+    OTHER side of the same equation.  At a fixed command an understeering car
+    runs wider as it speeds up, so R grows and delta_eff FALLS: the fitted
+    slope is -K, not +K.  Feeding a car with a true K of +0.007 through this
+    path returns -0.0068, so the value that reached section 4 as "+0.007" had
+    its sign put back by hand and the one `vehicle_patch.yaml` carried did not.
+
+    Groups are keyed by (side, command), not by side alone.  The fit's
+    intercept IS the kinematic angle for that command, so pooling two commands
+    into one regression asks a single intercept to describe two of them.
+    """
     wheelbase = _wheelbase(run)
-    summary, groups = [], {"left": [], "right": []}
+    summary, groups = [], {}
+    sources = set()
     for segment in run.segments():
         if not segment.label or not segment.label.startswith(("left_", "right_")):
             continue
         side = segment.label.split("_")[0]
-        speed = fits.steady_state(*segment.pair("t_ros", "odom_vx"))["mean"]
+        speed_times, speed_values, source = _speed_column(segment, options)
+        if not speed_times:
+            continue
+        sources.add(source)
+        speed = fits.steady_state(speed_times, speed_values)["mean"]
         yaw_rate = fits.steady_state(*segment.pair("t_ros", "odom_wz"))["mean"]
+        command = fits.steady_state(*segment.pair("t_ros", "cmd_steering"))["mean"]
         if abs(speed) < 0.2 or abs(yaw_rate) < 1e-3:
             continue
         radius = abs(speed / yaw_rate)
         lateral = speed * speed / radius
         delta = abs(fits.fit_effective_steering(speed, yaw_rate, wheelbase))
-        groups[side].append((lateral, delta))
+        groups.setdefault((side, round(abs(command), 2)), []).append((lateral, delta))
         summary.append(
-            f"{segment.label:14s} v {speed:.2f}  R {radius:5.2f} m  "
-            f"a_y {lateral:5.2f} m/s2  delta {delta:.4f} rad"
+            f"{segment.label:16s} v {speed:.2f}  R {radius:5.2f} m  "
+            f"a_y {lateral:5.2f} m/s2 ({lateral / 9.81:.2f} g)  "
+            f"delta {delta:.4f} rad"
         )
 
-    vehicle, series = {}, []
-    for side, points in groups.items():
+    if sources:
+        summary.append("")
+        summary.append(f"speed channel: {', '.join(sorted(sources))}")
+
+    vehicle, series, per_side = {}, [], {}
+    for (side, command), points in sorted(groups.items()):
         if len(points) < 3:
+            summary.append("")
+            summary.append(
+                f"{side} at command {command:.2f}: only {len(points)} speeds, "
+                f"need 3 for a gradient"
+            )
             continue
         points.sort()
         result = fits.fit_understeer([a for a, _ in points], [d for _, d in points])
+        # See the docstring: the fitted slope is -K.
+        gradient = -result["understeer_gradient"]
+        intercept = result["kinematic_angle"]
+        per_side.setdefault(side, []).append(gradient)
         summary.append("")
         summary.append(
-            f"{side}: understeer gradient {result['understeer_gradient']:+.5f} "
-            f"rad/(m/s2), kinematic angle {result['kinematic_angle']:.4f} rad "
-            f"(r2 {result['r_squared']:.3f})"
+            f"{side} at command {command:.2f}: understeer gradient "
+            f"{gradient:+.5f} rad/(m/s2)  (r2 {result['r_squared']:.3f}, "
+            f"{len(points)} speeds)"
         )
-        vehicle[f"lateral.understeer_gradient_{side}"] = result["understeer_gradient"]
+        # Extrapolating the arcs back to zero lateral acceleration removes the
+        # speed-dependent part and leaves the angle the linkage holds at rest -
+        # except that it is still divided by whatever fixed scrub the tires
+        # have, since both are flat in speed.  tan(A6 wheel angle) / tan(this)
+        # is that scrub, and A6 is the only thing that separates them.
+        summary.append(
+            f"  zero-a_y effective angle {intercept:.4f} rad. Divide the A6 "
+            f"geometric wheel angle at this command by it (as tangents) for "
+            f"tire_scrub; on its own it cannot tell scrub from linkage."
+        )
+        vehicle[f"lateral.understeer_gradient_{side}_{command:.2f}".replace(".", "p", 1)] = gradient
         series.append(
             {
-                "label": side,
+                "label": f"{side} {command:.2f}",
                 "mode": "points",
                 "x": [a for a, _ in points],
                 "y": [d for _, d in points],
             }
         )
-        # The simulator, with mu=50, always achieves the kinematic radius. This
-        # is the size of that error at the speed the follower actually cruises.
-        excess = result["understeer_gradient"] * (3.2**2 / max(points[-1][0], 1e-6))
-        if result["understeer_gradient"] > 0:
-            summary.append(
-                f"  -> at 3.2 m/s the car needs roughly {excess:.4f} rad more "
-                f"steering than the kinematic model predicts"
-            )
 
-    both = [value for side in groups.values() for value in side]
+    for side, gradients in sorted(per_side.items()):
+        vehicle[f"lateral.understeer_gradient_{side}"] = sum(gradients) / len(gradients)
+
+    both = [value for points in groups.values() for value in points]
     if both:
         peak = max(a for a, _ in both)
         vehicle["lateral.mu_lateral"] = peak / 9.81
@@ -317,6 +396,16 @@ def analyze_skidpad(run, options):
             f"= {peak / 9.81:.2f} g, a LOWER BOUND on lateral mu "
             f"(the sweep stayed below the slide limit by design)"
         )
+        # Only a lower bound while the sweep stays under it.  Once an arc is
+        # AT the limit the car is running wide on grip rather than on
+        # elasticity, and that point belongs to no understeer gradient.
+        if peak > 0.50 * 9.81:
+            summary.append(
+                f"  WARNING: {peak / 9.81:.2f} g is at or past the 0.55 g lower "
+                f"bound measured on 2026-09-18. Any arc that reached it was "
+                f"grip-limited, not elastically understeering, and drags the "
+                f"gradient above with it. Drop those speeds and refit."
+            )
 
     plot = (
         svgplot.scatter(
@@ -337,11 +426,40 @@ def analyze_skidpad(run, options):
 
 
 def analyze_step_steer(run, options):
+    """B3 - yaw response to a steering step.
+
+    This analysis is resolution-limited before it is anything else.  The
+    2026-09-18 run returned a yaw-rate time constant of 1.76 s, roughly nine
+    times the truth, and section 4 of characterization-results.md had to throw
+    it out: the response was essentially over before the second INDEPENDENT
+    sample arrived.  telemetry.csv could not show that, because it repeats the
+    last odometry message onto every 50 Hz row and a repeat looks exactly like
+    a measurement.
+
+    So the first thing reported is how many distinct camera samples each step
+    actually got, from the `odom_stamp` column, and a fit with too few of them
+    is refused rather than printed.  For a real number use pose.csv or imu.csv,
+    which are written one row per message.
+    """
     summary, vehicle = [], {}
     taus = []
     for segment in run.matching("step_"):
         times, yaw_rates = segment.pair("t_ros", "odom_wz")
         if len(times) < 8:
+            continue
+        stamps = segment.column("odom_stamp")
+        distinct = len(set(stamps)) if stamps else None
+        span = times[-1] - times[0]
+        rate = (distinct / span) if (distinct and span > 0) else None
+        marker = ""
+        if rate is not None:
+            marker = f"  [{distinct} camera samples, {rate:.0f} Hz]"
+        if rate is not None and rate < 25.0:
+            summary.append(
+                f"{segment.label:20s} REFUSED: {rate:.0f} Hz of camera data "
+                f"over {span:.1f} s. A transient this short cannot be fitted "
+                f"from it; the 1.76 s artifact came from exactly this."
+            )
             continue
         settled = fits.steady_state(times, yaw_rates, tail_fraction=0.4)
         try:
@@ -350,6 +468,21 @@ def analyze_step_steer(run, options):
             )
         except ValueError as error:
             summary.append(f"{segment.label:20s} no usable step: {error}")
+            continue
+        # A first-order lag that has not substantially completed inside the
+        # hold cannot be fitted from it - the log-linearisation is reading the
+        # noise on an almost-straight ramp, and it returns whatever slope that
+        # noise happens to have.  This is the 1.76 s artifact's actual
+        # mechanism, and it survives any sample rate, so the rate check above
+        # does not catch it.  Refuse instead of printing a number: five time
+        # constants have to fit inside the step or the step is too short.
+        if fit["tau"] > span / 5.0:
+            summary.append(
+                f"{segment.label:20s} REFUSED: fitted tau {fit['tau']:.2f} s "
+                f"against a {span:.1f} s hold. Five time constants do not fit "
+                f"inside the step, so this is a ramp being read as an "
+                f"exponential, not a measurement.{marker}"
+            )
             continue
         peak = max(yaw_rates, key=abs)
         overshoot = (
@@ -360,7 +493,20 @@ def analyze_step_steer(run, options):
         taus.append(fit["tau"])
         summary.append(
             f"{segment.label:20s} settled {settled['mean']:+.3f} rad/s  "
-            f"tau {fit['tau']:.3f} s  overshoot {overshoot * 100:+.1f}%"
+            f"tau {fit['tau']:.3f} s  dead {fit['dead_time']:.3f} s  "
+            f"overshoot {overshoot * 100:+.1f}%{marker}"
+        )
+
+    found = run.matching("step_")
+    stamps_missing = bool(found) and not any(
+        segment.column("odom_stamp") for segment in found
+    )
+    if stamps_missing:
+        summary.append("")
+        summary.append(
+            "no odom_stamp column: this run predates per-message stamping, so "
+            "there is no way to tell a fresh camera sample from a repeated "
+            "one. Treat every time constant below as unverified."
         )
 
     if taus:
@@ -374,7 +520,8 @@ def analyze_step_steer(run, options):
             "mismatch points at the inertia ESTIMATE in vehicle.yaml (A3), "
             "which was calculated rather than measured."
         )
-        vehicle["inertia.yaw_response_tau_measured"] = mean_tau
+        if not stamps_missing:
+            vehicle["inertia.yaw_response_tau_measured"] = mean_tau
     return {"summary": summary, "vehicle": vehicle, "plots": []}
 
 
@@ -695,6 +842,11 @@ ANALYZERS = {
     "steer_authority": analyze_steer_authority,
     "skidpad": analyze_skidpad,
     "step_steer": analyze_step_steer,
+    # The 2026-09-22 re-runs.  Same analysis, different step lists - see
+    # docs/characterization-steering.md for what each one changed and why.
+    "steer_authority_fast": analyze_steer_authority,
+    "skidpad_chicane": analyze_skidpad,
+    "step_steer_fine": analyze_step_steer,
     "pulse_staircase": analyze_pulse_staircase,
     "coastdown": analyze_coastdown,
     "brake_sweep": analyze_brake_sweep,

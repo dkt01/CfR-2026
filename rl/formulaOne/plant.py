@@ -54,7 +54,10 @@ class Plant:
         self.wheelbase = float(p["wheelbase"])
         self.steer_pts = np.asarray(p["steering_command_points"], dtype=float)
         self.steer_ang = np.asarray(p["steering_angle_points"], dtype=float)
-        self.steering_tau = float(p["steering_tau"])
+        # steering_slew stays a scalar: it saturates on 0.1% of control ticks
+        # even at the slowest servo the 2075R datasheet allows, so randomising
+        # it would add a parameter the policy cannot observe a consequence of.
+        # steering_tau is the opposite - see `nominal` below.
         self.steering_slew = float(p["steering_slew"])
         self.steering_limit_nominal = max(abs(self.steer_ang[0]), abs(self.steer_ang[-1]))
         self.nominal = dict(
@@ -66,6 +69,7 @@ class Plant:
             understeer=float(p["understeer_gradient"]),
             tire_scrub=float(p["tire_scrub"]),
             yaw_tau=float(p["yaw_response_tau"]),
+            steer_tau=float(p["steering_tau"]),
         )
         # Command history is kept at substep resolution so the dead time is
         # applied where it happens -- between the Jetson and the wheels --
@@ -101,6 +105,10 @@ class Plant:
         nom = self.nominal
         self.dead_time[mask] = draw("dead_time", nom["dead_time"])
         self.yaw_tau[mask] = nom["yaw_tau"] * draw("yaw_tau_scale", 1.0)
+        # Absolute range, not a scale on the nominal: the nominal is itself a
+        # `guess` in vehicle.yaml, and multiplying a guess implies it is the
+        # centre of something.  It is not.
+        self.steer_tau[mask] = draw("steering_tau", nom["steer_tau"])
         self.coast_f0[mask] = nom["coast_f0"] * draw("coast_scale", 1.0)
         self.coast_f1[mask] = nom["coast_f1"] * draw("coast_scale", 1.0)
         self.accel[mask] = nom["accel"] * draw("accel_scale", 1.0)
@@ -119,7 +127,8 @@ class Plant:
             z = np.zeros(self.n)
             for name in ("dead_time", "coast_f0", "coast_f1", "accel", "slew",
                          "understeer", "tire_scrub", "steer_gain", "steer_asym",
-                         "steer_offset", "steer_limit", "dropout", "yaw_tau"):
+                         "steer_offset", "steer_limit", "dropout", "yaw_tau",
+                         "steer_tau"):
                 setattr(self, name, z.copy())
             self.yaw_rate = z.copy()
             self.x, self.y, self.yaw = z.copy(), z.copy(), z.copy()
@@ -197,7 +206,7 @@ class Plant:
         reachable = self.steer_angle + np.clip(
             want_angle - self.steer_angle, -slew, slew
         )
-        alpha = dt / (self.steering_tau + dt)
+        alpha = dt / (self.steer_tau + dt)
         self.steer_angle += alpha * (reachable - self.steer_angle)
 
         # Bicycle with an understeer gradient, R = (L + K v^2) / tan(delta),

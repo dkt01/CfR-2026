@@ -394,19 +394,84 @@ steering:
     experiment: A6
     note: Half the hysteresis between rising and falling sweeps in A6.
   slew_rate:
-    value: 8.7
+    value: 6.16
     units: rad/s
-    provenance: guess
+    provenance: estimated
     experiment: A7
     note: >
-      ~500 deg/s, a typical hobby servo.  NOT negligible against the 2.0 rad/s
-      turn_rate the path follower commands.  The servo runs on regulated 5 V, so
-      this does not vary with pack state - measure it once.
+      UPPER BOUND from the servo's datasheet, 2026-09-22.  Was 8.7 tagged
+      `guess` - "~500 deg/s, a typical hobby servo" - and that number was not
+      merely unmeasured, it was wrong in DIRECTION.
+
+      The stock Traxxas 2075R is specified at 0.17 s per 60 deg, which is
+      6.16 rad/s at the SERVO OUTPUT SHAFT.  This entry is the ROAD WHEEL
+      rate, and the two differ by the steering linkage ratio.  A road wheel
+      slewing at 8.7 rad/s off a shaft that slews at 6.16 would need a linkage
+      that AMPLIFIES angular velocity - the wheel turning further than the
+      horn.  Ackermann steering linkages reduce: the servo travels more than
+      the wheel, not less.  So the shaft rate is a ceiling the road wheel
+      cannot exceed, and 6.16 is that ceiling.
+
+      IT IS STILL A CEILING, NOT THE VALUE.  The full command sweep is 51.2
+      deg of road wheel (0.894 rad, from effective_angle_table).  If the servo
+      covers that in ~100 deg of its own travel - typical for a 1000-2000 us
+      RC sweep - the ratio is ~2 and the true road-wheel rate is nearer
+      3 rad/s, i.e. 0.29 s lock-to-lock rather than the 0.145 s implied here.
+      A6 pins it: its overhead photographs give road-wheel angle against
+      command, and command maps to pulse width by a known 4 us per count, so
+      the ratio falls out of a measurement already in the campaign.
+
+      Two more things to settle at the bench.  The supply - the 2075R is
+      0.17 s at 6.0 V and 0.19 s at 4.8 V, and the line below says regulated
+      5 V, so if that is right the ceiling is nearer 5.7 rad/s; a multimeter
+      settles it.  And the linkage ratio itself, which A4 geometry can carry.
+
+      The servo runs on regulated 5 V, so this does not vary with pack state -
+      measure it once.
+
+      Two things to settle at the bench before any of that is written down as
+      measured.  First, the supply: the line above says regulated 5 V and the
+      2075R is specified 0.17 s at 6.0 V and 0.19 s at 4.8 V, so if 5 V is
+      right the starting figure is nearer 5.7 rad/s.  A multimeter settles it.
+      Second, the linkage ratio, which A4 geometry can carry.
+      
   tau:
-    value: 0.05
+    value: 0.06
     units: s
     provenance: guess
     experiment: A7
+    note: >
+      Small-signal servo lag, and the one that actually governs this car,
+      because the policy only ever makes small steering steps - it trims a
+      centerline prior by at most +/-0.5 normalized command.
+
+      NOT DERIVABLE FROM THE SLEW SPEC, and 2026-09-22 saw an attempt.  A slew
+      rate is a large-signal saturation: the output ramps at constant angular
+      velocity, so completion time scales with step size.  A time constant is
+      a small-signal linear parameter: completion time is the same for every
+      step size.  The "equivalent tau" of a pure 6.16 rad/s rate limiter runs
+      from 0.002 s at a 1 deg step to 0.107 s at a 60 deg one - 52x across the
+      range this car uses - so there is no single number to extract.  Figures
+      of 0.054 s (which is 0.17/pi, a half-period-to-bandwidth conversion that
+      assumes the servo is bandwidth-limited rather than rate-limited, i.e.
+      the opposite of what a slew spec measures) and 0.070-0.085 s (no stated
+      method) should be treated as coincidence, not derivation.
+
+      THIS ONE IS LOAD-BEARING.  Swept through rl/formulaOne/plant.py at
+      2.5 m/s and command 0.35 - hairpin entry - the time to half the steady
+      yaw rate runs 0.435 s at tau = 0 to 0.795 s at tau = 0.15.  That 0.36 s
+      is 0.90 m of travel against a 0.92 m corridor, which makes this nearly
+      as consequential as yaw_response_tau and it has never been measured.
+      rl/formulaOne/config.yaml therefore randomises it per car rather than
+      trusting the 0.05 above - but only over [0.04, 0.08], which is far
+      narrower than the uncertainty deserves.  The honest [0.03, 0.15] is not
+      affordable: scored per car it correlates -0.40 with finishing a clean
+      run, which would make servo lag the second strongest limiter on the
+      speed/reliability frontier behind pose drift.  The narrow range is a
+      holding position; the measurement is the answer.
+
+      A7 measures it directly: film a SMALL steering step at 240 fps, not just
+      the full-lock sweep.  That second half of A7 is the half that matters.
   # Effective bicycle-model steering angle against normalized command, from the
   # B1 constant-radius arcs.  This table, not max_angle_*, is what the simulator
   # interpolates -- and as of 2026-09-21 max_angle_* is derived FROM it rather
