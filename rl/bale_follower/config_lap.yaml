@@ -1,0 +1,169 @@
+# Lap-time policy for the speed course. Read with train_lap.py / evaluate_lap.py;
+# the corridor-following stack keeps using config.yaml.
+#
+# Reference points every number below is set against:
+#   loop length            110.1 m  (course_path.json)
+#   planner optimum        28.4 s   (min-time profile at mu=0.6)
+#   MPC racer, best lap    29.95 s  (6 consecutive laps, REPORT.md)
+#   vehicle at full lock   0.97 m radius, needs ~1.4 m/s to rotate at all
+env:
+  world_name: cfr_speed_course
+  num_lidar_bins: 36
+  # The ZED 2i's horizontal FOV. zed_sim clamps to this anyway; stating it
+  # here keeps the observation geometry visible in the checkpoint metadata.
+  lidar_fov_deg: 110.0
+  lidar_max_range: 6.0
+  # 20 Hz, matching path_racer.py -- the configuration that actually drove
+  # 30 s laps. At 10 Hz and 4.5 m/s the car moves 0.45 m between decisions,
+  # which is a quarter of a hairpin.
+  control_hz: 20.0
+  # Above the 4.0 m/s the MPC racer holds on the top straight, below the
+  # planner's 5.5 m/s ceiling, which only the longest straight ever reaches.
+  # Start a fresh run at 3.0 (--max-speed 3.0) and resume here; a policy that
+  # meets 4.5 m/s untrained learns to brake with its exploration noise
+  # instead of its mean action (the v3 failure).
+  max_speed: 4.5
+  # Reverse is a recovery gear, and it has to be quick enough to be worth
+  # using: at 0.5 m/s backing 1.5 m out of a wedge takes 3 s of clock.
+  reverse_speed: 1.2
+  traction: 0.6
+  # Traxxas 2075 at the road wheel: 3.1-4.6 rad/s. The action IS this rate,
+  # so it is the policy's steering bandwidth, not a filter over it.
+  max_steering_rate: 3.5
+  # Measured against the rendered camera (see LAP_RACER.md): the analytic
+  # ray fan now casts from the ZED's mount, so `analytic` and `cloud` return
+  # the same scene to within 0.11 m and a policy can be trained on the cheap
+  # one and deployed on the real one. Training uses `analytic` because
+  # rendering costs 21 ms of every 50 ms step, publishes at 13.7 Hz against a
+  # 20 Hz loop, and takes the simulator down every 15-30 minutes; validate on
+  # `cloud` with evaluate_lap.py --scan-source cloud.
+  scan_source: analytic
+  scan_origin_x: 0.315
+  # The camera's rate, not the control rate: the ZED runs at 15 Hz against
+  # this 20 Hz loop, so about a third of steps see a repeated scan with a
+  # mean age of 55 ms. Training against a fresh scan every step trains
+  # against a sensor nobody owns.
+  scan_update_hz: 15.0
+  # The speed channel the policy sees comes from the tachometer on
+  # /arduino_bridge/status -- the same topic in simulation and on the car,
+  # blind below ~0.3 m/s and reading exactly zero in ~27% of samples. The
+  # reward and the metrics keep using the true speed; only the OBSERVATION
+  # is restricted to what the vehicle can actually measure.
+  speed_source: status
+  # One frame of history. 50 ms at 20 Hz, which is what makes closing rate
+  # on a bale observable from a scan that carries no velocity.
+  scan_history: 1
+  # Long enough for 3 laps at a pace no policy has yet driven, so the limit
+  # binds on slow policies and the lap target ends fast ones.
+  episode_time_limit_s: 150.0
+  max_laps: 3
+  randomize_start: true
+  # Uniform over the loop, so the back half of the course is sampled as
+  # heavily as the first corner; 15% of episodes start wedged across the
+  # corridor, because recovery cannot be learned from states a good policy
+  # never reaches. Held low (0.08) for the first stage, where those episodes
+  # are unsolvable and just burn the data budget; raise it to ~0.15 for the
+  # later stages, once the policy can drive.
+  wedged_start_prob: 0.08
+  recovery_window_s: 2.0
+  recovery_distance: 0.4
+  recovery_exit_distance: 1.0
+  # Enough attempts at backing out to be worth trying (the detection window
+  # is 2 s, so ~3 s of recovery), short enough that the cost of being wedged
+  # stays under collision_penalty.
+  stuck_window_s: 5.0
+  stuck_distance: 1.0
+  odom_timeout_s: 2.0
+zed_sim:
+  enabled: true
+  hfov_deg: 110.0
+  noise_a: 0.01
+  noise_b: 0.008
+  dropout_prob: 0.03
+reward:
+  # Break-even speed is k_time / k_progress = 1.0 m/s: slower than that and
+  # the clock outruns the progress, faster and every metre per second pays.
+  # A clean 31 s lap is worth 6*110.1 - 6*31 = 475 before the lap bonus.
+  k_progress: 6.0
+  k_time: 6.0
+  # A stopped car pays 16/s and earns nothing: 5 s wedged costs 80, about a
+  # sixth of a lap's earnings, and 10 s costs 160 -- deliberately just under
+  # collision_penalty, so crashing is never the cheaper way out of a wedge.
+  k_stall: 10.0
+  stall_speed: 0.35
+  # Measured on the body-to-bale gap (bale_geometry.body_clearance), not a
+  # ray from the car's centre. A centred car in a 0.95 m corridor has 0.32 m
+  # per side, so 0.25 m leaves the racing line unpenalised and starts
+  # charging only once the car is closer to a bale than it is wide.
+  k_clearance: 2.0
+  safe_clearance: 0.25
+  # The fence. At 4.5 m/s a step earns +1.35 from progress; a 5 cm gap costs
+  # -3.28 all in, and touching costs -6.0. Contact never pays at any speed
+  # this vehicle can reach.
+  k_touch: 40.0
+  touch_clearance: 0.10
+  # Small on purpose: termination is the real deterrent (a crash forfeits
+  # every remaining lap, which scales with how good the policy is), and this
+  # only breaks ties. At 400 and 250 an untrained policy had to survive 22 s
+  # and 8.6 s respectively before driving beat standing still -- it learned
+  # to stand still both times. At 100 driving wins after 0.2 s. The floor is
+  # the wedged stream over the stuck window (16/s * 5 s = 80), which this
+  # must exceed or crashing becomes the cheap way out of a wedge.
+  collision_penalty: 100.0
+  # Zero while recovering: a car already against a bale has made the choice
+  # those terms exist to discourage, and charging it again just prices the
+  # wedge above a collision.
+  recovery_contact_scale: 0.0
+  # Charged on the servo's realised movement, so a held corner is free and
+  # only actually turning the wheel costs. Full rate for a whole second
+  # costs 6.0, about the value of a metre of progress.
+  k_steer_rate: 0.30
+  # Steering jerk, and the term that does the real work: alternating +/-0.5
+  # rate commands cost 0.8 every step (16/s) where a smooth turn-in of the
+  # same average rate costs almost nothing.
+  k_steer_jerk: 0.8
+  k_steer_reversal: 0.5
+  # Per radian of heading error removed while recovering. Swinging the nose
+  # 1.5 rad back down the course pays 18, against the ~12 of clock (time plus
+  # stall) it takes -- so a purposeful recovery is net positive, while moving
+  # without reducing the heading error is not.
+  k_align: 12.0
+  # Potential-based shaping towards the planned line (see lap_reward.py).
+  # Provably cannot change which policy is optimal -- it telescopes to zero
+  # over any closed path, so cutting an apex is still allowed -- but it gives
+  # an untrained policy a reason to point down the corridor before the
+  # collision penalty has taught it to stop moving instead. shaping_gamma
+  # must equal training.gamma or the telescoping is inexact.
+  k_lateral: 3.0
+  k_heading: 2.0
+  lateral_cap: 1.0
+  shaping_gamma: 0.998
+  # 45 s target: the planner's optimum is 28.4 s, so every lap a real policy
+  # drives sits on the slope rather than pinned at either end. A 30 s lap
+  # pays 200, a 40 s lap 100, a 45 s lap the 50 base.
+  k_lap_base: 50.0
+  k_lap_pace: 10.0
+  target_lap_time: 45.0
+  # Off by default: it moves the target under the value function. Turn it on
+  # (2-5) only to break a plateau where laps are clean but the pace has
+  # stopped improving.
+  k_lap_record: 0.0
+training:
+  total_timesteps: 600000
+  n_steps: 2048
+  batch_size: 256
+  n_epochs: 10
+  # 0.998 at 20 Hz is a 25 s horizon -- long enough that the lap bonus is
+  # visible from the corner before it. The per-step progress/time trade
+  # carries the objective; the discount only has to not hide the bonus.
+  gamma: 0.998
+  gae_lambda: 0.95
+  learning_rate: 0.0003
+  # A little exploration: with a rate-action steering column, a policy that
+  # collapses to zero rate early sits in the middle of the corridor forever.
+  ent_coef: 0.003
+  clip_range: 0.2
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  policy_kwargs:
+    net_arch: [256, 256]

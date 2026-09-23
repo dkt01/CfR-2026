@@ -1027,6 +1027,30 @@ sudo systemctl disable --now ModemManager
 
 ## Run
 
+### Physical speed-course wall follower
+
+On the Orin, after building this package and `zed_wrapper`, run the full
+hardware stack from one launch file:
+
+```bash
+source ~/ros2_ws/install/setup.bash
+ros2 launch cfr_arduino_bridge left_wall_robot.launch.py device:=/dev/ttyACM0
+```
+
+This starts the Arduino bridge, `cmd_vel_to_drive_node`, ZED 2i with the
+loop-closure settings, start-signal detector, three-lap counter, and one wall
+follower. The follower uses the ZED registered point cloud rather than the
+simulator's bale map. It waits for the visual start, sends zero velocity if
+the cloud becomes stale, and stops when the counter completes three laps.
+The initial cloud controller is capped at 0.6 m/s and needs a controlled
+on-robot trial before relying on it for a full course run.
+
+The ZED color and cloud topics can be overridden with `image_topic:=` and
+`cloud_topic:=`. The usual Arduino auto-active and E-Stop interlocks still
+apply. Use this launch by itself; `scripts/launch.sh` would start a second
+bridge and camera.
+
+
 [`launch.sh`](scripts/launch.sh) is the onboard bringup: the actuator link and
 the ZED camera together.
 
@@ -1050,6 +1074,20 @@ the user is not in `dialout`, or `ModemManager` is probing the port.
 [../zed/README.md](../zed/README.md); `--no-zed` runs without it.
 
 ### Gazebo speed-course simulation
+
+For a three-lap autonomous rehearsal with the simple left-wall guide:
+
+```bash
+ros2 launch cfr_arduino_bridge left_wall_speed_course.launch.py
+```
+
+This launches the rendered camera, waits until the start-signal detector has
+seen red, turns the simulated signal green, and drives only after the detector
+publishes `/start_signal_detector/go`. It stops when `/lap_counter/done` is
+latched after three laps. The guide follows the bale-derived speed-course
+centerline and applies a small left-wall distance correction; it uses the
+simulator's map pose and course geometry, so it is intended for simulation.
+Software rendering is enabled for headless runs and can be slow.
 
 The Gazebo launch replaces the USB Arduino and ZED camera with simulation. It
 runs the existing `cmd_vel_to_drive_node` and `path_follower_node` unchanged:

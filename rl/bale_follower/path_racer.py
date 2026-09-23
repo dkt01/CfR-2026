@@ -40,11 +40,31 @@ from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from tf2_msgs.msg import TFMessage
 
+import bale_geometry
 from env import MAX_STEERING_ANGLE, WHEELBASE, _unpause_world, _yaw_from_quaternion
 from mpc_tracker import MpcConfig, MpcTracker
 
 GRAVITY = 9.81
 DEFAULT_PATH = Path(__file__).resolve().parent / "course_path.json"
+DEFAULT_SDF = (
+    Path(__file__).resolve().parents[2]
+    / "jetson/cfr_arduino_bridge/worlds/speed_course.sdf"
+)
+
+# Live corridor centering on top of the planned line. course_path.py's speed
+# profile assumes the corridor is exactly where the SDF says and the car
+# tracks the line exactly; shrinking its margins only stays safe if
+# something is actually watching the real gap to the walls between plan
+# updates, every tick, rather than the 2 s-late stuck-detector or nothing at
+# all. This is the wall-follower ingredient: nudge the aim point away from
+# whichever side is closing in, the same way a corridor-following policy
+# would react to a live scan, but applied as a bias on top of the planned
+# racing line rather than replacing it.
+WALL_FOLLOW_MARGIN = 0.25  # m; corridor is ~0.95 m wide, car is 0.30 m wide --
+# start correcting well before the bodywork is close
+WALL_FOLLOW_GAIN = 0.6  # m of aim-point shift per m of margin violation
+WALL_FOLLOW_MAX_SHIFT = 0.15  # m, caps this at a nudge, not a replacement path
+WALL_FOLLOW_RANGE = 2.0  # m; how far side_clearance looks for a bale
 
 
 class PathRacer(Node):
@@ -81,6 +101,7 @@ class PathRacer(Node):
         self.min_lookahead = 0.6
         self.max_lookahead = 1.8
         self.lookahead_gain = 0.4  # seconds of travel
+        self._bales = bale_geometry.parse_bales(str(DEFAULT_SDF))
 
         self._lock = threading.Lock()
         self._pose = None
@@ -170,6 +191,30 @@ class PathRacer(Node):
         if np.linalg.norm(self.xy[local] - (x, y)) > 1.0:
             return int(np.argmin(np.linalg.norm(self.xy - (x, y), axis=1)))
         return local
+
+    def _wall_follow_offset(self, x: float, y: float, yaw: float) -> float:
+        """Signed lateral shift (+left, REP103) to aim off a closing wall.
+
+        Zero when both sides clear WALL_FOLLOW_MARGIN, so on a well-tracked
+        straight this is a no-op and the planned line drives unmodified.
+        """
+        left, right = bale_geometry.side_clearance(
+            self._bales, x, y, yaw, max_range=WALL_FOLLOW_RANGE
+        )
+        violation = 0.0
+        if left < WALL_FOLLOW_MARGIN:
+            violation -= WALL_FOLLOW_MARGIN - left  # too close on the left -> aim right
+        if right < WALL_FOLLOW_MARGIN:
+            violation += (
+                WALL_FOLLOW_MARGIN - right
+            )  # too close on the right -> aim left
+        return float(
+            np.clip(
+                violation * WALL_FOLLOW_GAIN,
+                -WALL_FOLLOW_MAX_SHIFT,
+                WALL_FOLLOW_MAX_SHIFT,
+            )
+        )
 
     def _set_direction(self, index: int, yaw: float) -> None:
         tangent = self.xy[(index + 1) % self.n] - self.xy[index - 1]
@@ -303,6 +348,16 @@ class PathRacer(Node):
                 self._lap_progress -= (self.n - steps) * self.lap_length / self.n
         self._index = index
 
+        # Wall-follow correction, shared by both trackers below: a lateral
+        # shift of the aim point away from whichever side is closing in,
+        # applied along the car's current heading rather than the path's own
+        # (would need a tangent lookup per horizon step for little benefit --
+        # the correction only matters when tracking has already drifted from
+        # the plan, at which point the car's heading is the more honest
+        # frame anyway).
+        perp = np.array([-math.sin(yaw), math.cos(yaw)])
+        wall_offset = self._wall_follow_offset(x, y, yaw)
+
         # Measured speed from pose differencing, for the MPC's initial state
         # (the drivetrain lags, so commanded speed overstates reality).
         if self._prev_pose_speed is not None:
@@ -328,7 +383,7 @@ class PathRacer(Node):
                 )
                 travelled += speed_k * self.mpc.config.dt
                 point_index = (index + int(travelled / step_len)) % self.n
-                ref_xy[k] = self.xy[point_index]
+                ref_xy[k] = self.xy[point_index] + wall_offset * perp
                 ref_v[k] = speed_k
             # Worst curvature over the horizon, not at the car: the floor has
             # to be up before the hairpin, not once already in it.
@@ -373,7 +428,16 @@ class PathRacer(Node):
         # braking for a hairpin has to start before the hairpin's own samples.
         anticipation = max(1, int(self._cmd_speed * 1.2 / step_len))
         ahead = (index + np.arange(anticipation + 1)) % self.n
-        speed_target = float(self.v_profile[ahead].min())
+        # max(profile, floor) per sample before the min over the window,
+        # exactly mirroring the MPC reference builder above -- otherwise this
+        # fallback reproduces the pre-MPC wedging REPORT.md documents ("a
+        # flat min_speed floor was not enough... the fix that worked is a
+        # curvature-dependent floor"), which the plain profile minimum alone
+        # does not carry. Without this, --no-mpc wedges at the first hairpin
+        # (measured: repeated stuck-recoveries, no lap ever completed).
+        speed_target = float(
+            np.maximum(self.v_profile[ahead], self.turn_speed_floor[ahead]).min()
+        )
         lookahead = float(
             np.clip(
                 self.lookahead_gain * self._cmd_speed,
@@ -382,7 +446,7 @@ class PathRacer(Node):
             )
         )
         steps_ahead = max(1, int(lookahead / (self.lap_length / self.n)))
-        target = self.xy[(index + steps_ahead) % self.n]
+        target = self.xy[(index + steps_ahead) % self.n] + wall_offset * perp
         alpha = math.atan2(target[1] - y, target[0] - x) - yaw
         alpha = math.atan2(math.sin(alpha), math.cos(alpha))
         distance = math.hypot(target[0] - x, target[1] - y)

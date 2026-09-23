@@ -89,6 +89,22 @@ def generate_launch_description():
         default_value="3",
         description="Laps before lap_counter latches ~/done; 3 speed, 2 obstacle",
     )
+    path_follower_arg = DeclareLaunchArgument(
+        "path_follower",
+        default_value="true",
+        description="Start the DrivePath action controller",
+    )
+    cmd_vel_to_drive_arg = DeclareLaunchArgument(
+        "cmd_vel_to_drive",
+        default_value="true",
+        # It republishes on a timer whether or not anything is sending it a
+        # Twist, so it is a SECOND publisher on /drive_cmd for as long as it
+        # runs -- and sim_vehicle_node acts on whichever command arrived last.
+        # A driver that produces DriveCommand itself (rl/formulaOne) has to be
+        # able to turn it off, the same way arduino_bridge.launch.py's
+        # use_cmd_vel turns it off on the car.
+        description="Start cmd_vel_to_drive_node, translating Twist to DriveCommand",
+    )
 
     # Mesh URIs in the worlds are model://cfr_arduino_bridge/meshes/..., which
     # Gazebo resolves by looking for a directory called cfr_arduino_bridge on
@@ -242,6 +258,7 @@ def generate_launch_description():
         output="screen",
         parameters=[LaunchConfiguration("params_file"), {"use_sim_time": True}],
         remappings=[("cmd_vel", "/cmd_vel"), ("drive_cmd", "/drive_cmd")],
+        condition=IfCondition(LaunchConfiguration("cmd_vel_to_drive")),
     )
 
     path_follower = Node(
@@ -251,6 +268,7 @@ def generate_launch_description():
         output="screen",
         parameters=[LaunchConfiguration("params_file"), {"use_sim_time": True}],
         remappings=[("~/odom", "/zed/zed_node/odom"), ("cmd_vel", "/cmd_vel")],
+        condition=IfCondition(LaunchConfiguration("path_follower")),
     )
 
     lap_counter = Node(
@@ -287,6 +305,8 @@ def generate_launch_description():
             randomizer_arg,
             layout_arg,
             laps_arg,
+            path_follower_arg,
+            cmd_vel_to_drive_arg,
             resource_path,
             gazebo,
             websocket_server,

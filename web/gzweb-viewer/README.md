@@ -43,6 +43,22 @@ brings the advisories back.
 
 ## Run
 
+For the three-lap wall follower, install viewer dependencies once, then start
+both the simulation and viewer in a ROS 2 environment:
+
+```bash
+cd web/gzweb-viewer && npm ci && cd ../..
+bash ./jetson/scripts/launch_wall_web.sh
+```
+
+Open `http://localhost:5173/`. The **Set signal** button turns the simulated
+arm red or green and directly starts or stops the follower. A confirmed visual
+green signal also starts the follower on its own. The lap counter accepts
+either start and stops the run after three laps. This setup enables the Gazebo
+WebSocket server and camera rendering.
+Both `npm` and the built ROS 2 workspace must be available in the shell.
+
+
 In environment with [nvm](https://github.com/nvm-sh/nvm) installed:
 
 ```bash

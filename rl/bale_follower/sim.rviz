@@ -1,0 +1,111 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /PointCloud21
+        - /SimMarkers1
+      Splitter Ratio: 0.5
+    Tree Height: 640
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Name: root
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Alpha: 0.35
+      Cell Size: 1
+      Color: 160; 160; 164
+      Plane: XY
+      Plane Cell Count: 60
+      Reference Frame: world
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Enabled: true
+      Marker Scale: 0.6
+      Show Arrows: false
+      Show Axes: true
+      Show Names: true
+    # The course and the car, both from rviz_bridge.py. There is no URDF in
+    # this repo, so the chassis is a CUBE marker sized from bale_geometry's
+    # own CHASSIS_LENGTH/WIDTH rather than a RobotModel display.
+    - Class: rviz_default_plugins/MarkerArray
+      Name: SimMarkers
+      Enabled: true
+      Topic:
+        Value: /sim_markers
+        Depth: 1
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+    # Only populated when the sim was launched with sensors:=true -- without
+    # the rendered ZED this topic has no publisher and the display stays
+    # empty. That is the usual reason "the pointcloud does not show up".
+    - Class: rviz_default_plugins/PointCloud2
+      Name: PointCloud2
+      Enabled: true
+      Topic:
+        Value: /zed/zed_node/point_cloud/cloud_registered
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Best Effort
+      Style: Points
+      Size (Pixels): 3
+      Alpha: 1
+      Decay Time: 0
+      Color Transformer: AxisColor
+      Axis: Z
+      Autocompute Intensity Bounds: true
+      Invert Rainbow: false
+    - Class: rviz_default_plugins/Pose
+      Name: VehiclePose
+      Enabled: false
+      Topic:
+        Value: /zed/zed_node/pose
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+      Shape: Arrow
+      Color: 255; 25; 0
+      Alpha: 1
+    - Class: rviz_default_plugins/Image
+      Name: ZedLeft
+      Enabled: false
+      Topic:
+        Value: /zed/zed_node/left/image_rect_color
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Best Effort
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: world
+    Frame Rate: 30
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+      Line color: 128; 128; 0
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Name: Current View
+      Distance: 26
+      Focal Point:
+        X: 20
+        Y: 0
+        Z: 0
+      Pitch: 1.0
+      Yaw: 1.6
+      Target Frame: world
+      Near Clip Distance: 0.01
+    Saved: ~
+Window Geometry:
+  Height: 900
+  Width: 1400
+  Displays:
+    collapsed: false
+  Views:
+    collapsed: false

@@ -10,6 +10,12 @@
 #   ./train_resilient.sh 250000 checkpoints_v5
 #   ./train_resilient.sh 250000 checkpoints_v5 --resume-from checkpoints_v4/best_model.zip
 #
+# CFR_TRAIN_SCRIPT / CFR_CHECKPOINT_PREFIX point it at the lap-time stack,
+# whose checkpoints are named lap_racer_<N>_steps.zip:
+#
+#   CFR_TRAIN_SCRIPT=train_lap.py CFR_CHECKPOINT_PREFIX=lap_racer \
+#       ./train_resilient.sh 450000 checkpoints_lap2 --max-speed 4.5
+#
 # Progress is tracked cumulatively across chunks because SB3 restarts its own
 # step counter on every resume -- the per-chunk checkpoint names cannot be
 # compared across restarts.
@@ -23,6 +29,8 @@ TOTAL="${1:?usage: train_resilient.sh <total_timesteps> <checkpoint_dir> [extra 
 CKPT_DIR="${2:?usage: train_resilient.sh <total_timesteps> <checkpoint_dir> [extra train.py args]}"
 shift 2
 LOG_DIR="${LOG_DIR:-$SCRIPT_DIR}"
+TRAIN_SCRIPT="${CFR_TRAIN_SCRIPT:-train.py}"
+CHECKPOINT_PREFIX="${CFR_CHECKPOINT_PREFIX:-bale_follower}"
 RUN_LOG="$LOG_DIR/train_resilient.log"
 
 log() { echo "[$(date '+%H:%M:%S')] $*" | tee -a "$RUN_LOG"; }
@@ -100,7 +108,7 @@ start_sim() {
 }
 
 newest_checkpoint() {
-    ls -t "$CKPT_DIR"/bale_follower_*_steps.zip 2>/dev/null | head -1
+    ls -t "$CKPT_DIR"/"${CHECKPOINT_PREFIX}"_*_steps.zip 2>/dev/null | head -1
 }
 
 steps_in() {  # steps recorded in a checkpoint filename
@@ -118,7 +126,8 @@ mkdir -p "$CKPT_DIR"
 log "target $TOTAL steps into $CKPT_DIR"
 completed=0
 attempt=0
-resume_args=("$@")
+base_args=("$@")
+resume_args=()
 
 while [ "$completed" -lt "$TOTAL" ]; do
     attempt=$((attempt + 1))
@@ -132,8 +141,8 @@ while [ "$completed" -lt "$TOTAL" ]; do
     [ -n "$before" ] && before_steps=$(steps_in "$before")
 
     set +e
-    python "$SCRIPT_DIR/train.py" --total-timesteps "$remaining" \
-        --checkpoint-dir "$CKPT_DIR" "${resume_args[@]}" \
+    python "$SCRIPT_DIR/$TRAIN_SCRIPT" --total-timesteps "$remaining" \
+        --checkpoint-dir "$CKPT_DIR" "${base_args[@]}" "${resume_args[@]}" \
         >> "$LOG_DIR/train_chunk_${attempt}.log" 2>&1
     status=$?
     set -e

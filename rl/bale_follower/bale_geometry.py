@@ -196,6 +196,91 @@ def lidar_scan(
     )
 
 
+def _segment_point_distance(a: np.ndarray, b: np.ndarray, points: np.ndarray) -> float:
+    """Smallest distance from any of `points` (Nx2) to the segment a-b."""
+    edge = b - a
+    length_sq = float(edge @ edge)
+    if length_sq < 1e-12:
+        return float(np.linalg.norm(points - a, axis=1).min())
+    t = np.clip((points - a) @ edge / length_sq, 0.0, 1.0)
+    closest = a + t[:, None] * edge
+    return float(np.linalg.norm(points - closest, axis=1).min())
+
+
+def _obb_gap(corners_a: np.ndarray, corners_b: np.ndarray) -> float:
+    """Distance between two convex quads, 0.0 if they overlap.
+
+    Both are convex and non-intersecting when this returns non-zero, so the
+    minimum is attained at a vertex of one against an edge of the other --
+    checking all eight vertex/edge pairs is exact, no optimizer needed.
+    """
+    if obb_overlap(corners_a, corners_b):
+        return 0.0
+    best = math.inf
+    for source, target in ((corners_a, corners_b), (corners_b, corners_a)):
+        for i in range(4):
+            best = min(
+                best, _segment_point_distance(target[i], target[(i + 1) % 4], source)
+            )
+    return best
+
+
+def body_clearance(
+    bales: list[Bale], x: float, y: float, yaw: float, max_range: float = 3.0
+) -> float:
+    """Gap in metres between the car's footprint and the nearest bale's.
+
+    Distinct from `lidar_scan(...).min()`, which measures from the car's
+    CENTRE along a forward ray fan: a scan reading of 0.15 m is already
+    inside the 0.30 m-wide chassis, and a bale alongside or behind the car is
+    not in the fan at all. A reward term that means "do not touch a bale" has
+    to be measured from the bodywork, in every direction.
+    """
+    car_corners = car_obb_corners(x, y, yaw)
+    car_radius = math.hypot(CHASSIS_LENGTH / 2.0, CHASSIS_WIDTH / 2.0)
+    best = max_range
+    for bale in bales:
+        center_dist = math.hypot(bale.x - x, bale.y - y)
+        if center_dist - _BALE_BOUNDING_RADIUS - car_radius > best:
+            continue
+        gap = _obb_gap(car_corners, bale.corners_2d())
+        if gap < best:
+            best = gap
+            if best <= 0.0:
+                return 0.0
+    return best
+
+
+def side_clearance(
+    bales: list[Bale], x: float, y: float, yaw: float, max_range: float = 3.0
+) -> tuple[float, float]:
+    """(left_gap, right_gap): nearest footprint gap on each side of the car.
+
+    Same OBB gap as `body_clearance`, split by which side of the car's own
+    centerline (local +y = left, REP103) a bale sits on. `body_clearance`
+    collapses this into one number, which tells a controller how close the
+    nearest wall is but not which way to move off it -- a wall-follower
+    needs the second part.
+    """
+    car_corners = car_obb_corners(x, y, yaw)
+    car_radius = math.hypot(CHASSIS_LENGTH / 2.0, CHASSIS_WIDTH / 2.0)
+    cos_yaw, sin_yaw = math.cos(yaw), math.sin(yaw)
+    left = max_range
+    right = max_range
+    for bale in bales:
+        center_dist = math.hypot(bale.x - x, bale.y - y)
+        if center_dist - _BALE_BOUNDING_RADIUS - car_radius > max(left, right):
+            continue
+        gap = _obb_gap(car_corners, bale.corners_2d())
+        dx, dy = bale.x - x, bale.y - y
+        local_y = -sin_yaw * dx + cos_yaw * dy
+        if local_y >= 0.0:
+            left = min(left, gap)
+        else:
+            right = min(right, gap)
+    return left, right
+
+
 def check_collision(bales: list[Bale], x: float, y: float, yaw: float) -> bool:
     """True if the car's chassis footprint overlaps any bale's footprint."""
     car_corners = car_obb_corners(x, y, yaw)

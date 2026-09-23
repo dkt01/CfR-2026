@@ -94,11 +94,16 @@ def build_model(vehicle, spawn_pose):
 
     left = abs(float(value_of(vehicle, "steering.max_angle_left")))
     right = abs(float(value_of(vehicle, "steering.max_angle_right")))
-    # The joint limit has to admit the larger lock or the wider side is clipped;
-    # the plugin's steering_limit is what scales a command, so it takes the
-    # smaller, which is the angle the car can actually reach on both sides.
+    # BOTH take the larger lock.  The plugin's steering_limit is a SYMMETRIC
+    # clamp, so it cannot express this car's 34% asymmetry -- but the asymmetry
+    # is already carried by sim_vehicle_node, which interpolates the measured
+    # command -> angle table and hands Gazebo the resulting yaw rate.  Taking
+    # the smaller lock here therefore does not model the narrower side, it
+    # truncates a command the runtime has already sized correctly: measured on
+    # the simulated car, 0.80 and 1.00 of left command produced the identical
+    # 0.90 m radius because everything past 0.78 was being clipped away.
     joint_limit = max(left, right)
-    steering_limit = min(left, right)
+    steering_limit = max(left, right)
 
     # Front and rear are different shocks on different springs (GTR long on
     # #7444 at the front, XX-long on #7446 at the rear), so they are two
@@ -259,7 +264,7 @@ def build_model(vehicle, spawn_pose):
         "         rear carrying the different rates of the stock GTR long and",
         "         XX-long shocks.  gz-sim 8 / dartsim does honour spring_stiffness",
         "         (checked on a one-joint world: 1 kg on 100 N/m settles at",
-        "         -98 mm), and spring_reference is NEGATIVE here on purpose --",
+        "         -98 mm), and spring_reference is NEGATIVE here on purpose:",
         "         see the derivation in generate_vehicle_model.py. -->",
         '    <model name="slash">',
         # Wheel centres sit at exactly one radius, so model-frame z = 0 IS ground
@@ -275,7 +280,15 @@ def build_model(vehicle, spawn_pose):
         f"<mass>{chassis_mass:.4f}</mass><inertia>"
         f"<ixx>{ixx:.5f}</ixx><iyy>{iyy:.5f}</iyy><izz>{izz:.5f}</izz></inertia></inertial>",
         f'        <collision name="collision"><pose>0 0 {body_h / 2 + radius * 0.6:.4f} 0 0 0</pose>'
-        f"<geometry><box><size>{body_l:.4f} {body_w:.4f} {body_h:.4f}</size></box></geometry></collision>",
+        f"<geometry><box><size>{body_l:.4f} {body_w:.4f} {body_h:.4f}</size></box></geometry>"
+        # Matches the wheels' lateral.mu_lateral: unset here meant an engine
+        # default nobody chose. If a hard hit ever tips the car onto this
+        # box, the belly-vs-ground contact should grip the way the tires do,
+        # not skate on whatever dartsim defaults to for an unspecified
+        # surface -- see the sliding-after-a-bale-hit investigation.
+        f"<surface><friction><ode><mu>{mu:.3f}</mu><mu2>{mu:.3f}</mu2></ode>"
+        f"<bullet><friction>{mu:.3f}</friction><friction2>{mu:.3f}</friction2>"
+        "</bullet></friction></surface></collision>",
         f'        <visual name="body"><pose>0 0 {body_h / 2 + radius * 0.6:.4f} 0 0 0</pose>'
         f"<geometry><box><size>{body_l:.4f} {body_w:.4f} {body_h:.4f}</size></box></geometry>"
         f"<material><diffuse>0.85 0.08 0.04 1</diffuse></material></visual>",

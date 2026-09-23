@@ -1,0 +1,11 @@
+# Training only.  The car needs none of this -- formula_one_node.py runs the
+# exported .npz with numpy, which ROS already brings.
+numpy>=1.24
+pyyaml>=6.0
+matplotlib>=3.6
+gymnasium>=0.29
+stable-baselines3>=2.3
+# CPU torch is the right wheel here: the env is numpy on one core and the
+# network is a 30->128->128->2 MLP.  A GPU is not the bottleneck and not worth
+# the install.
+torch>=2.2

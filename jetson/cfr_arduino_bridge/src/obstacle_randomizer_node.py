@@ -552,9 +552,12 @@ class ObstacleRandomizer(Node):
         swept = math.degrees(abs(target - start))
         taken = sim_now() - began
         if swept:
+            rate_text = (
+                f"{swept / taken:.0f} deg/s" if taken > 0 else "sim clock stalled"
+            )
             self.get_logger().info(
                 f"signal arm turned {swept:.0f} deg in {taken:.2f} s of sim time "
-                f"({swept / taken:.0f} deg/s) over {steps} setpoints"
+                f"({rate_text}) over {steps} setpoints"
                 + (" -- cut short, the world is not keeping up" if overrun else "")
             )
 

@@ -104,6 +104,36 @@ rebalance.
 
 Hand the run itself to the `rl-train` skill.
 
+## The second reward: the lap racer
+
+Everything above describes `reward.py` + `config.yaml`, which pays metres
+down a corridor. The lap-time stack has its own shaping, and the two must not
+be edited into each other:
+
+| | corridor follower | lap racer |
+|---|---|---|
+| terms | `rl/bale_follower/reward.py` | `rl/bale_follower/lap_reward.py` |
+| values | `config.yaml` (`reward:`) | `config_lap.yaml` (`reward:`) |
+| probe | `.claude/skills/rl-reward/scripts/reward_probe.py` | `rl/bale_follower/lap_reward_probe.py` |
+| call site | `env.py` | `lap_env.py` |
+| docs | `README.md` | `LAP_RACER.md` |
+
+Same rules apply -- probe before changing, prefer the config to the module,
+keep the invariants -- with two extra ones the lap objective introduces:
+
+* **Break-even speed is `k_time / k_progress`.** It has to stay below the
+  ~1.4 m/s the vehicle needs to rotate at full lock, or the policy learns
+  that hairpins are not worth driving.
+* **`collision_penalty` must exceed the worst stream of negative reward
+  times `stuck_window_s`.** Truncation bootstraps; a collision terminates. If
+  sitting wedged costs more than crashing, the policy crashes on purpose.
+  The probe computes both sides and asserts the inequality, so changing
+  `control_hz`, `k_stall`, `k_touch` or the stuck window re-checks it.
+
+Offline checks that need no simulator: `python3 lap_track.py` (arc length and
+lap counting), `python3 lap_reward_probe.py`, `python3 lap_env_selftest.py`
+(a scripted lap and a wedge recovery against stubbed ROS).
+
 ## The other cost functions in this directory
 
 "Cost function" in `rl/bale_follower` can mean three different things, and

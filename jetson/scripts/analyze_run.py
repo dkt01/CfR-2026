@@ -128,9 +128,13 @@ def main(argv=None):
         choices=("auto", "odometry", "wheel_rpm"),
         default="auto",
         help=(
-            "ground-speed channel for the longitudinal fits. auto (default) "
-            "uses ZED odometry unless the segment contains physically "
-            "impossible speeds, in which case it falls back to the tachometer"
+            "ground-speed channel for every fit that needs one - the lateral "
+            "ones too, since delta_eff = atan(L*yaw_rate/v) divides by it. "
+            "auto (default) uses ZED odometry unless the segment contains "
+            "physically impossible speeds, in which case it falls back to the "
+            "tachometer. Below ~1 m/s prefer wheel_rpm explicitly: that is "
+            "where the ZED is noise-dominated and 'physically possible' stops "
+            "meaning 'right'"
         ),
     )
     parser.add_argument(

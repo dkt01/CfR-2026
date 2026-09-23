@@ -58,6 +58,16 @@ physical car, the observation source has to be swapped for something derived
 from the actual ZED point cloud, and the policy retrained or fine-tuned
 against it. That is not a small step.
 
+## A second objective: the lap racer
+
+This README describes the corridor-following policy. A parallel stack in the
+same directory (`lap_env.py`, `lap_reward.py`, `lap_track.py`, `train_lap.py`,
+`config_lap.yaml`) optimises lap time round the planned loop instead --
+signed arc length against the clock, body-to-bale clearance rather than a
+ray fan from the car's centre, the servo's rate as the action, and a recovery
+mode the policy is expected to reverse out of. See
+[LAP_RACER.md](LAP_RACER.md). Nothing below changes.
+
 ## Setup
 
 ```bash

@@ -170,6 +170,12 @@ button:hover {
     height: 100%;
 }
 
+/* Steering dial sits in the mirror-image corner from the speedometer. */
+.steerdial {
+    left: 18px;
+    right: auto;
+}
+
 .dial-face {
     fill: #fffdf6;
     stroke: #17242a;
@@ -232,6 +238,31 @@ button:hover {
     visibility: visible;
 }
 
+.dial-center-mark {
+    stroke: #44504a;
+    stroke-width: 1.5;
+}
+
+.steer-wheel-rim {
+    fill: none;
+    stroke: #17242a;
+    stroke-width: 4;
+}
+
+.steer-wheel-spoke {
+    stroke: #17242a;
+    stroke-width: 3;
+    stroke-linecap: round;
+}
+
+.steer-wheel-spoke-top {
+    stroke: #a33a18;
+}
+
+.steer-wheel-hub {
+    fill: #17242a;
+}
+
 .dial-needle path {
     fill: #a33a18;
 }
@@ -244,7 +275,9 @@ button:hover {
     position: absolute;
     left: 0;
     right: 0;
-    bottom: 27%;
+    /* Low enough to sit in the gap the dial's own sweep leaves at the
+       bottom, clear of the needle/steering-wheel icon at centre. */
+    bottom: 8%;
     text-align: center;
 }
 
@@ -277,6 +310,11 @@ button:hover {
         bottom: 10px;
         width: 132px;
         height: 132px;
+    }
+
+    .steerdial {
+        left: 10px;
+        right: auto;
     }
 
     .speedo-value {
@@ -312,4 +350,43 @@ button:hover {
     .teleport-actions {
         flex-wrap: wrap;
     }
+}
+
+/* Secondary viewport: always-on chase view of the ZED cloud and the car.
+   Sized in vh rather than px so it keeps a usable share of a short laptop
+   screen without crowding the main scene above it. */
+.cloud-view-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    margin-top: 1.25rem;
+}
+
+#cloud-view {
+    position: relative;
+    width: 100%;
+    height: clamp(180px, 26vh, 340px);
+    border-radius: 12px;
+    overflow: hidden;
+    background: #11191d;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+#cloud-view canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+.cloud-view-hint {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    margin: 0;
+    padding: 0 1rem;
+    text-align: center;
+    color: rgba(255, 255, 255, 0.55);
+    font-size: 0.85rem;
+    pointer-events: none;
 }

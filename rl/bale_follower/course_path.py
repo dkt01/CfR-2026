@@ -382,7 +382,24 @@ def main() -> None:
         default=0.05,
         help="clearance the racing line must keep beyond the inflated grid (m)",
     )
-    parser.add_argument("--traction", type=float, default=0.6)
+    parser.add_argument(
+        "--traction",
+        type=float,
+        default=0.6,
+        help="grip fraction (of g) the profile plans corners against. "
+        "TRIED 0.75 with the wall-follower as a safety net (2026-09-20): it "
+        "raised the profile's minimum speed 1.9 -> 3.03 m/s, including into "
+        "the tightest hairpin, and a timed run wedged there repeatedly "
+        "(stuck/reverse every 5-9 s) -- the wall-follower's 0.15 m max nudge "
+        "is nowhere near enough to save an entry speed ~60% too fast for "
+        "that radius. This is the same failure speed_profile's docstring "
+        "already documents for an over-aggressive profile (60-81 s laps "
+        "against a 27.3 s plan). Back to 0.6 until either the tightest "
+        "hairpin gets its own (lower) speed cap independent of this number, "
+        "or the wall-follower gets real steering authority instead of a "
+        "capped aim-point nudge -- raising this alone reproduces the same "
+        "regression twice now.",
+    )
     parser.add_argument("--max-speed", type=float, default=4.0)
     parser.add_argument(
         "--min-radius",

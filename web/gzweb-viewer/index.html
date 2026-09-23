@@ -21,13 +21,16 @@
         <section class="scene-wrap" aria-label="Gazebo speed course">
             <div id="gz-scene"></div>
             <div id="speedometer" class="speedo" role="img" aria-label="Robot speed"></div>
+            <div id="steering-dial" class="speedo steerdial" role="img" aria-label="Commanded steering"></div>
         </section>
         <footer>
             <p>Drag to orbit. Scroll to zoom.</p>
             <div class="viewer-controls">
+                <button id="start-signal" type="button" disabled>Set signal: Go</button>
                 <button id="follow-slash" type="button">Follow robot</button>
                 <button id="reset-view" type="button">Reset view</button>
                 <button id="reset-slash" type="button" disabled>Reset robot</button>
+                <button id="point-cloud-view" type="button" disabled>Point cloud only</button>
             </div>
         </footer>
         <section class="teleport-controls" aria-labelledby="teleport-heading">
@@ -46,6 +49,13 @@
                 <button id="preview-teleport" type="button" disabled>Preview position</button>
                 <button id="teleport-slash" type="button" disabled>Teleport robot</button>
             </div>
+        </section>
+        <section class="cloud-view-wrap" aria-labelledby="cloud-view-heading">
+            <div>
+                <p class="eyebrow">ZED depth</p>
+                <h2 id="cloud-view-heading">Robot view</h2>
+            </div>
+            <div id="cloud-view"></div>
         </section>
     </main>
     <script type="module" src="/src/main.js"></script>

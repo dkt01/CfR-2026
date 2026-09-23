@@ -93,6 +93,8 @@ class LapCounter(Node):
         self.add_on_set_parameters_callback(self.on_parameters)
 
         self.go = False
+        self.visual_go = False
+        self.manual_go = False
         self.status: ArduinoStatus | None = None
         self.status_time = None
         self.pose_time = None
@@ -119,6 +121,12 @@ class LapCounter(Node):
             Bool,
             "go",
             self.on_go,
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
+        )
+        self.create_subscription(
+            Bool,
+            "/left_wall_follower/manual_go",
+            self.on_manual_go,
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
         )
 
@@ -183,14 +191,25 @@ class LapCounter(Node):
         self.status_time = self.get_clock().now()
 
     def on_go(self, message: Bool) -> None:
-        if message.data and not self.go:
+        self.visual_go = message.data
+        self.update_go()
+
+    def on_manual_go(self, message: Bool) -> None:
+        self.manual_go = message.data
+        self.update_go()
+
+    def update_go(self) -> None:
+        current = self.visual_go or self.manual_go
+        if current and not self.go:
             self.get_logger().info("start signal latched; arming on the next pose")
-        self.go = message.data
+        self.go = current
 
     def on_reset(self, request, response):
         del request
         self.tracker.reset()
         self.go = False
+        self.visual_go = False
+        self.manual_go = False
         self.was_counting = False
         self.last_crossing = LapCount().last_crossing
         self.publish_done(False)

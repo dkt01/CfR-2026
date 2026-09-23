@@ -138,11 +138,13 @@ SSH_OPTS=(-o StrictHostKeyChecking=accept-new)
 SSH_CMD=(ssh "${SSH_OPTS[@]}")
 SCP_CMD=(scp "${SSH_OPTS[@]}")
 RSYNC_RSH="ssh ${SSH_OPTS[*]}"
+echo "checking SSH access to ${REMOTE_HOST}..."
 if ! ssh "${SSH_OPTS[@]}" -o BatchMode=yes -o ConnectTimeout=5 "${REMOTE_HOST}" true >/dev/null 2>&1; then
   # The `&&` chain keeps this compatible with `set -e`: if sshpass is missing,
   # or there is no controlling terminal to prompt on (e.g. run from cron), the
   # read is skipped rather than aborting the script on a failed redirect.
-  if command -v sshpass >/dev/null && read -rs -p "Password for ${REMOTE_HOST}: " SSH_PASSWORD </dev/tty 2>/dev/null; then
+  # Keep stderr visible: Bash writes read -p's prompt there.
+  if command -v sshpass >/dev/null && read -rs -p "Password for ${REMOTE_HOST}: " SSH_PASSWORD </dev/tty; then
     echo
     export SSHPASS="${SSH_PASSWORD}"
     unset SSH_PASSWORD

@@ -1,0 +1,522 @@
+# Lap Racer -- two laps of the Speed Course, as fast as the rules allow.
+#
+# Every number under `plant` is the REAL car, taken from
+# jetson/cfr_arduino_bridge/config/vehicle.yaml and config/arduino_bridge.yaml
+# (provenance in docs/characterization-results.md).  Change them there first
+# and copy them here, never the other way round.
+
+track:
+  world_sdf: jetson/cfr_arduino_bridge/worlds/speed_course.sdf
+  centerline_json: jetson/cfr_arduino_bridge/config/speed_course_path.json
+  ds: 0.05                  # m between centerline stations
+  curvature_smooth_m: 0.6   # ~ one car length; the body corners, not a point
+  # THE TWO RULE NUMBERS.  A station is a hairpin at or below hairpin_radius
+  # and takes v_hairpin; everything else takes v_straight, further limited by
+  # sqrt(lateral_accel / |k|).  On the committed course the taper never binds.
+  v_hairpin: 2.5            # m/s
+  v_straight: 5.2           # m/s
+  hairpin_radius: 3.0       # m
+  lateral_accel: 4.5        # m/s^2 ceiling on the sweepers (0.46 g of mu 1.0)
+  hairpin_gap_close_m: 1.5  # weld zones split by one noisy curvature sample
+  hairpin_dilate_m: 0.5     # square the ragged ends of a zone
+  # MINIMUM SPEEDS -- the floor, in the same two zones the cap uses.
+  # A hairpin station (the RED sections in RViz, capped at v_hairpin) must
+  # not be driven below `speed_floor_hairpin`; everywhere else (GREEN) not
+  # below `speed_floor_open`.
+  #
+  # These exist because four training runs all found the same answer to
+  # "drive fast without touching bales": don't drive fast.  The policy sat at
+  # 3 m/s on straights with a 5.2 cap.  A floor removes that option by
+  # construction rather than by reward weight -- `scale_action` maps the
+  # throttle onto [floor, cap], so no action in or out of distribution can
+  # ask for less.  It is the same trick that makes the CAP structural.
+  #
+  # The floor is clipped by the coast-feasible profile before use, so it can
+  # never demand a speed the car would then be unable to shed in time for the
+  # next hairpin -- see speed_floor() in observation.py.
+  # Three zones, and they are exactly the three colours RViz already draws:
+  # the centerline is a linear red->green ramp on v_cap, so
+  #
+  #   RED     v_cap at the hairpin limit (v_hairpin)        floor 2.0
+  #   YELLOW  v_cap between the two, the curvature taper    floor 2.6
+  #   GREEN   v_cap at the straight limit (v_straight)      floor 4.2
+  #
+  # The yellow band matters more than it looks.  With a single green floor of
+  # 3.5 applied right up to the hairpin mouth, the car arrived at the
+  # station-104 chicane carrying line error from the fast approach and came
+  # through at 0.049 m -- and dropping the RED floor did not help (0.038 m at
+  # 1.2 m/s), while dropping the approach did (0.100 m).  The taper zone is
+  # where the speed has to come off, so it gets its own floor.
+  # NOTE the ordering: RED is FASTER than YELLOW.  That is deliberate and it
+  # is a racing instruction, not a typo -- shed the speed in the approach
+  # (yellow, where the car is still travelling nearly straight and braking is
+  # cheap), then hold a constant speed through the corner itself (red).
+  #
+  # RED WAS 2.5 AND THAT MADE THE TASK UNLEARNABLE.  2.5 equals v_hairpin, so
+  # the floor met the cap and the throttle had no freedom in the hairpins at
+  # all.  Driven at the floor the steering prior cleared the station-104
+  # chicane by 58 mm -- and a policy's steering residual (rms 0.31) costs more
+  # margin than that, so every attempt to explore steering crashed.  Two full
+  # 30M runs, one resumed and one from scratch, 61 evaluations, ZERO
+  # completions; mean episode length peaked at 236 steps against the ~1400 a
+  # run needs, so the policy never once saw past that chicane.
+  #
+  # Measured clearance at the floor against this number:
+  #     2.10 -> ~0.16 m      2.30 -> 0.127 m      2.45 -> 0.069 m
+  #     2.20 ->  0.150 m     2.35 -> 0.114 m      2.50 -> 0.058 m  (unlearnable)
+  # Each 0.1 m/s here is worth about 0.8 s of lap time and 30 mm of margin.
+  speed_floor_hairpin: 2.05  # m/s, red
+  speed_floor_taper: 1.9    # m/s, yellow
+  speed_floor_open: 5.0     # m/s, green
+  sdf_res: 0.02             # m, bale distance field
+  sdf_margin: 2.0           # m of field beyond the outermost bale
+  vehicle_start: [20.15, 4.76]   # generate_speed_course.py VEHICLE_START
+
+vehicle:
+  # Footprint used for collision and the graze penalty.  Slightly larger than
+  # config/vehicle.yaml's chassis box: the tires stand proud of it and a bale
+  # is what stops the car, not the chassis rail.
+  length: 0.58
+  width: 0.32
+
+plant:
+  # --- what the Jetson-side bridge does to a DriveCommand
+  speed_slew_rate: 2.0      # m/s^2, arduino_bridge.yaml; binds BELOW max_accel
+  max_speed: 8.0
+  command_dead_time: 0.19   # s, Jetson command to first movement
+  # --- what the car then does (sim_vehicle_node.cpp, all measured)
+  mass: 3.599
+  coast_f0: 2.18            # N      m dv/dt = -(f0 + f1 v)
+  coast_f1: 0.47            # N/(m/s)
+  max_accel: 3.0            # m/s^2
+  brake_decel: 0.0          # THE CAR HAS NO BRAKES.  Do not raise this.
+  wheelbase: 0.324
+  understeer_gradient: 0.007
+  # Median of measure_turn_radius.py's sweep (2026-09-21, ten commands at
+  # 1.5-3.0 m/s, on open ground beside the course): the simulated car turns a
+  # uniform 1.10x the radius wheelbase/understeer alone predicts, flat across
+  # both directions and every speed tested (1.04-1.15 across the sweep).
+  # Applied as a second multiplier on the effective wheelbase in plant.py.
+  tire_scrub: 1.10
+  # HOW LONG THE CAR TAKES TO START ROTATING once the wheels are turned.
+  # Fitted by fit_yaw_lag.py to measure_step_steer.py's Gazebo traces
+  # (2026-09-22): a first-order lag between the kinematic yaw rate the wheel
+  # angle implies and the yaw rate the chassis actually has.  Without it the
+  # model turns in about a metre of travel too early -- on a 0.92 m corridor,
+  # the whole corridor -- which is why every previous policy beached ENTERING
+  # a hairpin while cornering correctly once settled.
+  yaw_response_tau: 0.34    # s, FITTED to 10 Gazebo step-steer traces
+  # Measured effective steering angle vs normalized command.  Asymmetric by
+  # ~34%; this is why the policy commands DriveCommand.steering directly
+  # instead of a Twist -- cmd_vel_to_drive assumes a symmetric +/-0.40 rad.
+  steering_command_points: [-1.0, -0.5, 0.0, 0.5, 1.0]
+  steering_angle_points: [-0.382, -0.191, 0.0, 0.256, 0.512]
+  steering_tau: 0.05        # s, servo first-order lag
+  # Road-wheel slew CEILING, from the 2075R datasheet (0.17 s per 60 deg =
+  # 6.16 rad/s at the servo shaft).  Was 8.7, which had the road wheel slewing
+  # faster than the servo driving it - that needs a linkage which amplifies
+  # angular velocity, and Ackermann linkages reduce.  Still a ceiling: with a
+  # typical ~2:1 linkage the real figure is nearer 3 rad/s, and A6 pins it.
+  # Kept a scalar, not randomised - but NOT because it is harmless.  Counting
+  # ticks where the steady command rate exceeds the limit (0.03% here, 0.11%
+  # at 2.63) is the wrong statistic: it binds on the LARGE changes, turn-in
+  # and recovery, and compounds through the servo and chassis lags after it.
+  # At 2.5 m/s and command 0.35, t50 of the yaw rate is 0.555 s at 8.7,
+  # 0.605 s here and 0.800 s at 3.0; the scripted floor goes 12.5% / 4.7% /
+  # 0.0%.  It is a scalar because it is a CEILING with one true value that A6
+  # will supply, not a spread - randomising a bound is not the same as
+  # admitting uncertainty about it.
+  #
+  # OWED: steer_prior was swept at 8.7.  A 1-D probe of horizon_s at 6.16 puts
+  # the optimum at 0.40 rather than the 0.35 below and recovers 4.7% -> 7.8%,
+  # so a full sweep_prior.py re-run is due before the next training run.  Left
+  # unchanged here because a six-point probe is not the 576-setting sweep the
+  # current numbers came from.  See vehicle.yaml steering.slew_rate.
+  steering_slew: 6.16       # rad/s, road wheel
+
+env:
+  control_hz: 20.0          # matches path_follower's control_rate_hz
+  substeps: 10              # plant integrated at 200 Hz
+  laps: 2
+  episode_timeout_s: 140.0
+  # Where an episode may start.  Training only from the grid would leave the
+  # policy with no idea what to do after a nudge halfway round the course.
+  random_start: true
+  random_start_speed: [0.0, 5.2]
+  lookahead_m: [0.5, 1.0, 2.0, 3.0, 4.5, 6.0, 8.0, 10.0, 13.0, 16.0]
+  # How much the network may trim the centerline feedforward, in normalized
+  # steering command.  0.5 is about +/-0.25 rad of extra angle -- plenty to
+  # place the car anywhere in a 0.92 m corridor, and little enough that a
+  # flailing early policy still roughly follows the track.
+  steer_residual: 0.5
+  # Gains of the centerline prior the residual trims.  Tuned so the prior
+  # alone completes two clean laps on the nominal car; see steer_prior() in
+  # observation.py for why feedforward on its own does not.
+  steer_prior:
+    # Re-tuned after plant.yaw_response_tau went in -- sweep_prior.py, 225
+    # settings, 2026-09-22.  The old (0.8, 0.2, 0.24 s, no lead, no damping)
+    # saturated the steering lock to lock in the first chicane and beached at
+    # 21 m, which is where this same scripted driver has always beached in
+    # Gazebo.  13 of the 225 get two clean laps; this is the best of them.
+    k_lateral: 0.8
+    k_heading: 0.4
+    speed_floor: 1.2          # m/s, floor in the Stanley denominator
+    # How far ahead the prior evaluates itself.  It used to be derived as
+    # command_dead_time + steering_tau (0.24 s) on the assumption that the
+    # wheels pointing somewhere and the car going there were the same event.
+    # They are not: plant.yaw_response_tau adds 0.34 s of chassis on top, and
+    # the total is what the feedback has to see past.  Swept against the
+    # scripted driver -- see the table in README's "Known gap".
+    horizon_s: 0.35
+    # Fraction of the exact lag inversion applied to the feedforward, and a
+    # yaw-rate damping gain.  Both exist because of yaw_response_tau.
+    #
+    # 0.50, NOT the 0.25 the first sweep chose.  That sweep scored the prior
+    # against a driver running `baseline_speed_scale: 0.85`, whose top speed
+    # is 3.76 m/s -- so it tuned the controller for a slow car and then the
+    # trained policy sat at 3 m/s on straights with a 5.2 cap, because 3 m/s
+    # was where its steering still worked.  Re-swept at 5.1 m/s
+    # (`sweep_prior.py --speed-scale 1.10`, 576 settings, only 10 of which
+    # get round at all up there), then checked at BOTH ends:
+    #
+    #   lead   clear @3.8 m/s   field   clear @5.0 m/s   field
+    #   0.25       +0.182        27%        +0.032         2%
+    #   0.50       +0.171        25%        +0.082         6%   <- here
+    #   0.75       +0.110        27%        +0.017         4%
+    #
+    # (Those speeds are the driver's TOP speed, not `baseline_speed_scale`;
+    # the two differ by whatever that scale happens to be, and conflating
+    # them once already put the scripted floor inside the graze band.)
+    #
+    # More feedforward still (lead 0.50 with the feedback gains dropped to
+    # k_lateral 0.4, k_rate 0) reaches +0.124 at 5.1 m/s and 56.2 s -- the
+    # coast-feasible ideal -- but its field finish is 0% everywhere: precise
+    # on the car it was tuned for and helpless on any other.  A prior the
+    # policy cannot fall back on is not a floor.  TUNE THE PRIOR AT THE SPEED
+    # YOU WANT TO DRIVE.
+    lead_scale: 0.50
+    k_rate: 0.08
+  # Yaw rate is differenced from the pose, so it carries the pose noise
+  # divided by the control period; this smooths it before the prior uses it.
+  yaw_rate_filter: 0.4
+  # Achieved dv/dt is differenced from a speed that is itself quantised (the
+  # tachometer is blind below 0.3 m/s), so it is noisier than the yaw rate
+  # and gets a heavier filter.
+  speed_rate_filter: 0.25
+  # Feed achieved dv/dt to the policy?  Measured on run v4: it raised top
+  # speed 2.7 -> 3.3 m/s and still scored BELOW v3.5 on the same reward, so
+  # the straights are limited by something other than not knowing the drag.
+  # Off by default.  Turning it on changes the observation width, which means
+  # a from-scratch run -- no resume from a 35-wide checkpoint.
+  observe_accel: false
+  # Below this the car is considered stopped and the episode is cut.
+  stall_speed: 0.25
+  stall_patience_s: 2.5
+  # AFTER TWO LAPS THE CAR HAS TO STOP, and the episode is not over until it
+  # has.  Crossing the line puts the env in a stopping phase: the throttle is
+  # held at zero, steering stays live, and the run ends when the car is
+  # actually at rest.  It is a phase rather than a terminal state because the
+  # car has NO BRAKES -- coasting down from 5.2 m/s takes about 6 s and 15 m,
+  # all of it still inside a 0.92 m corridor -- so stopping is something like
+  # 15 m of driving that has to be learned, not a flag that gets set.
+  # How much of the coast-feasible profile the SCRIPTED floor drives.  See
+  # BaselineDriver for the measured table behind this number; it exists
+  # because the coast profile is feasible for braking and not for turning.
+  # It does not touch the policy, which sets its own speed everywhere.
+  baseline_speed_scale: 0.90
+  stop_speed: 0.20          # m/s, at rest
+  stop_timeout_s: 14.0      # s to come to rest before the run is cut
+
+reward:
+  # Rate terms are per second and are multiplied by the control period, so
+  # changing control_hz does not silently reweight the reward.
+  progress: 6.0             # per metre of centerline advanced
+  # 4.0, not 1.0.  Progress pays per METRE, so two laps pay the same 1320
+  # however fast they are driven -- `time` is the ONLY term that prefers a
+  # quick lap to a slow one.  At 1.0 the arithmetic says drive slowly:
+  # finishing in 89 s at p=0.95 scores 1305 against 1179 for 60 s at p=0.75,
+  # and the first four evals of run v1 did exactly that, trading 81 -> 89 s
+  # for 57 -> 77% finish.  The preference flips between 3 and 6.
+  #
+  # 8.0 was tried and was too much: it bought 89 -> 77 s at the cost of
+  # 77 -> 41% field finish, which is a LOWER expected return, not a trade.
+  # "Should not hit or graze the bales" is a requirement, so reliability has
+  # to stay dominant and speed is the objective underneath it.  At 4.0 a
+  # fast-and-reliable policy still beats a slow one (90% at 70 s scores 1083
+  # against 928 for 77% at 89 s) while recklessness does not pay.
+  # 3.0, between the 4.0 this was tuned to before the chassis lag existed and
+  # the 2.0 that replaced it.  4.0 bought speed with crashes; 2.0 overshot the
+  # other way and the policy crawled -- it never exceeded 2.7 m/s on a course
+  # whose straights allow 5.2.  3.0 keeps a second of lap time worth more than
+  # cross-track error out to ~0.11 m, which is inside the corridor.
+  # Original note, still the reason this number is not 1.0:
+  # Both 30M runs since show the same signature: as the policy gets quicker
+  # the field finish falls and the worst overspeed climbs (v2: 87s/34% at 17M
+  # -> 66s/19% at 30M, overspeed 0.00 -> +0.84 m/s).  That is not the
+  # optimiser -- v2's LR decay held its TRAINING return up (355, ep_len 684,
+  # against v1's 161/328) while the field result still slid -- it is the
+  # reward being willing to buy a second of lap time with a crash.
+  #
+  # 4.0 was the right price when the car turned the instant its wheels did.
+  # At yaw_response_tau = 0.34 s the same second of lap time costs far more
+  # margin, so the price has to come down with it.  Not to 1.0: progress pays
+  # per METRE, so two laps pay the same however slowly they are driven, and
+  # `time` is the only term that prefers a quick lap at all -- at 1.0 the
+  # policy got steadily slower for four evaluations.
+  time: 3.0                 # per second elapsed
+  # LINEAR first, and larger than `progress`.  Going 1 m/s over the cap buys
+  # 6.0/s of progress reward, so a purely quadratic penalty is worth less than
+  # the overspeed it is meant to prevent until the excursion is already large.
+  overspeed_linear: 20.0    # per m/s over the cap, per second
+  overspeed_quad: 15.0      # per (m/s over the cap)^2 per second
+  graze: 15.0               # per second at zero clearance, quadratic in between
+  graze_margin: 0.12        # m of body clearance under which grazing starts
+  # CROSS-TRACK ERROR IS A REQUIREMENT HERE, NOT A NUDGE.  This used to be
+  # 2.0 at a 0.30 m scale and was described as "a gentle pull to the middle...
+  # not to forbid a racing line".  The brief is now explicitly to hold the
+  # centerline between the bales, so the term is priced against progress
+  # instead of under it: at 0.20 m off centre it costs 9.0/s, against the
+  # 31/s that progress pays at full speed, and it is quadratic, so the last
+  # few centimetres are nearly free and half a corridor is not.
+  # QUADRATIC NEAR ZERO, LINEAR BEYOND THE KNEE.  Pure quadratic growth made
+  # this term the reason the policy would not go fast: at `time` 2.0, any
+  # cross-track error past ~0.11 m was worth more than the ENTIRE speed
+  # incentive (3.24/s against 2.00/s), and going faster in a 0.92 m corridor
+  # costs cross-track error.  So the policy's only two options were to crawl
+  # or to run wide and graze -- which is exactly the two ends of run v3's
+  # checkpoint ladder: 116 s at 64% field, or 71 s grazing 99% of runs.
+  #
+  # The knee keeps the whole point of the term -- a strong gradient where
+  # holding the line is nearly free, which is most of the lap -- and stops it
+  # dominating in a corner where some error is unavoidable.  Staying off the
+  # bales is not this term's job anyway; `graze` and `crash` do that, and
+  # they are measured from the BODY rather than the centerline.
+  lateral: 6.0              # per second at lateral_scale off the centerline
+  lateral_scale: 0.20       # m
+  lateral_knee: 0.10        # m -- quadratic below, linear above
+  # TWO STEERING SMOOTHNESS TERMS, AND THE SECOND ONE IS THE POINT.
+  # A penalty on the first difference alone cannot tell sawing apart from
+  # turning: entering a hairpin at 20 Hz is a long run of same-signed steps
+  # and costs exactly as much as the same steps alternating.  Jitter is a
+  # SIGN CHANGE, which is the second difference, so that is what is priced
+  # highest.  Keeping `steer_rate` as well stops the policy answering the
+  # jerk term with a permanent fast ramp.
+  # SIZED AGAINST PPO'S OWN EXPLORATION NOISE, not against how bad jitter
+  # looks.  The sampled steering command is ff + 0.5*(mu + sigma*eps) with
+  # sigma ~ 0.3, so eps alone contributes E[jerk^2] = 6*(0.5*sigma)^2 = 0.135
+  # every tick no matter what the policy does.  At the 0.60 this started at,
+  # that is 32 reward/second of pure noise tax -- more than progress pays --
+  # and PPO's only answer is to drive the steering sigma to zero, which is a
+  # failure this project has already had once (sigma collapsed 0.208 -> 0.146
+  # and field finish went 77% -> 41%).
+  #
+  # What survives the noise is the useful part: E[jerk^2] separates into
+  # (the policy's own jerk)^2 + 1.5*sigma^2, and the second term does not
+  # depend on the mean, so the gradient that shapes the DEPLOYED (deterministic)
+  # policy is there at any weight.  The weight only decides how hard the same
+  # term also squeezes exploration.  0.15 pays ~8/s of noise tax against
+  # progress's ~18/s -- enough to shape, not enough to silence.
+  steer_rate: 0.04          # per (command step)^2 per second
+  steer_jerk: 0.15          # per (change in command step)^2 per second
+  lap_bonus: 25.0
+  finish_bonus: 60.0
+  # Paid when the car is actually at rest after its two laps, not when it
+  # crosses the line.  Big enough that coasting to a stop inside the corridor
+  # is worth more than any way of ending the episode early.
+  stop_bonus: 80.0
+  # BEATING ITS OWN PREVIOUS LAP, per second of improvement.
+  #
+  # 2.0, and it has to stay BELOW `time` (4.0).  The bonus pays for
+  # (previous lap - this lap), and the cheapest way to make that number big
+  # is to drive the FIRST lap slowly.  At 2.0 against a time penalty of 4.0,
+  # giving away a second of lap 1 costs 4.0 and buys 2.0, so the exploit
+  # always loses and only a genuinely quicker second lap is worth anything.
+  # Clipped as well, so one lucky lap cannot outweigh a clean run.
+  lap_improve: 2.0          # per second faster than the previous lap
+  lap_improve_cap: 6.0      # s of improvement past which it stops paying
+  # Modest on purpose.  Two clean laps are worth ~1375, so a crash halfway
+  # already forfeits ~700 of future progress; that opportunity cost is the
+  # real deterrent.  A huge terminal penalty just makes PPO drive slowly.
+  crash: -40.0
+  stall: -20.0
+
+# Everything that will be different on the day.  Sampled per episode; a policy
+# that only ever saw the nominal car is a policy that has memorised one plant.
+randomize:
+  enabled: true
+  dead_time: [0.13, 0.26]       # s
+  coast_scale: [0.80, 1.20]
+  accel_scale: [0.80, 1.20]
+  slew_scale: [0.75, 1.25]
+  # Re-centred on the MEASURED Gazebo car (measure_turn_radius.py, 2026-09-21):
+  # it turns a uniform 1.10x the radius plant.py predicts -- flat across both
+  # directions and across 1.5-3.0 m/s, so it is a steering gain of ~0.91, not
+  # an understeer_gradient effect (that would grow with v^2).  0.91 sat at the
+  # very edge of the old [0.85, 1.15], so only a sliver of training draws
+  # looked anything like the car the policy was then asked to drive.
+  steer_gain: [0.82, 1.10]
+  steer_asymmetry: [0.85, 1.15] # extra scale on the left half of the table
+  steer_offset: [-0.035, 0.035] # normalized command; servo trim and toe
+  # Hard clamp on the achieved angle.  The measured table reaches 0.512 rad
+  # left, but BOTH its endpoints are extrapolated (vehicle.yaml says so: the
+  # steer_authority run was unusable), and the Gazebo model clamps at 0.40 --
+  # its steering joints and the Ackermann plugin's steering_limit are both
+  # 0.40, which is where vehicle.yaml's min_turn_radius of 0.766 m comes from.
+  # Training across the range means not having to be right about which it is.
+  # Measured: commands of 0.80 and 1.00 produce the IDENTICAL 0.90 m radius in
+  # Gazebo, so the top 22% of left steering command does nothing -- the world's
+  # <steering_limit> is built from vehicle.yaml's max_angle_left, which is a
+  # `guess` of 0.40 rad contradicting the measured table's 0.512.  Until the
+  # real car's lock is measured, train across both.  See
+  # scripts/check_steering_consistency.py.
+  steer_limit: [0.38, 0.55]     # rad
+  # Far wider than the 0.007 rad/(m/s^2) the skidpad measured.  A hairpin at
+  # 2.5 m/s and R = 1.5 m pulls 4.2 m/s^2, which is well past where a kinematic
+  # bicycle stops describing a car on tires: Gazebo needs materially more lock
+  # there than 0.007 predicts, and so will a real car on dust or cold rubber.
+  # A policy that has only cornered the nominal model understeers into the
+  # bales on the first surface that does not match it.
+  #
+  # 0.02, NOT 0.05.  0.05 was picked by reasoning about the Gazebo hairpin
+  # crash rather than by measurement, and it made the task partly impossible:
+  # at 0.05 the effective wheelbase at 5.2 m/s is 1.68 m against the real
+  # 0.324 m, and 30% of sampled cars could not physically make the course's
+  # 1.48 m hairpin at the 2.5 m/s cap -- turning right, where the measured
+  # lock is only 0.382 rad.  A policy cannot tell which car it drew, so its
+  # only answer was to drive every car slowly: it settled at 101 s a run,
+  # which was correct behaviour for an environment that was the problem.
+  # `steer_gain` went back to +/-15% for the same reason -- dropping it to
+  # 0.70 double-counted the authority clamp that `steer_limit` already
+  # models.  At 0.02 no sampled car is infeasible (p99 radius 1.28 m against
+  # the 1.48 m needed) and the randomisation is still ~3x the measured value.
+  understeer: [0.0, 0.02]
+  # Centred on the measured 1.10, widened past the sweep's own 1.04-1.15:
+  # that sweep is ten points on ONE simulated car, not a survey of cars, and
+  # the real Slash has never been through this test at all.
+  scrub_scale: [0.90, 1.15]     # multiplies tire_scrub, itself already 1.10
+  # Multiplies yaw_response_tau.  Wide, because the fit is to ONE simulated
+  # car and turn-in lag is exactly the quantity a different surface, tire
+  # pressure or battery state moves -- and because being wrong about it in the
+  # slow direction is what puts a car into a bale.
+  # tau in [0.20, 0.54] s, which covers nearly all of the per-trace spread
+  # (0.19-0.59 s over ten step-steer traces at 1.5-4.5 m/s, fit_yaw_lag.py)
+  # without the tails.  Turn-in lag is the one quantity where being wrong in
+  # the slow direction puts the car in a bale, and ten traces on one
+  # simulated car is not a survey, so this is deliberately wider than the
+  # fit's own confidence -- but NOT wider than that.
+  #
+  # An over-wide range here is the same trap `understeer` fell into: a policy
+  # that cannot tell which car it drew has to drive every car like the worst
+  # one.  What makes this range affordable is that the lag is OBSERVABLE --
+  # observation.py feeds the policy the gap between the yaw rate its wheels
+  # imply and the one the car has, which for a first-order lag is the state
+  # itself.  Widening this without that channel would cost lap time for
+  # nothing.
+  yaw_tau_scale: [0.6, 1.6]
+  # SERVO lag, absolute seconds - not a scale, because the nominal 0.05 is a
+  # `guess` in vehicle.yaml (experiment A7, never run) and multiplying a guess
+  # implies it is the centre of something.
+  #
+  # WHY IT IS RANDOMISED AT ALL, after eleven runs with it fixed: it is nearly
+  # as load-bearing as the chassis lag and nobody has measured it.  Swept
+  # through plant.py at 2.5 m/s and command 0.35 - hairpin entry, where every
+  # driver this project has had went into the bales - the time to half the
+  # steady yaw rate runs 0.435 s at tau = 0 to 0.795 s at tau = 0.15.  That
+  # 0.36 s is 0.90 m of travel and the corridor is 0.92 m wide.
+  #
+  # WHY IT IS THIS NARROW, which is NOT what the uncertainty deserves.  The
+  # honest range for an unmeasured quantity is more like [0.03, 0.15].  It is
+  # not affordable.  Scored per car (2026-09-22, 64-96 cars, seed fixed):
+  #
+  #   range          scripted floor   v11_red21   correlation of tau with
+  #                                               finishing cleanly
+  #   [0.05, 0.05]        10.4%         23.4%     -      (fixed, the old model)
+  #   [0.04, 0.08]         9.4%         20.3%     -0.29
+  #   [0.03, 0.15]         4.2%          9.4%     -0.40
+  #   [0.03, 0.30]         3.1%          3.1%     -
+  #
+  # At [0.03, 0.15] tau correlates -0.40 with finishing, which would make it
+  # the second strongest limiter on the whole frontier behind pose drift's
+  # -0.50 - and measure_feasibility.py's own rule is that a range which
+  # dominates there is a range to question.  This is the `understeer` mistake
+  # exactly: 0.05 was picked by reasoning about a crash rather than by
+  # measurement and made the task partly impossible.
+  #
+  # Being observable did not rescue it.  observation.py's rate_lag channel is
+  # built from `last_steer`, the COMMAND, so servo lag is inside it as well as
+  # chassis lag - but v11_red21, which reads that channel, degraded MORE than
+  # the fixed-gain scripted prior did, not less.  A policy trained across the
+  # range might learn to use it; one trained at a fixed tau demonstrably has
+  # not, and that is not an argument worth a training run to settle.
+  #
+  # The risk is ONE-SIDED: the correlation is negative, so it is slow servos
+  # that fail, not fast ones.  If A7 comes back near 0.15 the answer is not a
+  # wider range here, it is re-tuning steer_prior's horizon_s and lead_scale
+  # for the measured value - they were swept against tau = 0.05.
+  #
+  # [0.04, 0.08] covers the figures a 2075R datasheet implies (0.054, and most
+  # of 0.070-0.085) at a cost of ~3 points of clean finish.  It is a holding
+  # position, not an answer.  REPLACE IT WITH A MEASUREMENT: A7 is one 240 fps
+  # film of a SMALL steering step, the cheapest item in the campaign, and that
+  # second half of A7 is the half that matters.  Widening this back out is one
+  # line if a measurement justifies it.
+  steering_tau: [0.04, 0.08]    # s
+  pose_noise_xy: [0.0, 0.022]   # m, 1 sigma -- vehicle.yaml odom_position_noise
+  pose_noise_yaw: [0.0, 0.010]  # rad
+  pose_latency: [0.02, 0.10]    # s
+  pose_drift_m_per_lap: [0.0, 0.12]
+  pose_drift_rad_per_lap: [0.0, 0.03]
+  start_lateral: [-0.16, 0.16]  # m, where the car actually sits at the line
+  start_heading: [-0.09, 0.09]  # rad
+  control_jitter: [0.9, 1.1]    # multiplier on the control period
+  action_dropout: [0.0, 0.05]   # fraction of ticks that repeat the last command
+
+train:
+  # 30M, not the 12M this used to be.  The env grew two things that need
+  # more samples: a 0.34 s chassis lag the policy has to learn to anticipate
+  # rather than react to, and a stopping phase that is ~15 m of driving with
+  # no progress reward in it.
+  total_steps: 30000000
+  n_envs: 256
+  n_steps: 64               # per env per update -> 16384 sample batch
+  batch_size: 4096
+  n_epochs: 4
+  gamma: 0.995
+  gae_lambda: 0.95
+  clip_range: 0.2
+  # 0.01, not 0.003.  At 0.003 the STEERING std collapsed from 0.208 to
+  # 0.146 while the throttle std stayed at 0.374 -- so the time penalty kept
+  # pushing entry speeds up while the steering had already stopped exploring
+  # and could not adapt to them.  Field finish fell 77 -> 41% over 4 evals
+  # with the lap time stuck at ~77 s.  Exploration has to survive long enough
+  # for the two halves of the action to co-adapt.
+  #
+  # 0.01 then proved too much in the other direction: std climbed steadily
+  # from 0.36 to 0.48, explained_variance fell 0.83 -> 0.60 and the eval
+  # return slid from 1013 to 803, because the entropy bonus was beating the
+  # advantage gradient and PPO was optimising a deliberately noisy actor.
+  # 0.005 sits between the value that collapsed and the value that inflated.
+  ent_coef: 0.005
+  learning_rate: 0.0003
+  # DECAY IT.  At a constant 0.0003 the first run peaked at 11M steps
+  # (ep_rew_mean 439, ep_len_mean 1180) and then came apart over the next
+  # 19M: mean episode return fell to ~200, mean length to ~400, and the
+  # deterministic field return went 651 -> 307.  explained_variance stayed at
+  # 0.85 and the action std stayed at 0.29 throughout, so it was neither a
+  # value-function failure nor an exploration collapse -- it was PPO taking
+  # full-size steps long after the policy was good enough that most of them
+  # made it worse.  The final policy was FAST (59.5 s, quicker than the
+  # scripted floor) and crashed 91% of field runs, which is the far side of
+  # that cliff rather than a reward it had learned to game.
+  #
+  # Linear to this fraction of the initial rate over the run.
+  lr_final_frac: 0.05
+  net_arch: [128, 128]
+  # std 0.37 at the start, not stable-baselines3's default of 1.0.  With a
+  # 0.92 m corridor, full-variance exploration saws the steering lock to lock
+  # at 20 Hz: measured mean episode length 22 steps against 98 for a quiet
+  # policy.  Starting quieter is what gives PPO episodes long enough to learn
+  # the speed profile from.
+  log_std_init: -1.0
+  eval_every_steps: 1000000
+  seed: 0
