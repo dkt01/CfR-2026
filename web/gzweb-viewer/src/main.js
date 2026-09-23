@@ -117,6 +117,9 @@ let latestSlashPose;
 let followTargetOffset;
 let followCameraOffset;
 let updatingFollowView = false;
+// The heading the CAMERA is using, which lags the car's - see advanceFollowYaw.
+let followYaw;
+let followYawStamp;
 let simulationSocket;
 let worldControlType;
 let booleanType;
@@ -171,13 +174,74 @@ function rotateOffset(offset, yaw) {
   };
 }
 
+// HOW FAST THE CAMERA IS ALLOWED TO SWING AROUND THE CAR.
+//
+// The follow camera used to be bolted rigidly to the car's heading, which is
+// fine on a straight and unwatchable in a hairpin.  Measured over a scripted
+// lap of the speed course: the car reaches 1.67 rad/s of yaw, which spins the
+// whole scene at 96 deg/s and drags the camera - on a 4.9 m lever - past the
+// car at 4.1 m/s while the car itself is doing 2.25 m/s.  The car never
+// actually leaves the frame, because the target is locked to it; everything
+// around it does, and that is what losing it in a hairpin looks like.
+//
+// So the TARGET still tracks the car's position exactly, and only the camera's
+// orbit ANGLE is smoothed.  The cost is that the camera lags the car's heading,
+// so a hairpin is watched from slightly outside the turn rather than from
+// directly behind:
+//
+//   tau    cap        camera m/s in hairpins   scene spin   worst heading lag
+//   none   -                        4.06         96 deg/s           0 deg
+//   0.25   1.2 rad/s                3.00         69 deg/s          28 deg
+//   0.30   1.2 rad/s                2.88         69 deg/s          31 deg  <--
+//   0.35   1.0 rad/s                2.35         57 deg/s          54 deg
+//
+// 31 degrees still reads as a chase view, and outside the turn is where you
+// want to watch an apex from anyway.  Past about 50 the car is being watched
+// side-on and it stops looking like following at all.
+const FOLLOW_YAW_TAU = 0.3;        // s, first-order lag on the camera heading
+const FOLLOW_YAW_MAX_RATE = 1.2;   // rad/s, hard cap on top of it
+
+function wrapToPi(angle) {
+  return Math.atan2(Math.sin(angle), Math.cos(angle));
+}
+
+function advanceFollowYaw(pose, now) {
+  const yaw = getSlashYaw(pose);
+  if (followYaw === undefined) {
+    followYaw = yaw;
+    followYawStamp = now;
+    return followYaw;
+  }
+  // Pose frames arrive irregularly - the websocket batches them and a hidden
+  // tab throttles rendering - so the step comes off the clock rather than
+  // being assumed constant, or the smoothing changes with the frame rate.
+  // Capped at half a second so a stalled stream catches up over a few frames
+  // instead of snapping.
+  const dt = Math.min(Math.max((now - followYawStamp) / 1000, 0), 0.5);
+  followYawStamp = now;
+  if (dt === 0) {
+    return followYaw;
+  }
+  // Shortest way round, so the camera does not unwind the long way when the
+  // car's heading crosses +/-pi. That crossing happens in every hairpin.
+  const step = wrapToPi(yaw - followYaw) * (1 - Math.exp(-dt / FOLLOW_YAW_TAU));
+  const limit = FOLLOW_YAW_MAX_RATE * dt;
+  followYaw = wrapToPi(followYaw + Math.max(-limit, Math.min(limit, step)));
+  return followYaw;
+}
+
 function captureFollowView() {
   const scene = viewer["scene"];
   if (!followSlash || updatingFollowView || !latestSlashPose || !scene) {
     return;
   }
 
-  const yaw = getSlashYaw(latestSlashPose);
+  // The camera's own heading, not the car's: these offsets are applied in
+  // that frame, so capturing them in any other one rotates the view by the
+  // difference the moment the next pose lands.  They are the same number
+  // except while the smoothing is catching up - which is exactly when a
+  // hairpin is being driven, and so exactly when someone grabs the mouse.
+  const yaw = followYaw ?? getSlashYaw(latestSlashPose);
   const target = scene.controls.target;
   followTargetOffset = rotateOffset({
     x: target.x - latestSlashPose.position.x,
@@ -198,6 +262,8 @@ function startSlashFollowView(pose) {
   }
 
   const yaw = getSlashYaw(pose);
+  followYaw = yaw;
+  followYawStamp = performance.now();
   const forwardX = Math.cos(yaw);
   const forwardY = Math.sin(yaw);
   followTargetOffset = { x: 0.5, y: 0, z: 0.15 };
@@ -224,8 +290,9 @@ function updateSlashFollowView(pose) {
     return;
   }
 
-  const targetOffset = rotateOffset(followTargetOffset, getSlashYaw(pose));
-  const cameraOffset = rotateOffset(followCameraOffset, getSlashYaw(pose));
+  const yaw = advanceFollowYaw(pose, performance.now());
+  const targetOffset = rotateOffset(followTargetOffset, yaw);
+  const cameraOffset = rotateOffset(followCameraOffset, yaw);
   const target = scene.controls.target;
   updatingFollowView = true;
   target.set(
@@ -829,12 +896,17 @@ followButton.addEventListener("click", () => {
   followButton.textContent = followSlash ? "Stop following" : "Follow robot";
   if (followSlash) {
     startSlashFollowView(latestSlashPose);
+  } else {
+    // Dropped so the next follow starts from the car's real heading rather
+    // than from wherever the camera had lagged to when it was switched off.
+    followYaw = undefined;
   }
 });
 document.querySelector("#reset-view").addEventListener("click", () => {
   followSlash = false;
   followTargetOffset = undefined;
   followCameraOffset = undefined;
+  followYaw = undefined;
   followButton.textContent = "Follow robot";
   showCourseOverview();
 });

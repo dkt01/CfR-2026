@@ -39,7 +39,32 @@ import * as THREE from "three";
 
 const CAMERA_OFFSET = { x: 0.315, y: 0, z: 0.20 };
 const POINT_SIZE = 0.03;
-const DEFAULT_COLOR = new THREE.Color(0x2596d8);
+const DEFAULT_COLOR = new THREE.Color(0x63c2f0);
+
+// The ZED's returns are camera-exposed for the scene, not for being drawn as
+// unlit points against a near-black viewport, and the course's greys and
+// browns came out muddy.  This lifts them: a gamma curve rather than a flat
+// multiply, so shadowed returns open up while anything already near white
+// stays put instead of clipping.  1.0 would be the raw camera values.
+const COLOR_LIFT = 1.45;
+
+// Byte -> lifted 0..1 channel, precomputed.  A 256-entry lookup is not just
+// free here, it is cheaper than the divide it replaces, and this runs three
+// times for each of ~150k points a frame.
+const BRIGHTNESS = new Float32Array(256);
+for (let i = 0; i < BRIGHTNESS.length; i += 1) {
+  BRIGHTNESS[i] = Math.min(1, (i / 255) ** (1 / COLOR_LIFT));
+}
+
+// For the separate-r/g/b layouts, whose channels arrive as numbers rather
+// than as bytes of a packed word.
+function liftChannel(value) {
+  const byte = Math.round(value);
+  if (byte <= 0) {
+    return 0;
+  }
+  return byte >= 255 ? 1 : BRIGHTNESS[byte];
+}
 
 const FLOAT32 = 6;
 
@@ -198,9 +223,9 @@ export function createCloudBuffers() {
         positions[out + 2] = bodyZ + CAMERA_OFFSET.z;
         if (uints) {
           const bits = uints[base + rgbWord];
-          colors[out] = ((bits >> 16) & 0xff) / 255;
-          colors[out + 1] = ((bits >> 8) & 0xff) / 255;
-          colors[out + 2] = (bits & 0xff) / 255;
+          colors[out] = BRIGHTNESS[(bits >> 16) & 0xff];
+          colors[out + 1] = BRIGHTNESS[(bits >> 8) & 0xff];
+          colors[out + 2] = BRIGHTNESS[bits & 0xff];
         }
         count += 1;
       }
@@ -223,13 +248,13 @@ export function createCloudBuffers() {
           // declares itself FLOAT32 or UINT32 -- read the raw bytes, not the
           // field's nominal numeric type.
           const bits = view.getUint32(base + rgbField.offset, littleEndian);
-          colors[out] = ((bits >> 16) & 0xff) / 255;
-          colors[out + 1] = ((bits >> 8) & 0xff) / 255;
-          colors[out + 2] = (bits & 0xff) / 255;
+          colors[out] = BRIGHTNESS[(bits >> 16) & 0xff];
+          colors[out + 1] = BRIGHTNESS[(bits >> 8) & 0xff];
+          colors[out + 2] = BRIGHTNESS[bits & 0xff];
         } else if (colorMode === COLOR_CHANNELS) {
-          colors[out] = readScalar(view, base + rField.offset, rField.datatype, littleEndian) / 255;
-          colors[out + 1] = readScalar(view, base + gField.offset, gField.datatype, littleEndian) / 255;
-          colors[out + 2] = readScalar(view, base + bField.offset, bField.datatype, littleEndian) / 255;
+          colors[out] = liftChannel(readScalar(view, base + rField.offset, rField.datatype, littleEndian));
+          colors[out + 1] = liftChannel(readScalar(view, base + gField.offset, gField.datatype, littleEndian));
+          colors[out + 2] = liftChannel(readScalar(view, base + bField.offset, bField.datatype, littleEndian));
         }
         count += 1;
       }

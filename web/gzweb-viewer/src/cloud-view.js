@@ -37,6 +37,11 @@ const WHEEL_WIDTH = 0.035;
 
 const BACKGROUND = 0x11191d;
 
+// The heading arrow on the car's roof.  Sized to sit inside the chassis
+// footprint (0.55 x 0.30) once stretched.
+const HEADING_MARKER_RADIUS = 0.105;
+const HEADING_MARKER_COLOR = 0x2ee86a;
+
 export function createCloudView(container) {
   if (!container) {
     return { draw() {}, frames: 0, setHint() {}, dispose() {} };
@@ -89,14 +94,21 @@ export function createCloudView(container) {
       car.add(wheel);
     }
   }
-  // A nose marker, so "forward" is unambiguous at a glance.
-  const nose = new THREE.Mesh(
-    new THREE.ConeGeometry(0.05, 0.14, 12),
-    new THREE.MeshLambertMaterial({ color: 0xffd166 }),
+  // Heading marker: a flat triangle laid on the roof, pointing the way the
+  // car is facing, so "forward" is unambiguous at a glance.  CircleGeometry
+  // with three segments puts its first vertex at angle 0, which is +x -- the
+  // body frame's forward -- so it needs no rotation, only stretching along x
+  // to read as an arrow rather than as a plain triangle.  Unlit
+  // (MeshBasicMaterial) to keep it the same vivid green from every angle,
+  // and double-sided so it is still there when the camera drops below it.
+  const headingMarker = new THREE.Mesh(
+    new THREE.CircleGeometry(HEADING_MARKER_RADIUS, 3),
+    new THREE.MeshBasicMaterial({ color: HEADING_MARKER_COLOR, side: THREE.DoubleSide }),
   );
-  nose.rotation.z = -Math.PI / 2;
-  nose.position.set(CHASSIS.length / 2 + 0.07, 0, WHEEL_RADIUS + CHASSIS.height / 2);
-  car.add(nose);
+  headingMarker.scale.set(1.45, 0.95, 1);
+  // Just clear of the roof: coplanar would z-fight with the chassis top.
+  headingMarker.position.set(0.04, 0, WHEEL_RADIUS + CHASSIS.height + 0.004);
+  car.add(headingMarker);
   scene.add(car);
 
   // Its own cloud instance rather than the main view's: a three.js object has
