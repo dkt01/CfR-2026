@@ -242,27 +242,21 @@ IMPORT_ROOTS = tuple(
 )
 
 
-def _validate_import_path(raw: str) -> str:
-    raw = (raw or "").strip()
-    if not raw:
-        raise HTTPException(400, "path required")
-    normalized = os.path.normpath(os.path.expanduser(raw))
-    if not os.path.isabs(normalized):
-        raise HTTPException(400, "path must be absolute")
-    if not any(
-        normalized == root or normalized.startswith(root + os.sep)
-        for root in IMPORT_ROOTS
-    ):
-        raise HTTPException(
-            400, f"{normalized} is outside the allowed import locations"
-        )
-    return normalized
-
-
 @app.post("/api/runs/import")
 def import_run(body: dict = Body(...)):
     """Link an existing run folder (a USB stick, a sync_runs.sh pull) in."""
-    normalized = _validate_import_path(body.get("path", ""))
+    raw = (body.get("path") or "").strip()
+    if not raw:
+        raise HTTPException(400, "path required")
+    normalized = os.path.normpath(os.path.expanduser(raw))
+    allowed = os.path.isabs(normalized) and any(
+        normalized == root or normalized.startswith(root + os.sep)
+        for root in IMPORT_ROOTS
+    )
+    if not allowed:
+        raise HTTPException(
+            400, f"{normalized} is outside the allowed import locations"
+        )
     source = Path(normalized).resolve()
     if not source.is_dir():
         raise HTTPException(400, f"{source} is not a directory")
