@@ -12,8 +12,8 @@ what the current shaping actually pays, at the states the car really visits,
 and by keeping the invariants that stop PPO from finding a shortcut.
 
 ```bash
-python .claude/skills/rl-reward/scripts/reward_probe.py
-python .claude/skills/rl-reward/scripts/reward_probe.py --set k_touch=200 --set k_center=6
+python .agents/skills/rl-reward/scripts/reward_probe.py
+python .agents/skills/rl-reward/scripts/reward_probe.py --set k_touch=200 --set k_center=6
 ```
 
 The probe prints each term's contribution at eight representative states, the
@@ -114,7 +114,7 @@ be edited into each other:
 |---|---|---|
 | terms | `rl/bale_follower/reward.py` | `rl/bale_follower/lap_reward.py` |
 | values | `config.yaml` (`reward:`) | `config_lap.yaml` (`reward:`) |
-| probe | `.claude/skills/rl-reward/scripts/reward_probe.py` | `rl/bale_follower/lap_reward_probe.py` |
+| probe | `.agents/skills/rl-reward/scripts/reward_probe.py` | `rl/bale_follower/lap_reward_probe.py` |
 | call site | `env.py` | `lap_env.py` |
 | docs | `README.md` | `LAP_RACER.md` |
 

@@ -16,9 +16,9 @@ wall, regenerating the course keeps this script correct too, the same way
 Run it from the repo root:
 
 ```bash
-python3 .claude/skills/obstacle-course-regions/scripts/regions.py list
-python3 .claude/skills/obstacle-course-regions/scripts/regions.py show gravel_pit
-python3 .claude/skills/obstacle-course-regions/scripts/regions.py near 2.1 -9.3
+python3 .agents/skills/obstacle-course-regions/scripts/regions.py list
+python3 .agents/skills/obstacle-course-regions/scripts/regions.py show gravel_pit
+python3 .agents/skills/obstacle-course-regions/scripts/regions.py near 2.1 -9.3
 ```
 
 `list` prints every region with its bounds, source constant, and driving
@@ -33,7 +33,7 @@ of shelling out per row:
 
 ```python
 import sys
-sys.path.insert(0, ".claude/skills/obstacle-course-regions/scripts")
+sys.path.insert(0, ".agents/skills/obstacle-course-regions/scripts")
 from regions import classify
 
 for x, y in trajectory:

@@ -18,10 +18,10 @@ than guessing; they load different worlds and the viewer URL differs
 (`?course=obstacle` vs. no query param).
 
 ```bash
-.claude/skills/sim-launch/scripts/sim.sh start --course obstacle
-.claude/skills/sim-launch/scripts/sim.sh start --course speed --gui       # local GUI window (needs an authorized display)
-.claude/skills/sim-launch/scripts/sim.sh start --course obstacle --sensors # renders the ZED camera, ~5-12 Hz headless
-.claude/skills/sim-launch/scripts/sim.sh start --course obstacle --laps 1  # override the default lap count
+.agents/skills/sim-launch/scripts/sim.sh start --course obstacle
+.agents/skills/sim-launch/scripts/sim.sh start --course speed --gui       # local GUI window (needs an authorized display)
+.agents/skills/sim-launch/scripts/sim.sh start --course obstacle --sensors # renders the ZED camera, ~5-12 Hz headless
+.agents/skills/sim-launch/scripts/sim.sh start --course obstacle --laps 1  # override the default lap count
 ```
 
 This prints the viewer URL when it's done, e.g.
@@ -40,7 +40,7 @@ run `stop` first, then `start` again.
 ## Stopping
 
 ```bash
-.claude/skills/sim-launch/scripts/sim.sh stop
+.agents/skills/sim-launch/scripts/sim.sh stop
 ```
 
 Restarts the Docker container (cleanly kills Gazebo and every ROS node the
@@ -51,7 +51,7 @@ reinstall `gz-launch-vendor`.
 ## Checking state
 
 ```bash
-.claude/skills/sim-launch/scripts/sim.sh status
+.agents/skills/sim-launch/scripts/sim.sh status
 ```
 
 Reports whether the container/simulation/viewer are up, and whether the

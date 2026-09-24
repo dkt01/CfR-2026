@@ -16,12 +16,12 @@ Gazebo's pose stream dies after roughly five hours of continuous training; that
 logic is worth more than a tidier command line.
 
 ```bash
-.claude/skills/rl-train/scripts/rl.sh setup                      # once per machine
-.claude/skills/rl-train/scripts/rl.sh start --steps 200000 --dir checkpoints_v10
-.claude/skills/rl-train/scripts/rl.sh status --dir checkpoints_v10
-.claude/skills/rl-train/scripts/rl.sh logs --lines 60
-.claude/skills/rl-train/scripts/rl.sh eval --checkpoint checkpoints_v10/best_model.zip
-.claude/skills/rl-train/scripts/rl.sh stop
+.agents/skills/rl-train/scripts/rl.sh setup                      # once per machine
+.agents/skills/rl-train/scripts/rl.sh start --steps 200000 --dir checkpoints_v10
+.agents/skills/rl-train/scripts/rl.sh status --dir checkpoints_v10
+.agents/skills/rl-train/scripts/rl.sh logs --lines 60
+.agents/skills/rl-train/scripts/rl.sh eval --checkpoint checkpoints_v10/best_model.zip
+.agents/skills/rl-train/scripts/rl.sh stop
 ```
 
 ## First run on a machine
