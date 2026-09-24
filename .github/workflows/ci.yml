@@ -24,11 +24,16 @@ jobs:
         run: |
           apt-get update
           rosdep update
+          # ros_gz_* pulls in all of Gazebo (gz-sim, rendering, physics, ...)
+          # and rosbag2_transport the whole rosbag2 stack.  Both are exec_depend
+          # of the launch files only: nothing built or tested here imports them.
+          # No --reinstall either: it forces apt to re-fetch packages the
+          # ros-base image already has.
           rosdep install \
             --from-paths jetson \
             --ignore-src \
             --rosdistro jazzy \
-            --reinstall \
+            --skip-keys "ros_gz_bridge ros_gz_sim rosbag2_transport" \
             -r \
             -y
 
