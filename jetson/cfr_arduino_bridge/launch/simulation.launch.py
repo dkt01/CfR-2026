@@ -216,6 +216,9 @@ def generate_launch_description():
             # this to turn the arm at a stated rate; going through the bridge
             # rather than the gz CLI is what makes a smooth sweep affordable.
             "/start_signal/arm@std_msgs/msg/Float64]gz.msgs.Double",
+            # The other way: cloud_segmentation's class-colored cloud, onto
+            # gz transport so the browser viewer can draw it.
+            "/zed/segmented/points@sensor_msgs/msg/PointCloud2]gz.msgs.PointCloudPacked",
         ],
         remappings=[
             ("/model/slash/odometry", "/zed/zed_node/odom"),
@@ -235,6 +238,22 @@ def generate_launch_description():
         name="zed_cloud_noise",
         output="screen",
         parameters=[{"use_sim_time": True}],
+        condition=IfCondition(LaunchConfiguration("sensors")),
+    )
+
+    # What the segmenter makes of the (noisy) ZED cloud, colored by class
+    # for RViz and the browser viewer.
+    cloud_segmentation = Node(
+        package="cfr_arduino_bridge",
+        executable="cloud_segmentation_node.py",
+        name="cloud_segmentation",
+        output="screen",
+        parameters=[{"use_sim_time": True}],
+        remappings=[
+            ("cloud", "/zed/zed_node/point_cloud/cloud_registered"),
+            ("pose", "/zed/zed_node/pose"),
+            ("~/cloud", "/zed/segmented/points"),
+        ],
         condition=IfCondition(LaunchConfiguration("sensors")),
     )
 
@@ -315,6 +334,7 @@ def generate_launch_description():
             command_bridge,
             gazebo_bridge,
             zed_cloud_noise,
+            cloud_segmentation,
             start_signal_detector,
             cmd_vel_to_drive,
             path_follower,

@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import math
 import random
+import struct
 from pathlib import Path
 
 import start_signal
@@ -187,6 +188,13 @@ SIGNAL_POSITION = start_signal.position((0.0, 0.0), LANE_HEADING, LANE_WIDTH / 2
 # bumps standing on it.
 POTHOLE_BOARD_HEIGHT = 1.5 * INCH
 POTHOLE_BUMP_HEIGHT = 0.75 * INCH
+# The recesses are dished into the top ply, not cut through it: the mesh's
+# lowest recess floor is 0.020 m, 18 mm under the 0.038 m board top.  The
+# collision steps the board down to that floor wherever the mesh surface is
+# below the midpoint, sampled on this grid -- fine enough that a 0.1-0.2 m
+# recess is several cells across, coarse enough to stay a few hundred boxes.
+POTHOLE_RECESS_FLOOR = 0.020
+POTHOLE_RECESS_CELL = 0.02
 
 GRAVEL_FRICTION = 0.35
 GRAVEL_SURFACE_Z = 2 * INCH
@@ -531,6 +539,92 @@ def build_gravel(random) -> str:
     )
 
 
+def stl_triangles(path: Path) -> list[tuple]:
+    """Every triangle of a binary STL, as three (x, y, z) tuples."""
+    data = path.read_bytes()
+    (count,) = struct.unpack_from("<I", data, 80)
+    return [
+        tuple(
+            struct.unpack_from("<3f", data, 84 + 50 * index + 12 + 12 * corner)
+            for corner in range(3)
+        )
+        for index in range(count)
+    ]
+
+
+def pothole_full_height_cells(width: float, depth: float) -> list[list[bool]]:
+    """Which POTHOLE_RECESS_CELL cells of the board stand at full height.
+
+    Rasterizes the upward-facing triangles of the board mesh -- the same
+    mesh the camera renders -- and calls a cell full height when the surface
+    at its center is above the midpoint between the recess floor and the
+    board top.  Indexed [row][column], row along the board's y, both from
+    the board's -x, -y corner in its own frame.
+    """
+    columns = int(round(width / POTHOLE_RECESS_CELL))
+    rows = int(round(depth / POTHOLE_RECESS_CELL))
+    surface = [[0.0] * columns for _ in range(rows)]
+    for a, b, c in stl_triangles(PACKAGE / "meshes" / "pothole_board.stl"):
+        ux, uy = b[0] - a[0], b[1] - a[1]
+        vx, vy = c[0] - a[0], c[1] - a[1]
+        # Twice the signed plan area, which is also the normal's z: skipping
+        # everything not strictly positive keeps upward-facing faces only.
+        area = ux * vy - uy * vx
+        if area <= 0.0:
+            continue
+        x0 = min(a[0], b[0], c[0]) + width / 2
+        x1 = max(a[0], b[0], c[0]) + width / 2
+        y0 = min(a[1], b[1], c[1]) + depth / 2
+        y1 = max(a[1], b[1], c[1]) + depth / 2
+        for row in range(
+            max(0, int(y0 / POTHOLE_RECESS_CELL - 0.5)),
+            min(rows, int(y1 / POTHOLE_RECESS_CELL + 0.5) + 1),
+        ):
+            py = (row + 0.5) * POTHOLE_RECESS_CELL - depth / 2
+            for column in range(
+                max(0, int(x0 / POTHOLE_RECESS_CELL - 0.5)),
+                min(columns, int(x1 / POTHOLE_RECESS_CELL + 0.5) + 1),
+            ):
+                px = (column + 0.5) * POTHOLE_RECESS_CELL - width / 2
+                # Barycentric weights of (px, py) in the triangle's plan.
+                wx, wy = px - a[0], py - a[1]
+                s = (wx * vy - wy * vx) / area
+                t = (ux * wy - uy * wx) / area
+                if s < -1e-9 or t < -1e-9 or s + t > 1 + 1e-9:
+                    continue
+                z = a[2] + s * (b[2] - a[2]) + t * (c[2] - a[2])
+                surface[row][column] = max(surface[row][column], z)
+    middle = (POTHOLE_RECESS_FLOOR + POTHOLE_BOARD_HEIGHT) / 2
+    return [[height > middle for height in row] for row in surface]
+
+
+def merge_cells(cells: list[list[bool]]) -> list[tuple[int, int, int, int]]:
+    """Cover the True cells with rectangles: (column0, row0, column1, row1).
+
+    Runs along each row, then stacks identical runs from consecutive rows.
+    Not a minimal cover, but deterministic and within a few boxes of one on
+    a board that is mostly solid.
+    """
+    open_runs: dict[tuple[int, int], int] = {}
+    rectangles = []
+    for row, line in enumerate(cells + [[False] * len(cells[0])]):
+        runs = set()
+        column = 0
+        while column < len(line):
+            if line[column]:
+                start = column
+                while column < len(line) and line[column]:
+                    column += 1
+                runs.add((start, column))
+            column += 1
+        for run in list(open_runs):
+            if run not in runs:
+                rectangles.append((run[0], open_runs.pop(run), run[1], row))
+        for run in sorted(runs):
+            open_runs.setdefault(run, row)
+    return sorted(rectangles)
+
+
 def build_potholes(circles) -> str:
     x, y = rect_centre(POTHOLE)
     body = mesh_visual(
@@ -541,13 +635,37 @@ def build_potholes(circles) -> str:
     # it, both straight off the CAD -- and the approach ramps are built to
     # reach 1.5 in, so the collision has to be the same height as the mesh or
     # the car drives up the ramp and drops through the board.
+    #
+    # It is not one solid box, though: the recesses are the point of the
+    # section, and a tire has to be able to drop into them.  So the board is
+    # a slab up to the recess floor, with the top ply laid over it as boxes
+    # everywhere except the recesses.
     body += box(
         "base",
-        (x, y, POTHOLE_BOARD_HEIGHT / 2, 0, 0, 0),
-        (width, depth, POTHOLE_BOARD_HEIGHT),
+        (x, y, POTHOLE_RECESS_FLOOR / 2, 0, 0, 0),
+        (width, depth, POTHOLE_RECESS_FLOOR),
         PLYWOOD,
         visual=False,
     )
+    ply = POTHOLE_BOARD_HEIGHT - POTHOLE_RECESS_FLOOR
+    cell = POTHOLE_RECESS_CELL
+    for index, (c0, r0, c1, r1) in enumerate(
+        merge_cells(pothole_full_height_cells(width, depth))
+    ):
+        body += box(
+            f"top_{index}",
+            (
+                x - width / 2 + (c0 + c1) * cell / 2,
+                y - depth / 2 + (r0 + r1) * cell / 2,
+                POTHOLE_RECESS_FLOOR + ply / 2,
+                0,
+                0,
+                0,
+            ),
+            ((c1 - c0) * cell, (r1 - r0) * cell, ply),
+            PLYWOOD,
+            visual=False,
+        )
     for index, (bump_x, bump_y) in enumerate(circles):
         bx, by = to_world(bump_x, bump_y)
         # The mesh already sits at its own height above the board, so it is
