@@ -6,12 +6,21 @@ Brings up only the driver and, optionally, RViz.  It assumes something else is
 already publishing /zed/zed_node/pose and consuming /drive_cmd -- either
 `speed_course.launch.py` in Gazebo or `arduino_bridge.launch.py` on the car.
 `validate.sh` is the wrapper that starts the simulator too.
+
+Recording: record:=auto (the default) starts jetson/scripts/record_run.py
+beside the driver whenever use_sim_time is false -- i.e. on the car -- so a
+real run is never driven unrecorded by accident.  record:=true records in
+simulation too; record:=false never does.  record_args passes extra flags,
+e.g. record_args:="--svo --map".  The run lands in ~/cfr_runs; pull it with
+the Run Lab (web/run-lab) or jetson/scripts/sync_runs.sh.
 """
+
+import shlex
 
 from pathlib import Path
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, OpaqueFunction
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -37,6 +46,17 @@ def generate_launch_description():
         DeclareLaunchArgument("use_sim_time", default_value="true"),
         DeclareLaunchArgument("rviz", default_value="true"),
         DeclareLaunchArgument("speed_scale", default_value="1.0"),
+        DeclareLaunchArgument(
+            "record",
+            default_value="auto",
+            description="auto records when use_sim_time is false; true | false",
+        ),
+        DeclareLaunchArgument("record_label", default_value=""),
+        DeclareLaunchArgument(
+            "record_args",
+            default_value="",
+            description='extra record_run.py flags, e.g. "--svo --map"',
+        ),
     ]
 
     driver = ExecuteProcess(
@@ -71,4 +91,50 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration("rviz")),
         output="log",
     )
-    return LaunchDescription([*args, driver, rviz])
+    return LaunchDescription([*args, driver, rviz, OpaqueFunction(function=recorder)])
+
+
+def recorder(context, *args, **kwargs):
+    """record_run.py, when record resolves true.
+
+    Long signal timeouts on purpose: on Ctrl-C the recorder still has to save
+    the ZED area memory, restore the cloud rate, close the bag and copy the
+    logs.  The launch default escalates to SIGKILL after 5 s, which would
+    leave a bag with no finished metadata.
+    """
+
+    def value(name):
+        return LaunchConfiguration(name).perform(context)
+
+    mode = value("record").lower()
+    sim = value("use_sim_time").lower() in ("true", "1")
+    if mode == "false" or (mode == "auto" and sim):
+        return []
+    driver = value("driver")
+    label = value("record_label") or (
+        "baseline" if driver == "baseline" else Path(value("policy")).parent.name
+    )
+    script = HERE.parents[1] / "jetson" / "scripts" / "record_run.py"
+    cmd = [
+        "python3",
+        str(script),
+        "--label",
+        f"f1_{label}",
+        "--driver",
+        driver,
+        "--speed-scale",
+        value("speed_scale"),
+        "--config",
+        value("config"),
+    ]
+    if driver != "baseline":
+        cmd += ["--policy", value("policy")]
+    cmd += shlex.split(value("record_args"))
+    return [
+        ExecuteProcess(
+            cmd=cmd,
+            output="screen",
+            sigterm_timeout="45",
+            sigkill_timeout="60",
+        )
+    ]

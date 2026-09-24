@@ -74,84 +74,95 @@ run directory carries the `config.yaml` it was trained with; if in doubt ship
 
 ## 3. Orin layout
 
-The node resolves the course files **relative to the repo root**, which it
-takes as two directories above itself (`repo_root` parameter). So mirror the
-repo's own shape on the Orin and everything resolves with no arguments:
+`syncSoftware.sh` (§4) produces this, and the node resolves everything in it
+with no extra arguments:
 
 ```
-~/cfr/
-  jetson/               <- synced by syncSoftware.sh
-    cfr_arduino_bridge/
-      worlds/speed_course.sdf          <- the bale positions
-      config/speed_course_path.json    <- the centerline
-  rl/formulaOne/        <- copied in step 5
+~/software/                <- jetson/: the ROS packages and scripts
+  cfr_arduino_bridge/
+    worlds/speed_course.sdf          <- the bale positions
+    config/speed_course_path.json    <- the centerline
+  scripts/launch.sh, record_run.py, ...
+  formulaOne/              <- rl/formulaOne/: the driver
+    policy.npz             <- the chosen policy (v12 by default)
+    config.yaml            <- THAT policy's config, not the tree's
+    .cache/                <- the track cache
+~/jetson -> ~/software     <- symlink, made by the sync
 ```
+
+The symlink is there because the node finds the course files, and the launch
+file finds `record_run.py`, as `<two directories above itself>/jetson/...`,
+which is the repo's own layout. For `~/software/formulaOne` that is
+`~/jetson`. The sync never replaces a real `~/jetson` directory; it warns
+instead.
 
 `~/ros2_ws` stays the colcon workspace, as it is today.
 
 ---
 
-## 4. Sync and build the ROS side
+## 4. Sync, copy the policy and build
 
 From the dev machine, in the repo root:
 
 ```bash
-jetson/scripts/syncSoftware.sh --dir ~/cfr/jetson --dry-run    # look first
-jetson/scripts/syncSoftware.sh --dir ~/cfr/jetson --build
+jetson/scripts/syncSoftware.sh --dry-run    # look first
+jetson/scripts/syncSoftware.sh --build
 ```
+
+One command does all of it:
+
+- syncs `jetson/` to `~/software` and builds `cfr_interfaces` (which defines
+  `DriveCommand` and `ArduinoStatus`) and `cfr_arduino_bridge`. **The policy
+  node needs `cfr_interfaces` to exist, so the build is not optional even
+  though the node itself is plain Python.**
+- syncs `rl/formulaOne/` to `~/software/formulaOne`, leaving out `runs/`,
+  `bestModel/`, `.venv` and the tree's own `config.yaml`
+- copies the chosen policy's `policy.npz` and `config.yaml` to the top of
+  `~/software/formulaOne`. The default is **v12**; choose another with
+  `--policy <run>` (or `F1_RUN=<run>`). It is taken from
+  `rl/formulaOne/bestModel/<run>/`, which is committed, or else from
+  `runs/<run>/`. A run that has neither file stops the sync before anything is
+  copied.
+- copies the track cache. `track.py` builds a distance field over every bale
+  on first use; the cache saves the Orin that work. Its key is a hash of the
+  world SDF and the track settings, so a stale cache is ignored rather than
+  used.
+- makes the `~/jetson` symlink (§3)
+
+The policy's own `config.yaml` replaces the tree's on purpose: a policy must
+drive with the config it was trained under (§2). `--no-f1` syncs `jetson/`
+alone.
 
 Defaults are `ORIN_HOST=tejam@192.168.55.1` and `ORIN_WS=~/ros2_ws`; override
 with `--host` / `-w` or the `ORIN_HOST` / `ORIN_WS` environment variables.
 Source only — the host is x86_64 and the Orin is aarch64, so no build
 artifacts are transferred.
 
-This builds `cfr_interfaces` (which defines `DriveCommand` and
-`ArduinoStatus`) and `cfr_arduino_bridge`. **The policy node needs
-`cfr_interfaces` to exist, so this step is not optional even though the node
-itself is plain Python.**
-
 ---
 
-## 5. Copy the policy stack
-
-`syncSoftware.sh` only syncs `jetson/`. The policy lives outside it and has to
-be copied separately:
-
-```bash
-rsync -av --exclude '__pycache__' --exclude '.venv' --exclude 'runs' \
-      rl/formulaOne/ tejam@192.168.55.1:~/cfr/rl/formulaOne/
-
-# and just the one policy you chose
-rsync -av rl/formulaOne/runs/<run>/policy.npz \
-          rl/formulaOne/runs/<run>/config.yaml \
-          tejam@192.168.55.1:~/cfr/rl/formulaOne/runs/<run>/
-```
-
-**Optionally copy the track cache too.** `track.py` builds a distance field
-over every bale on first use and caches it; shipping the cache skips that work
-on the Orin:
-
-```bash
-rsync -av rl/formulaOne/.cache/ tejam@192.168.55.1:~/cfr/rl/formulaOne/.cache/
-```
-
-The cache key is a hash of the world SDF and the track settings, so a stale
-cache is ignored rather than used — it cannot give you the wrong course.
-
----
-
-## 6. Run it
+## 5. Run it
 
 Two terminals on the Orin. **E-stop in hand.**
 
-**Terminal 1 — the Arduino bridge:**
+**Terminal 1 — the Arduino bridge and the ZED:**
 
 ```bash
-source /opt/ros/jazzy/setup.bash && source ~/ros2_ws/install/setup.bash
-ros2 launch cfr_arduino_bridge arduino_bridge.launch.py use_cmd_vel:=false
+~/software/scripts/launch.sh --no-cmd-vel
 ```
 
-`use_cmd_vel:=false` **matters.** `cmd_vel_to_drive_node` republishes
+This brings up the bridge and the ZED together, and starts the ZED with the
+race configuration, `jetson/cfr_arduino_bridge/config/cfr_zed2i.yaml`. That
+file pins the grab rate, tracking mode, loop closure and 2D mode the pose
+depends on. **Do not start the ZED with a bare `ros2 launch zed_wrapper ...`**:
+without the file the wrapper runs on whatever defaults its revision ships, and
+the policy drives on that pose. Check it took before the first run:
+
+```bash
+ros2 param get /zed/zed_node pos_tracking.pos_tracking_mode   # GEN_3
+ros2 topic hz /zed/zed_node/pose                              # ~60 Hz
+```
+
+`--no-cmd-vel` (`use_cmd_vel:=false` on the bridge launch) **matters.** `cmd_vel_to_drive_node` republishes
 `DriveCommand` on a timer whether or not anything is feeding it, so leaving it
 up puts a second publisher on `/drive_cmd` and the Arduino acts on whichever
 message arrived last. The car then drives on a mixture of the policy and a
@@ -161,11 +172,11 @@ badly.
 **Terminal 2 — the policy, first run, at a third speed:**
 
 ```bash
-source /opt/ros/jazzy/setup.bash && source ~/ros2_ws/install/setup.bash
-ros2 launch ~/cfr/rl/formulaOne/formula_one.launch.py \
-     policy:=$HOME/cfr/rl/formulaOne/runs/<run>/policy.npz \
-     config:=$HOME/cfr/rl/formulaOne/runs/<run>/config.yaml \
-     use_sim_time:=false rviz:=false speed_scale:=0.3
+source ~/software/scripts/setEnv.sh
+ros2 launch ~/software/formulaOne/formula_one.launch.py \
+     policy:=$HOME/software/formulaOne/policy.npz \
+     config:=$HOME/software/formulaOne/config.yaml \
+     record_label:=v12 use_sim_time:=false rviz:=false speed_scale:=0.3
 ```
 
 - `use_sim_time:=false` — **required on the car.** Left at its `true` default
@@ -173,6 +184,15 @@ ros2 launch ~/cfr/rl/formulaOne/formula_one.launch.py \
 - `speed_scale` multiplies every speed command. Work up 0.3 → 0.5 → 1.0 over
   separate runs, checking the line each time.
 - `laps:=N` overrides the two laps in the config.
+- `record_label` names the recording after the policy. Without it the run is
+  labelled after the policy's directory, which is now always `formulaOne`.
+  Set it to whatever `--policy` you synced.
+- **The run is recorded automatically** (`record:=auto` records whenever
+  `use_sim_time:=false`) into `~/cfr_runs/<UTC>_f1_<label>/`: the bag, the exact
+  policy and config, parameter dumps, ZED area memory, ROS logs and
+  tegrastats. `record_label:=<name>` names it; `record_args:="--svo --map"`
+  adds a ZED SVO and spatial map. The ZED point cloud is lowered to 1 Hz for
+  the run and restored afterwards. See §10.
 
 The car waits for the start signal and will not move until it gets one. Either
 show it the real green signal, or release it by hand:
@@ -183,7 +203,7 @@ ros2 service call /formula_one/manual_start std_srvs/srv/SetBool "{data: true}"
 
 ---
 
-## 7. What a good run looks like
+## 6. What a good run looks like
 
 The node prints a telemetry line every 3 seconds:
 
@@ -211,7 +231,7 @@ line drives it into whatever it was turning away from.
 
 ---
 
-## 8. Stopping
+## 7. Stopping
 
 - **E-stop.** Always available, always the right answer if unsure.
 - Ctrl-C in terminal 2. The node commands neutral with `auto_ready=false` on
@@ -223,37 +243,67 @@ line drives it into whatever it was turning away from.
 
 ---
 
-## 9. Troubleshooting
+## 8. Troubleshooting
 
 | Symptom | Cause |
 |---|---|
-| Car sits at the line, log says "Waiting for the start signal" | No start signal. Call `manual_start` (§6). |
-| Node dies on first tick with `AttributeError` | Stale `.py` files on the Orin. Re-run step 5 — a partial copy leaves the node importing a mix of versions. |
+| Car sits at the line, log says "Waiting for the start signal" | No start signal. Call `manual_start` (§5). |
+| Node dies on first tick with `AttributeError` | Stale `.py` files on the Orin. Re-run `syncSoftware.sh` (§4) — a partial copy leaves the node importing a mix of versions. |
 | Node refuses to load the policy, complains about width | Observation width mismatch. Ship the run's own `config.yaml` (§2). |
 | Car moves but wanders / drives at a bale | Localisation. Check `/zed/zed_node/pose` is being published and that the ZED has a map. This is the failure mode this design is most exposed to. |
 | Car twitches or fights itself | A second publisher on `/drive_cmd`. Check `use_cmd_vel:=false`, and `ros2 topic info /drive_cmd --verbose` should show exactly one publisher. |
-| "No such file" for the world or centerline | `repo_root` is wrong. It defaults to two directories above `formula_one_node.py`; pass `repo_root:=$HOME/cfr` explicitly if your layout differs from §3. |
+| "No such file" for the world or centerline | The `~/jetson -> ~/software` symlink is missing, or `~/jetson` is a real directory. Re-run `syncSoftware.sh` and read its warning (§3). |
+| `record_run: only N GB free` and no recording | The Orin disk is nearly full. Pull runs in the Run Lab, then delete them from the Orin there (only offered after a verified copy). |
+| `WARNING: could not lower the ZED cloud rate` | The ZED node did not accept `depth.point_cloud_freq`, so the recorder left the cloud out rather than fill the disk. Everything else is recorded. |
 | Everything starts but nothing moves and no telemetry appears | The node returns early before logging when it is finished, manually stopped, or the pose is stale. Check the pose topic first. |
 
 Useful checks on the Orin:
 
 ```bash
-ros2 topic hz /zed/zed_node/pose          # localisation alive?
+ros2 topic hz /zed/zed_node/pose          # localisation alive?  ~60 Hz
+ros2 topic echo /zed/zed_node/pose/status # tracking state; loop closures show here
 ros2 topic hz /arduino_bridge/status      # speed feedback alive?
 ros2 topic info /drive_cmd --verbose      # exactly ONE publisher
 ```
 
 ---
 
-## 10. Falling back
+## 9. Falling back
 
 The scripted driver needs no checkpoint and is a useful sanity check that the
 plumbing, the map and the localisation are all good before you blame a policy:
 
 ```bash
-ros2 launch ~/cfr/rl/formulaOne/formula_one.launch.py \
+ros2 launch ~/software/formulaOne/formula_one.launch.py \
      driver:=baseline use_sim_time:=false rviz:=false speed_scale:=0.3
 ```
 
-To go back to a previous policy, point `policy:=` at its `.npz` — nothing else
-on the Orin has to change, as long as the observation width matches (§2).
+To go back to a previous policy, re-run `jetson/scripts/syncSoftware.sh
+--policy <run>`. It replaces `policy.npz` and `config.yaml` together, so the
+policy and its config always match (§2).
+
+---
+
+## 10. After the run: pull it and read it
+
+Plug the Orin into the laptop's USB-C port and start the Run Lab on the laptop:
+
+```bash
+web/run-lab/run.sh                # http://localhost:8765
+```
+
+**Car** lists every run on the Orin. **Pull** copies one, verifies it
+byte-for-byte and processes it. The run's pages then answer, in order: did it
+finish and what failed (Overview), where on the course (Track & sections,
+Replay), and why: the car against the plant (Vehicle model), the policy's own
+behaviour (RL policy), and the pose it was driving on (ZED & localisation).
+**Check ZED & localisation before trusting any clearance**, because clearances
+come from the pose, exactly as the driver's do. Replay opens the run in Rerun:
+the course and car in 3D, the ZED clouds and map, the camera, and every
+channel, on the same timeline.
+
+The recorder needs `cfr_interfaces` built with `DriverTelemetry` (step 4 does
+this). Without it the car still drives, but the node warns that `~/telemetry`
+is off, and the analysis loses the driver's own view (actions, prior, anchor).
+Details: [web/run-lab/README.md](../../web/run-lab/README.md).
+

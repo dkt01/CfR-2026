@@ -55,6 +55,14 @@ from visualization_msgs.msg import Marker, MarkerArray
 
 from cfr_interfaces.msg import ArduinoStatus, DriveCommand
 
+# ~/telemetry is what the Run Lab (web/run-lab) judges a run by.  Optional so a
+# car whose cfr_interfaces predates the message still drives -- it just says,
+# once, that the run it is about to make will be hard to analyse.
+try:
+    from cfr_interfaces.msg import DriverTelemetry
+except ImportError:  # pragma: no cover - depends on the installed workspace
+    DriverTelemetry = None
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import track as track_mod  # noqa: E402
 from baseline import BaselineDriver  # noqa: E402
@@ -204,6 +212,18 @@ class FormulaOne(Node):
         self.markers = self.create_publisher(MarkerArray, "~/markers", LATCHED)
         self.path_pub = self.create_publisher(PathMsg, "~/centerline", LATCHED)
         self.car_pub = self.create_publisher(PoseStamped, "~/car", 10)
+        self.telemetry_pub = (
+            self.create_publisher(DriverTelemetry, "~/telemetry", 50)
+            if DriverTelemetry is not None
+            else None
+        )
+        if self.telemetry_pub is None:
+            self.get_logger().warn(
+                "cfr_interfaces has no DriverTelemetry -- ~/telemetry is OFF and "
+                "this run will be hard to analyse.  Rebuild cfr_interfaces."
+            )
+        self.speed_from_tach = False
+        self.relocalized = False
         if self.param("publish_markers"):
             self.publish_track()
 
@@ -300,7 +320,10 @@ class FormulaOne(Node):
         fresh = self.status_time is not None and (
             (now - self.status_time).nanoseconds * 1e-9 < self.param("status_timeout")
         )
-        if fresh and self.status is not None and self.status.link_ok:
+        self.speed_from_tach = bool(
+            fresh and self.status is not None and self.status.link_ok
+        )
+        if self.speed_from_tach:
             speed = abs(float(self.status.speed))
         elif self.prev_pose is not None:
             dt = max(
@@ -352,6 +375,15 @@ class FormulaOne(Node):
                     "pose is stale -- commanding neutral", throttle_duration_sec=2.0
                 )
             self.send(0.0, 0.0)
+            if self.finished:
+                state = DriverTelemetry.STATE_FINISHED if DriverTelemetry else 0
+            elif self.manual_stop:
+                state = DriverTelemetry.STATE_MANUAL_STOP if DriverTelemetry else 0
+            elif not self.go:
+                state = DriverTelemetry.STATE_WAITING if DriverTelemetry else 0
+            else:
+                state = DriverTelemetry.STATE_STALE if DriverTelemetry else 0
+            self.publish_telemetry(state, now)
             return
 
         x_raw = self.pose.pose.position.x
@@ -367,6 +399,7 @@ class FormulaOne(Node):
 
         x, y, yaw = self.to_track(x_raw, y_raw, yaw_raw)
         speed = self.measured_speed()
+        self.relocalized = False
 
         # Re-localise after a jump.  The station is tracked incrementally off
         # a hint, which is right while the car drives and wrong the moment it
@@ -378,6 +411,7 @@ class FormulaOne(Node):
         if self.last_track_xy is not None:
             step = math.hypot(x - self.last_track_xy[0], y - self.last_track_xy[1])
             if step > float(self.param("relocalize_step")):
+                self.relocalized = True
                 idx, station = self.track.locate(
                     np.array([x]), np.array([y]), np.array([yaw])
                 )
@@ -551,11 +585,32 @@ class FormulaOne(Node):
                     )
                 )
                 self.send(0.0, 0.0)
+                self.publish_telemetry(
+                    DriverTelemetry.STATE_FINISHED if DriverTelemetry else 0, now
+                )
                 return
             velocity = np.zeros_like(velocity)
 
         self.send(steer[0], velocity[0])
         self.publish_car(x, y, yaw, frame, speed, velocity[0])
+        self.publish_telemetry(
+            (
+                DriverTelemetry.STATE_STOPPING
+                if self.stopping
+                else DriverTelemetry.STATE_RUNNING
+            )
+            if DriverTelemetry
+            else 0,
+            now,
+            pose=(x, y, yaw),
+            frame=frame,
+            speed=speed,
+            action=action,
+            obs=obs,
+            steer=float(steer[0]),
+            velocity=float(velocity[0]),
+            lap_clock=clock_s,
+        )
         # A throttled line of telemetry, so a run that goes wrong says where
         # and in what state.  Without it a car wedged against a bale is
         # indistinguishable in the log from a car that never started: both
@@ -567,6 +622,72 @@ class FormulaOne(Node):
             f"cte {frame['lateral'][0]:+.3f} m",
             throttle_duration_sec=float(self.param("telemetry_period")),
         )
+
+    # ------------------------------------------------------------ telemetry
+
+    def publish_telemetry(
+        self,
+        state,
+        now,
+        pose=None,
+        frame=None,
+        speed=0.0,
+        action=None,
+        obs=None,
+        steer=0.0,
+        velocity=0.0,
+        lap_clock=None,
+    ):
+        """One DriverTelemetry per tick, whatever the tick decided.
+
+        On the idle branches only the header, state and health fields mean
+        anything; the rest stay zero.  The analyser keys on `state`, so a zero
+        there is never mistaken for the car sitting at station 0.
+        """
+        if self.telemetry_pub is None:
+            return
+        msg = DriverTelemetry()
+        msg.header.stamp = now.to_msg()
+        msg.header.frame_id = self.frame
+        msg.state = int(state)
+        msg.driver = str(self.mode)
+        msg.laps_target = int(self.laps_target)
+        msg.lap = int(self.laps_done)
+        msg.distance = float(self.distance)
+        msg.last_lap_time = float(self.last_lap_time)
+        msg.speed_scale = float(self.param("speed_scale"))
+        msg.pose_age = (
+            float((now - self.pose_time).nanoseconds * 1e-9)
+            if self.pose_time is not None
+            else float("inf")
+        )
+        msg.speed_from_tach = bool(self.speed_from_tach)
+        msg.relocalized = bool(self.relocalized)
+        msg.yaw_rate = float(self.yaw_rate[0])
+        msg.speed_rate = float(self.speed_rate[0])
+        if self.station is not None:
+            msg.station = float(self.station)
+        if lap_clock is not None:
+            msg.lap_time = float(lap_clock - (self.lap_started_at or lap_clock))
+            msg.race_time = float(lap_clock - (self.run_started_at or lap_clock))
+        if pose is not None:
+            msg.x, msg.y, msg.yaw = (float(v) for v in pose)
+        if frame is not None:
+            msg.station = float(frame["station"][0])
+            msg.cross_track = float(frame["lateral"][0])
+            msg.heading_error = float(frame["psi"][0])
+            msg.clearance = float(frame["clearance"][0])
+            msg.v_cap = float(frame["v_cap"][0])
+            msg.v_floor = float(frame["v_floor"][0])
+            msg.steer_ff = float(np.asarray(frame["steer_ff"]).reshape(-1)[0])
+        msg.speed = float(speed)
+        if action is not None:
+            msg.action = [float(a) for a in np.asarray(action).reshape(-1)]
+        if obs is not None:
+            msg.observation = [float(o) for o in np.asarray(obs).reshape(-1)]
+        msg.steer_cmd = float(steer)
+        msg.velocity_cmd = float(velocity)
+        self.telemetry_pub.publish(msg)
 
     # -------------------------------------------------------------- display
 

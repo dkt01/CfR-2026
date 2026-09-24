@@ -1,19 +1,34 @@
 #!/usr/bin/env bash
 #
-# Sync the Jetson ROS 2 packages from a development host to the Orin.
+# Sync the Jetson ROS 2 packages from a development host to the Orin, and with
+# them the formulaOne driver and the one policy it races with.
 #
 # Source only: the host is x86_64 and the Orin is aarch64, so build artifacts
 # are never transferred.  Use --build to compile on the Orin after syncing.
+#
+# Orin layout this produces (default --dir ~/software):
+#
+#   ~/software/                 jetson/ (the ROS packages and scripts)
+#   ~/software/formulaOne/      rl/formulaOne/ code, plus the chosen policy's
+#                               policy.npz and config.yaml at its top level
+#   ~/jetson -> ~/software      formulaOne finds the course files and
+#                               record_run.py under <two dirs up>/jetson/,
+#                               as it does in the repo
 
 set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly SOURCE_DIR="$(dirname "${SCRIPT_DIR}")"
+readonly F1_DIR="$(dirname "${SOURCE_DIR}")/rl/formulaOne"
 
 REMOTE_HOST="${ORIN_HOST:-tejam@192.168.55.1}"
 REMOTE_DIR="${ORIN_DIR:-~/software}"
 REMOTE_WS="${ORIN_WS:-~/ros2_ws}"
 ROS_DISTRO_NAME="${ORIN_ROS_DISTRO:-jazzy}"
+# The policy that races.  Taken from rl/formulaOne/bestModel/<run>/, which is
+# committed, or failing that from rl/formulaOne/runs/<run>/.
+F1_RUN="${F1_RUN:-v12}"
+SYNC_F1=true
 
 DRY_RUN=false
 DELETE=false
@@ -61,7 +76,9 @@ Options:
   -H, --host HOST   Orin ssh host or alias   (env ORIN_HOST, default: tejam@192.168.55.1)
   -d, --dir DIR     Destination directory    (env ORIN_DIR, default: ~/software)
   -w, --ws DIR      colcon workspace on Orin (env ORIN_WS, default: ~/ros2_ws)
-  -n, --dry-run     Show what would transfer without changing anything
+  -p, --policy RUN  formulaOne policy to deploy (env F1_RUN, default: v12)
+      --no-f1       Sync jetson/ only, not formulaOne or its policy
+  -n, --dry-run    Show what would transfer without changing anything
       --delete      Remove files on the Orin that no longer exist locally
   -b, --build       Run colcon build on the Orin after syncing
   -t, --test        Run colcon test on the Orin after building (implies --build)
@@ -87,6 +104,14 @@ while [[ $# -gt 0 ]]; do
     -w | --ws)
       REMOTE_WS="$2"
       shift 2
+      ;;
+    -p | --policy)
+      F1_RUN="$2"
+      shift 2
+      ;;
+    --no-f1)
+      SYNC_F1=false
+      shift
       ;;
     -n | --dry-run)
       DRY_RUN=true
@@ -193,8 +218,26 @@ if [[ ! -d "${SOURCE_DIR}/cfr_arduino_bridge" ]]; then
   exit 1
 fi
 
+# Resolve the policy before anything is transferred, so a typo in --policy
+# fails here rather than after the ROS packages have already gone across.
+if [[ "${SYNC_F1}" == true ]]; then
+  F1_POLICY_DIR=""
+  for candidate in "${F1_DIR}/bestModel/${F1_RUN}" "${F1_DIR}/runs/${F1_RUN}"; do
+    if [[ -f "${candidate}/policy.npz" && -f "${candidate}/config.yaml" ]]; then
+      F1_POLICY_DIR="${candidate}"
+      break
+    fi
+  done
+  if [[ -z "${F1_POLICY_DIR}" ]]; then
+    echo "error: no policy.npz + config.yaml for '${F1_RUN}' under" >&2
+    echo "       ${F1_DIR}/bestModel/ or ${F1_DIR}/runs/" >&2
+    exit 1
+  fi
+  echo "formulaOne policy: ${F1_POLICY_DIR#"$(dirname "$(dirname "${F1_DIR}")")"/}"
+fi
+
 # What gets synced is exactly one NUL-delimited list of paths relative to
-# SOURCE_DIR, consumed identically by both the rsync and scp-fallback paths
+# the local tree, consumed identically by both the rsync and scp-fallback paths
 # below, so they can never again disagree on what to exclude (see the git
 # history of this file for the bug that caused). git already knows how to
 # apply .gitignore, including nested ignore files like a tool's own
@@ -202,51 +245,116 @@ fi
 # fall back to the hardcoded EXCLUDES list only when git isn't available.
 FILE_LIST="$(mktemp)"
 trap 'rm -f "${FILE_LIST}"' EXIT
-if command -v git >/dev/null && git -C "${SOURCE_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  git -C "${SOURCE_DIR}" ls-files -z --cached --others --exclude-standard >"${FILE_LIST}"
-else
-  echo "note: ${SOURCE_DIR} isn't a git checkout (or git isn't installed), so" >&2
-  echo "      .gitignore can't be consulted; falling back to this script's" >&2
-  echo "      own hardcoded ignore list, which may sync extra cache/build" >&2
-  echo "      files that .gitignore would otherwise catch." >&2
-  find "${SOURCE_DIR}" -type f "${FIND_PRUNE_ARGS[@]}" -printf '%P\0' >"${FILE_LIST}"
-fi
 
-rsync_args=(--archive --compress --human-readable --itemize-changes -e "${RSYNC_RSH}" --files-from="${FILE_LIST}" --from0)
+list_files() {
+  local tree="$1"
+  if command -v git >/dev/null && git -C "${tree}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git -C "${tree}" ls-files -z --cached --others --exclude-standard -- .
+  else
+    echo "note: ${tree} isn't a git checkout (or git isn't installed), so" >&2
+    echo "      .gitignore can't be consulted; falling back to this script's" >&2
+    echo "      own hardcoded ignore list, which may sync extra cache/build" >&2
+    echo "      files that .gitignore would otherwise catch." >&2
+    find "${tree}" -type f "${FIND_PRUNE_ARGS[@]}" -printf '%P\0'
+  fi
+}
+
+# Copies the files named in FILE_LIST from LOCAL_TREE to REMOTE_TREE.
+sync_tree() {
+  local tree="$1" remote_tree="$2"
+  local rsync_args=(--archive --compress --human-readable --itemize-changes -e "${RSYNC_RSH}" --files-from="${FILE_LIST}" --from0)
+
+  if [[ "${DRY_RUN}" == true ]]; then
+    rsync_args+=(--dry-run)
+  fi
+
+  if [[ "${DELETE}" == true ]]; then
+    rsync_args+=(--delete)
+    echo "== --delete: files under ${remote_tree} with no local counterpart will be removed =="
+  fi
+
+  echo "syncing ${tree}/ -> ${REMOTE_HOST}:${remote_tree}/"
+
+  # Trailing slashes matter: copy the contents of the tree, not the directory.
+  if [[ "${DRY_RUN}" != true ]]; then
+    "${SSH_CMD[@]}" "${REMOTE_HOST}" "mkdir -p ${remote_tree}"
+  fi
+  if [[ "${HAS_RSYNC}" == true ]]; then
+    rsync "${rsync_args[@]}" "${tree}/" "${REMOTE_HOST}:${remote_tree}/"
+  else
+    echo "rsync unavailable; using scp fallback"
+    local relative_file
+    while IFS= read -r -d '' relative_file; do
+      copy_file "${tree}/${relative_file}" "${remote_tree}/${relative_file}"
+    done < "${FILE_LIST}"
+  fi
+}
+
+# One file, to an exact remote path.  Used by the scp fallback and for the
+# policy files, which land under a different name than they have locally.
+copy_file() {
+  local source_file="$1" remote_file="$2"
+  if [[ "${DRY_RUN}" == true ]]; then
+    printf 'would copy %s -> %s:%s\n' "${source_file}" "${REMOTE_HOST}" "${remote_file}"
+    return
+  fi
+  # </dev/null: ssh/scp otherwise inherit the caller's stdin (FILE_LIST in
+  # the scp fallback loop) and drain it, so only the first file would transfer.
+  "${SSH_CMD[@]}" "${REMOTE_HOST}" "mkdir -p $(dirname "${remote_file}")" </dev/null
+  if [[ "${HAS_RSYNC}" == true ]]; then
+    rsync --compress --times --itemize-changes -e "${RSYNC_RSH}" "${source_file}" "${REMOTE_HOST}:${remote_file}" </dev/null
+  else
+    "${SCP_CMD[@]}" "${source_file}" "${REMOTE_HOST}:${remote_file}" </dev/null
+  fi
+}
 
 if [[ "${DRY_RUN}" == true ]]; then
-  rsync_args+=(--dry-run)
   echo "== dry run, nothing will be written =="
 fi
 
-if [[ "${DELETE}" == true ]]; then
-  rsync_args+=(--delete)
-  echo "== --delete: files under ${REMOTE_DIR} with no local counterpart will be removed =="
-fi
+list_files "${SOURCE_DIR}" >"${FILE_LIST}"
+sync_tree "${SOURCE_DIR}" "${REMOTE_DIR}"
 
-echo "syncing ${SOURCE_DIR}/ -> ${REMOTE_HOST}:${REMOTE_DIR}/"
+if [[ "${SYNC_F1}" == true ]]; then
+  F1_REMOTE="${REMOTE_DIR}/formulaOne"
+  # The driver's code, less what does not belong on the car: the top-level
+  # config.yaml (the policy's own config replaces it just below -- a policy
+  # must drive with the config it was trained under) and the other saved
+  # models in bestModel/.
+  list_files "${F1_DIR}" | grep -z -v -E '^(config\.yaml|bestModel/.*)$' >"${FILE_LIST}"
+  sync_tree "${F1_DIR}" "${F1_REMOTE}"
 
-# Trailing slashes matter: copy the contents of jetson/, not the directory.
-if [[ "${DRY_RUN}" != true ]]; then
-  "${SSH_CMD[@]}" "${REMOTE_HOST}" "mkdir -p ${REMOTE_DIR}"
-fi
-if [[ "${HAS_RSYNC}" == true ]]; then
-  rsync "${rsync_args[@]}" "${SOURCE_DIR}/" "${REMOTE_HOST}:${REMOTE_DIR}/"
-else
-  echo "rsync unavailable; using scp fallback"
-  while IFS= read -r -d '' relative_file; do
-    source_file="${SOURCE_DIR}/${relative_file}"
-    remote_file="${REMOTE_DIR}/${relative_file}"
-    if [[ "${DRY_RUN}" == true ]]; then
-      printf 'would copy %s -> %s:%s\n' "${source_file}" "${REMOTE_HOST}" "${remote_file}"
-    else
-      remote_directory="${REMOTE_DIR}/$(dirname "${relative_file}")"
-      # </dev/null: ssh/scp otherwise inherit this loop's stdin (FILE_LIST
-      # below) and drain it, so only the first file would ever transfer.
-      "${SSH_CMD[@]}" "${REMOTE_HOST}" "mkdir -p ${remote_directory}" </dev/null
-      "${SCP_CMD[@]}" "${source_file}" "${REMOTE_HOST}:${remote_file}" </dev/null
-    fi
-  done < "${FILE_LIST}"
+  echo "policy ${F1_RUN} -> ${REMOTE_HOST}:${F1_REMOTE}/"
+  copy_file "${F1_POLICY_DIR}/policy.npz" "${F1_REMOTE}/policy.npz"
+  copy_file "${F1_POLICY_DIR}/config.yaml" "${F1_REMOTE}/config.yaml"
+
+  # The track cache saves the Orin building a distance field over every bale
+  # on first use.  Keyed by a hash of the world and track settings, so a stale
+  # entry is ignored rather than used.  rsync only: it is ~40 MB.
+  if [[ -d "${F1_DIR}/.cache" && "${HAS_RSYNC}" == true ]]; then
+    echo "track cache -> ${REMOTE_HOST}:${F1_REMOTE}/.cache/"
+    cache_args=(--archive --compress --human-readable -e "${RSYNC_RSH}")
+    [[ "${DRY_RUN}" == true ]] && cache_args+=(--dry-run)
+    rsync "${cache_args[@]}" "${F1_DIR}/.cache/" "${REMOTE_HOST}:${F1_REMOTE}/.cache/"
+  fi
+
+  # formulaOne resolves the course files and record_run.py as
+  # <two dirs above itself>/jetson/..., which is the repo's layout.  Here that
+  # is ~/jetson, so point it at the synced jetson/ tree.  Never replaces a
+  # real directory of that name.
+  link_parent="$(dirname "${REMOTE_DIR}")"
+  if [[ "${DRY_RUN}" == true ]]; then
+    echo "would link ${link_parent}/jetson -> ${REMOTE_DIR}"
+  else
+    "${SSH_CMD[@]}" "${REMOTE_HOST}" "
+      link=${link_parent}/jetson
+      if [ -e \"\$link\" ] && [ ! -L \"\$link\" ]; then
+        echo \"warning: \$link exists and is not a symlink; formulaOne will not find the course\" >&2
+      else
+        ln -sfn ${REMOTE_DIR} \"\$link\" && echo \"linked \$link -> ${REMOTE_DIR}\"
+      fi
+    "
+  fi
 fi
 
 if [[ "${DRY_RUN}" == true ]]; then
