@@ -236,8 +236,8 @@ def process_run(name: str, body: dict = Body(default={})):
 # usual removable-media mount points (a USB stick). Anything outside these
 # is refused before it ever touches the filesystem, so a request can't be
 # used to link in an arbitrary path on the machine.
-IMPORT_ROOTS = tuple(
-    str(Path(p))
+IMPORT_PREFIXES = tuple(
+    str(Path(p)) + os.sep
     for p in (os.path.expanduser("~"), "/media", "/mnt", "/run/media", "/Volumes")
 )
 
@@ -249,11 +249,9 @@ def import_run(body: dict = Body(...)):
     if not raw:
         raise HTTPException(400, "path required")
     normalized = os.path.normpath(os.path.expanduser(raw))
-    allowed = os.path.isabs(normalized) and any(
-        normalized == root or normalized.startswith(root + os.sep)
-        for root in IMPORT_ROOTS
-    )
-    if not allowed:
+    # Keep this a direct normpath-then-startswith check: CodeQL only
+    # recognises that exact shape as a path-injection sanitizer.
+    if not normalized.startswith(IMPORT_PREFIXES):
         raise HTTPException(
             400, f"{normalized} is outside the allowed import locations"
         )
