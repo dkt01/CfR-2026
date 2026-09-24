@@ -1,40 +1,116 @@
-# CfR overrides for the ZED 2i wrapper's positional tracking.
+# CfR race configuration for the ZED 2i wrapper.
 #
-# Passed to zed_camera.launch.py as `ros_params_override_path`; see
-# launch_zed.sh.  Everything not named here keeps the wrapper's own default.
+# Passed to zed_camera.launch.py as `ros_params_override_path` by
+# jetson/scripts/launch.sh, zed/scripts/launch_zed.sh and
+# left_wall_robot.launch.py.  Everything not named here keeps the wrapper's own
+# default.  There are two copies of this file -- this one, which is installed
+# with cfr_arduino_bridge and so is the one that reaches the Orin, and
+# zed/config/cfr_zed2i.yaml for launch_zed.sh -- and they must stay identical.
 #
-# The point of this file is that lap_counter reads `/zed/zed_node/pose` -- the
-# map frame pose, which the SDK corrects when it closes a loop -- rather than
-# `/zed/zed_node/odom`, which is pure visual odometry and is deliberately
-# never corrected.  Three laps of the speed course is about 300 m of travel
-# returning to the same spot, which raw odometry will not hold.
+# What it is for: formula_one_node drives from `/zed/zed_node/pose` and nothing
+# else.  It has no camera input; it reads the map-frame pose against a known
+# course, differences it for yaw rate, and trusts it completely.  lap_counter
+# reads the same topic.  So every setting that decides what that pose is gets
+# pinned here, rather than inherited from whichever wrapper revision happens to
+# be built on the Orin -- the defaults below have already moved between
+# releases (the tracking mode alone went GEN_1 -> GEN_2 -> GEN_3 -> GEN_1 ->
+# AUTO between 4.2 and 5.4), and a run is not the time to find out.
 #
-# Loop closure is on by default in the wrapper, so most of this is pinning
-# rather than changing.  It is written down anyway: the defaults belong to
-# whatever wrapper revision happens to be built on the Orin, and a run is not
-# the time to discover one of them moved.  Verify on the car with
+# Written against zed-ros2-wrapper 5.4 with ZED SDK 5.4, which is what the Orin
+# was set up with (zed/README.md).  Parameters that only exist from 5.5 on are
+# deliberately left out: an override the node never declares is silently
+# ignored, which is worse than not writing it down.  Check what actually took,
+# on the car, with
 #
-#     ros2 param get /zed/zed_node pos_tracking.area_memory
+#     ros2 param dump /zed/zed_node | grep -A40 pos_tracking
+#
+# and the node's startup log, which prints each value as it reads it.
 
 /**:
   ros__parameters:
+    general:
+      # Grab rate is the tracking rate: the SDK tracks every grabbed frame
+      # whatever the publish rates are.  At the 5.2 m/s straight-line cap the
+      # car moves 8.7 cm between frames at 60 fps and 17 cm at 30, and a bale
+      # half a metre to the side sweeps ~10 rad/s across the image -- the
+      # feature tracker needs every frame it can get.  60 fps needs HD720 on a
+      # ZED 2i (HD1080 tops out at 30).  This is the wrapper's current zed2i
+      # default, pinned because older revisions shipped HD1080 at 30.
+      grab_resolution: 'HD720'
+      grab_frame_rate: 60
+      # Undistortion.  The published `rect` images and all tracking use the
+      # factory calibration stored for this camera; self-calibration refines
+      # the stereo extrinsics at open.  Both stay as the factory intends --
+      # a custom OpenCV calibration file replaces the factory one wholesale.
+      # Self-calibration wants a textured scene at open, so start the node
+      # with the camera looking at bales, not at bare asphalt or the sky.
+      self_calib: true
+      optional_opencv_calibration_file: ''
+      # Drop corrupted frames (USB glitches) before they reach tracking.
+      enable_image_validity_check: 1
+
+    depth:
+      # GEN_3 tracking does not need depth, but the point cloud consumers and
+      # the recorder do, and a heavier model steals the GPU time that holds
+      # the grab rate at 60.  Pinned at the lightest neural mode.
+      depth_mode: 'NEURAL_LIGHT'
+
     pos_tracking:
       pos_tracking_enabled: true
-      # Detect loop closure.  This is what keeps the start/finish line where
-      # the counter latched it over a long run.
+      # GEN_3 is what 'AUTO' resolves to on SDK 5.4 -- so this is what the car
+      # has been running -- and it is the only mode in which `two_d_mode` below
+      # reaches the SDK (as enable_2d_ground_mode) instead of being clamped on
+      # after the fact.  It is also the mode built for loop closure, which
+      # lap_counter depends on.  Stereolabs positions GEN_1 (dense, depth-based)
+      # for low-texture outdoor scenes; the bale-lined course is anything but
+      # low-texture, but bare asphalt is.  If GEN_3 misbehaves on the course,
+      # replay a recorded SVO (record_run.py --svo) through both modes before
+      # switching: the node's startup log line "Positional tracking mode"
+      # confirms which one is live.
+      pos_tracking_mode: 'GEN_3'
+      # IMU fusion carries the pose through frames where the vision is weak --
+      # motion blur, a stretch of featureless asphalt.
+      imu_fusion: true
+      # Loop closure.  This is what keeps the start/finish line where
+      # lap_counter latched it, and holds the map pose over the ~220 m of a
+      # two-lap run.  A closure lands on `~/pose` as a step; formula_one_node
+      # re-localises on any step over its relocalize_step (1 m).
       area_memory: true
-      # Re-initialize odometry to the last valid pose on a closure.  Left on
-      # to match the wrapper default -- but note it means `~/odom` jumps too,
-      # which is why nothing here treats that topic as continuous.
-      reset_odom_with_loop_closure: true
-      # The car is a ground vehicle: pin Z, roll and pitch.  Keeps the pose
-      # from wandering vertically on a rough course, and matches the 2D maths
-      # lap_counter does on the pose it gets.
+      # No pre-built map: every run maps the course fresh from the start line.
+      area_file_path: ''
+      enable_localization_only: false
+      # OFF, deliberately, against the wrapper's default.  On every loop
+      # closure the wrapper resets odometry to IDENTITY -- `~/odom` teleports
+      # to (0, 0, 0) and publishes zero twist -- which is not a correction but
+      # a jump by however far the car is from where odom last started.  That
+      # is precisely the "25.2 m in 20 ms with odom_valid = 1" in
+      # docs/characterization-results.md section 0, which ran on stock
+      # defaults.  With it off, `~/odom` is continuous visual-inertial odometry
+      # and `~/pose` alone carries the corrections, so a jump in `~/odom` is a
+      # tracking failure and a jump in `~/pose` only is a loop closure -- the
+      # two can finally be told apart in a recorded run.
+      reset_odom_with_loop_closure: false
+      # The car is a ground vehicle: Z, roll and pitch pinned.  With GEN_3 this
+      # constrains the SDK's own estimate, so vertical error cannot leak into
+      # x/y.  It matches the 2D maths formula_one_node and lap_counter do.
       two_d_mode: true
       fixed_z_value: 0.0
-      imu_fusion: true
       # Align the tracking world to gravity, keeping the yaw the camera booted
-      # at.  The lap counter latches its own reference at the start signal, so
-      # it does not care where the map origin is, only that it holds still.
+      # at.  The drivers latch their own reference at the start signal, so they
+      # do not care where the map origin is, only that it holds still.
       set_gravity_as_origin: true
+      # Neither of these: the car is not static, and floor alignment holds back
+      # all odometry until it has seen the floor plane.
+      set_as_static: false
+      floor_alignment: false
       publish_odom_pose: true
+      # The SDK's own uncertainty for the pose, on ~/pose_with_covariance.
+      # record_run.py already records that topic, but the wrapper never
+      # advertises it unless asked -- so until now it recorded nothing.
+      publish_pose_cov: true
+
+    debug:
+      # Stamp messages with the camera's capture time, not publish time.
+      # formula_one_node differences yaw between header stamps; publish-time
+      # stamps would put scheduler jitter straight into the yaw rate.
+      use_pub_timestamps: false
