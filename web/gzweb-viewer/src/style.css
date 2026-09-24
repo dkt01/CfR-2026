@@ -390,3 +390,27 @@ button:hover {
     font-size: 0.85rem;
     pointer-events: none;
 }
+
+/* Key for the class colors cloud_segmentation_node paints the cloud with. */
+.segmentation-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.9rem;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.8rem;
+}
+
+.segmentation-legend[hidden] {
+  display: none;
+}
+
+.segmentation-legend span {
+  display: inline-block;
+  width: 0.7rem;
+  height: 0.7rem;
+  margin-right: 0.35rem;
+  border-radius: 2px;
+  vertical-align: -0.05rem;
+}

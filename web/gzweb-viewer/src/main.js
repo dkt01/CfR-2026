@@ -71,6 +71,10 @@ const cmdVelTopic = "/sim/cmd_vel";
 // Likewise unnamespaced; only published with `sensors:=true` at launch, so
 // the point-cloud-view toggle simply shows nothing without it.
 const pointCloudTopic = "/zed/gz/rgbd/points";
+// The same cloud after cloud_segmentation_node, each point colored by the
+// class it was given (legend in index.html).  Bridged ROS -> gz by
+// simulation.launch.py, again only with `sensors:=true`.
+const segmentedTopic = "/zed/segmented/points";
 const LAYOUT_SAMPLE_MS = 3000;
 const LAYOUT_SAMPLE_TIMEOUT_MS = 15000;
 const worldControlService = `/world/${course.world}/control`;
@@ -98,6 +102,12 @@ const cloudBuffers = createCloudBuffers();
 // renderer; see cloud-view.js.
 const cloudView = createCloudView(document.querySelector("#cloud-view"));
 const pointCloudButton = document.querySelector("#point-cloud-view");
+const segmentationButton = document.querySelector("#segmentation-view");
+const segmentationLegend = document.querySelector("#segmentation-legend");
+// Which of the two clouds the views draw.  The other one is ignored rather
+// than unsubscribed; the segmented one is only subscribed on first use.
+let segmentationMode = false;
+let segmentedSubscribed = false;
 // How long to wait for a first cloud before telling the user the topic is
 // silent.  The sensor runs at 15 Hz, so this is generous even on llvmpipe.
 const POINT_CLOUD_SILENCE_MS = 4000;
@@ -811,6 +821,7 @@ function connectPoseStream() {
       // setPointCloudView needs to find "slash" by name in the loaded scene,
       // which is only guaranteed to have finished by the time this fires.
       pointCloudButton.disabled = false;
+      segmentationButton.disabled = false;
       positionInputs.forEach((input) => { input.disabled = false; });
       return;
     }
@@ -834,7 +845,11 @@ function connectPoseStream() {
       updateCommandedSteering(cmdVelType.decode(message.payload));
       return;
     }
-    if (message.topic === pointCloudTopic) {
+    const cloudTopic = segmentationMode ? segmentedTopic : pointCloudTopic;
+    if (message.topic === pointCloudTopic || message.topic === segmentedTopic) {
+      if (message.topic !== cloudTopic) {
+        return;
+      }
       // Unpacked ONCE and handed to both views: at ~5 MB and 230400 points a
       // frame, doing it twice is the most expensive thing this page could do
       // per message.  Both the protobuf decode and the point unpack happen
@@ -912,6 +927,15 @@ document.querySelector("#reset-view").addEventListener("click", () => {
 });
 resetRobotButton.addEventListener("click", resetRobot);
 signalButton.addEventListener("click", toggleStartSignal);
+segmentationButton.addEventListener("click", () => {
+  segmentationMode = !segmentationMode;
+  if (segmentationMode && !segmentedSubscribed && simulationSocket) {
+    simulationSocket.send(`sub,${segmentedTopic},,`);
+    segmentedSubscribed = true;
+  }
+  segmentationButton.textContent = segmentationMode ? "Color by camera" : "Color by class";
+  segmentationLegend.hidden = !segmentationMode;
+});
 pointCloudButton.addEventListener("click", () => {
   setPointCloudView(!pointCloudViewEnabled);
   pointCloudButton.textContent = pointCloudViewEnabled ? "Show full scene" : "Point cloud only";

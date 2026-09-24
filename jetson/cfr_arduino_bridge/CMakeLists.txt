@@ -76,7 +76,7 @@ install(TARGETS arduino_bridge_node cmd_vel_to_drive_node sim_vehicle_node path_
 
 install(PROGRAMS src/teleport_api.py src/maneuver_runner_node.py src/obstacle_randomizer_node.py
   src/start_signal_detector_node.py src/lap_counter_node.py src/zed_cloud_noise_node.py
-  src/left_wall_follower_node.py
+  src/left_wall_follower_node.py src/cloud_segmentation_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -84,7 +84,7 @@ install(PROGRAMS src/teleport_api.py src/maneuver_runner_node.py src/obstacle_ra
 # same directory -- but as modules rather than programs, since they have no
 # shebang and are not meant to be run.
 install(FILES src/start_signal_detector.py src/lap_counter.py src/left_wall_follower.py
-  src/left_wall_cloud.py
+  src/left_wall_cloud.py src/cloud_segmentation.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -147,6 +147,12 @@ if(BUILD_TESTING)
   # way -- also free of ROS, so it also needs no workspace.
   ament_add_pytest_test(test_lap_counter test/test_lap_counter.py)
   ament_add_pytest_test(test_left_wall_cloud test/test_left_wall_cloud.py)
+
+  # cloud_segmentation, scored against Gazebo-rendered views of both courses
+  # with ground-truth labels (test/fixtures/segmentation, rendered by
+  # scripts/capture_segmentation_fixtures.py). ROS-free, like the two above.
+  ament_add_pytest_test(test_cloud_segmentation test/test_cloud_segmentation.py
+    TIMEOUT 300)
 
   # maneuver_runner_node's arming/abort state machine -- unlike the two tests
   # above, this one has no ROS-free module to import: it constructs a real

@@ -271,6 +271,45 @@ LIBGL_ALWAYS_SOFTWARE=1 ros2 launch cfr_arduino_bridge obstacle_course.launch.py
 LIBGL_ALWAYS_SOFTWARE=1 ros2 launch cfr_arduino_bridge speed_course.launch.py sensors:=true
 ```
 
+### Point cloud segmentation
+
+`src/cloud_segmentation.py` classifies every point of the ZED cloud as
+ground, obstacle, hoop, car wash or overhead. Ground includes the ramps, deck,
+helix, bank, pothole board and gravel; hoops and the car wash are things to
+drive through; overhead covers the tunnel roof and anything else above the
+car with open floor seen under it. It reads only the cloud and the camera's
+pitch and roll, so the same code runs on the car. `scan_from_segmentation`
+reduces the result to the same bearing-binned scan
+`rl/bale_follower/cloud_scan.py` produces, with only blocking points in it: a
+gate's posts block, its bar and ribbons do not.
+
+With `sensors:=true`, `cloud_segmentation_node.py` republishes the cloud
+colored by class on `/zed/segmented/points`, bridged to Gazebo transport.
+The browser viewer's **Color by class** button switches the robot view to it.
+
+`test/test_cloud_segmentation.py` scores the segmenter against 62 rendered
+views of both courses (`test/segmentation_scenarios.py` lists them). Each
+fixture is a depth image plus a per-pixel label saying which part of the
+course the pixel shows. A Gazebo segmentation camera rendered beside the ZED
+produces the labels. The camera is on a static rig, not the car, so a view
+on the 19% ramp does not roll away while it renders. The rig's pitch and roll
+come from dropping the car's four wheels onto the course's surfaces, which is
+how views like "one tire in a pothole recess" are posed. To re-render after a
+course change, run this with the repository mounted read-write (about ten
+minutes on llvmpipe):
+
+```bash
+docker run --rm -v "$PWD:/repo" -w /repo unfrobotics/docker-ros2-jazzy-gz-rviz2:latest \
+    bash -c 'source /opt/ros/jazzy/setup.bash && LIBGL_ALWAYS_SOFTWARE=1 \
+        python3 jetson/scripts/capture_segmentation_fixtures.py --preview /tmp/preview'
+```
+
+`python3 test/test_cloud_segmentation.py --report` prints the per-view table
+the thresholds were set against. The views the segmenter still gets wrong are
+listed in `KNOWN_LIMITATIONS` in the test as strict expected failures, each
+with its reason. They are all the car wash, seen from inside it or from 2 m
+or more out.
+
 ### Regenerating the course
 
 Neither step is needed to run the simulation -- the worlds and meshes are

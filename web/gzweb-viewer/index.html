@@ -31,6 +31,7 @@
                 <button id="reset-view" type="button">Reset view</button>
                 <button id="reset-slash" type="button" disabled>Reset robot</button>
                 <button id="point-cloud-view" type="button" disabled>Point cloud only</button>
+                <button id="segmentation-view" type="button" disabled>Color by class</button>
             </div>
         </footer>
         <section class="teleport-controls" aria-labelledby="teleport-heading">
@@ -56,6 +57,14 @@
                 <h2 id="cloud-view-heading">Robot view</h2>
             </div>
             <div id="cloud-view"></div>
+            <!-- As drawn: cloud_segmentation_node's colors after pointcloud.js's COLOR_LIFT. -->
+            <ul id="segmentation-legend" class="segmentation-legend" hidden>
+                <li><span style="background: rgb(130 159 130)"></span>Ground</li>
+                <li><span style="background: rgb(237 83 71)"></span>Obstacle</li>
+                <li><span style="background: rgb(245 94 245)"></span>Hoop</li>
+                <li><span style="background: rgb(71 230 237)"></span>Car wash</li>
+                <li><span style="background: rgb(105 143 255)"></span>Overhead</li>
+            </ul>
         </section>
     </main>
     <script type="module" src="/src/main.js"></script>
