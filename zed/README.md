@@ -44,21 +44,24 @@ Run [`launch_zed.sh`](launch_zed.sh) to start the camera node and rosboard toget
 ./launch_zed.sh
 ```
 
-It passes [`config/cfr_zed2i.yaml`](config/cfr_zed2i.yaml) as `ros_params_override_path`, which pins positional tracking rather than inheriting whatever the installed wrapper defaults to. The setting that matters is `area_memory`, the SDK's loop closure: `lap_counter_node` reads `/zed/zed_node/pose` — the **map** frame pose, which the SDK corrects when it closes a loop — because three laps of the speed course is about 300 m of travel returning to the same spot, and `/zed/zed_node/odom` is pure visual odometry that is deliberately never corrected. `two_d_mode` is on as well, since the car is a ground vehicle.
+It passes [`config/cfr_zed2i.yaml`](config/cfr_zed2i.yaml) as `ros_params_override_path`, the race configuration, which pins everything that decides the pose rather than inheriting whatever the installed wrapper defaults to. `formula_one_node` and `lap_counter_node` both drive on `/zed/zed_node/pose` â€” the **map** frame pose, which the SDK corrects when it closes a loop â€” so the file pins the grab rate (HD720 at 60 fps, since the grab rate is the tracking rate), the tracking mode (`GEN_3`, which is what `AUTO` resolves to on SDK 5.4), loop closure (`area_memory`), `two_d_mode`, and camera-time stamps. The file explains each one. `jetson/scripts/launch.sh` loads the identical copy installed with `cfr_arduino_bridge`.
 
 Confirm it took, on the car:
 ```bash
-ros2 param get /zed/zed_node pos_tracking.area_memory
+ros2 param get /zed/zed_node pos_tracking.pos_tracking_mode   # GEN_3
+ros2 param get /zed/zed_node pos_tracking.area_memory         # true
+ros2 topic hz /zed/zed_node/pose                              # ~60 Hz; well below means the Orin cannot keep up
 ```
 
-Note that `reset_odom_with_loop_closure` is left at the wrapper's default of true, which means `/zed/zed_node/odom` is re-initialized when a loop closes — so nothing should treat that topic as continuous either.
+`reset_odom_with_loop_closure` is turned **off**, against the wrapper's default. With it on, every loop closure resets `/zed/zed_node/odom` to the origin â€” a jump as long as the distance travelled since the last reset. With it off, `/odom` is continuous visual-inertial odometry and only `/pose` carries corrections, so a jump in `/odom` means tracking failed and a jump in `/pose` alone means a loop closed.
 
 Or start them manually in separate terminals:
 
 1. Launch the camera node:
    ```bash
    source ~/ros2_ws/install/setup.bash
-   ros2 launch zed_wrapper zed_camera.launch.py camera_model:=zed2i
+   ros2 launch zed_wrapper zed_camera.launch.py camera_model:=zed2i \
+       ros_params_override_path:=$HOME/cfr/zed/config/cfr_zed2i.yaml   # wherever this repo's zed/ is
    ```
 2. In a second terminal, launch rosboard:
    ```bash
@@ -84,7 +87,7 @@ These are all the topics observed from ZED:
 | `/zed/zed_node/depth/depth_registered/compressedDepth` | Compressed depth image |
 | `/zed/zed_node/depth/depth_registered/zstd` | zstd-compressed depth image |
 | `/zed/zed_node/imu/data` | IMU data |
-| `/zed/zed_node/odom` | Visual-inertial odometry; no loop closure, and reset when one happens |
+| `/zed/zed_node/odom` | Visual-inertial odometry; never corrected, continuous with `cfr_zed2i.yaml` (reset to the origin on each loop closure without it) |
 | `/zed/zed_node/point_cloud/cloud_registered` | Registered colored point cloud |
 | `/zed/zed_node/pose` | Camera pose in the map frame, loop closure applied; what `lap_counter_node` reads |
 | `/zed/zed_node/pose/status` | Positional tracking status |

@@ -699,17 +699,17 @@ driver subscribes to `~/done` and stops the car; nothing does yet.
 The pose is the ZED's **map** frame topic, not `~/odom`. The SDK applies loop
 closure to that one and deliberately never to odometry, and three laps of the
 speed course is about 300 m of travel returning to the same spot, which raw
-dead reckoning will not hold. `zed/config/cfr_zed2i.yaml` pins `area_memory`
-on rather than leaving it to whatever the installed wrapper defaults to;
-confirm on the car with
+dead reckoning will not hold. `config/cfr_zed2i.yaml`, which `launch.sh`
+passes to the wrapper, pins `area_memory` on rather than leaving it to
+whatever the installed wrapper defaults to; confirm on the car with
 
 ```bash
 ros2 param get /zed/zed_node pos_tracking.area_memory
 ```
 
-Note that the same setting makes `~/odom` jump as well -- the wrapper's
-`reset_odom_with_loop_closure` defaults to true -- so nothing should treat
-that topic as continuous.
+The same file turns the wrapper's `reset_odom_with_loop_closure` off. Left on,
+every loop closure resets `~/odom` to the origin, so `~/odom` stays continuous
+only with the race configuration loaded.
 
 There is no map of the course and the line is not published anywhere at run
 time, but both courses park the car 0.70 m behind it, on the lane centerline,
@@ -1099,8 +1099,15 @@ the ZED camera together.
 ~/software/scripts/launch.sh --rosboard            # also serve rosboard on :8888
 ~/software/scripts/launch.sh --device /dev/ttyACM1
 ~/software/scripts/launch.sh --no-cmd-vel          # autonomy publishes DriveCommand directly
+~/software/scripts/launch.sh --zed-params FILE     # ZED override other than the race configuration
 ~/software/scripts/launch.sh max_speed:=1.0        # extra args pass to the bridge launch
 ```
+
+The ZED always starts with an override file: by default
+`config/cfr_zed2i.yaml` as installed with this package, the race
+configuration that pins everything the pose depends on. `launch.sh` refuses
+to start the camera if the file is missing rather than fall back to wrapper
+defaults.
 
 The bridge starts first so the Arduino is receiving neutral commands while the
 camera initializes. The two share a fate: if either exits, the other is torn
@@ -1194,7 +1201,8 @@ Underneath it is just:
 ```bash
 source ~/ros2_ws/install/setup.bash
 ros2 launch cfr_arduino_bridge arduino_bridge.launch.py device:=/dev/ttyACM0 &
-ros2 launch zed_wrapper zed_camera.launch.py camera_model:=zed2i &
+ros2 launch zed_wrapper zed_camera.launch.py camera_model:=zed2i \
+    ros_params_override_path:=$(ros2 pkg prefix cfr_arduino_bridge)/share/cfr_arduino_bridge/config/cfr_zed2i.yaml &
 ```
 
 Watch what the Arduino reports:
