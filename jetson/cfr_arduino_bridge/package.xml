@@ -9,12 +9,17 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
+  <depend>ament_index_cpp</depend>
   <depend>cfr_interfaces</depend>
   <depend>geometry_msgs</depend>
   <depend>nav_msgs</depend>
   <depend>rclcpp</depend>
   <depend>rclcpp_action</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
   <depend>std_srvs</depend>
+  <!-- left_wall_follower_node reads the bales out of the world file. -->
+  <depend>tinyxml2_vendor</depend>
 
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
@@ -22,14 +27,13 @@
   <exec_depend>rclpy</exec_depend>
   <exec_depend>ros_gz_bridge</exec_depend>
   <exec_depend>ros_gz_sim</exec_depend>
-  <exec_depend>sensor_msgs</exec_depend>
-  <exec_depend>std_msgs</exec_depend>
   <!-- maneuver_runner_node.py, and the characterization tooling under
        scripts/, which is deliberately standard library only so it runs on a
        laptop with no network. -->
   <exec_depend>python3-yaml</exec_depend>
   <exec_depend>rosbag2_transport</exec_depend>
-  <!-- start_signal_detector_node's image handling; no OpenCV, no cv_bridge. -->
+  <!-- start_signal_detector_node's image handling, and cloud_segmentation.py's
+       arrays; no OpenCV, no cv_bridge. -->
   <exec_depend>python3-numpy</exec_depend>
 
   <test_depend>ament_cmake_gtest</test_depend>

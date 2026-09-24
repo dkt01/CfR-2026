@@ -234,7 +234,7 @@ def generate_launch_description():
 
     zed_cloud_noise = Node(
         package="cfr_arduino_bridge",
-        executable="zed_cloud_noise_node.py",
+        executable="zed_cloud_noise_node",
         name="zed_cloud_noise",
         output="screen",
         parameters=[{"use_sim_time": True}],
@@ -245,7 +245,7 @@ def generate_launch_description():
     # for RViz and the browser viewer.
     cloud_segmentation = Node(
         package="cfr_arduino_bridge",
-        executable="cloud_segmentation_node.py",
+        executable="cloud_segmentation_node",
         name="cloud_segmentation",
         output="screen",
         parameters=[{"use_sim_time": True}],

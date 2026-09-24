@@ -29,7 +29,7 @@ def generate_launch_description():
             ),
             Node(
                 package="cfr_arduino_bridge",
-                executable="left_wall_follower_node.py",
+                executable="left_wall_follower_node",
                 name="left_wall_follower",
                 output="screen",
                 parameters=[
