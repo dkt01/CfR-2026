@@ -231,10 +231,39 @@ def process_run(name: str, body: dict = Body(default={})):
     ).as_dict()
 
 
+# Folders a run may be linked in from: this laptop's home directory (where a
+# teammate's copy or a custom sync_runs.sh --local usually lands) and the
+# usual removable-media mount points (a USB stick). Anything outside these
+# is refused before it ever touches the filesystem, so a request can't be
+# used to link in an arbitrary path on the machine.
+IMPORT_ROOTS = tuple(
+    str(Path(p))
+    for p in (os.path.expanduser("~"), "/media", "/mnt", "/run/media", "/Volumes")
+)
+
+
+def _validate_import_path(raw: str) -> str:
+    raw = (raw or "").strip()
+    if not raw:
+        raise HTTPException(400, "path required")
+    normalized = os.path.normpath(os.path.expanduser(raw))
+    if not os.path.isabs(normalized):
+        raise HTTPException(400, "path must be absolute")
+    if not any(
+        normalized == root or normalized.startswith(root + os.sep)
+        for root in IMPORT_ROOTS
+    ):
+        raise HTTPException(
+            400, f"{normalized} is outside the allowed import locations"
+        )
+    return normalized
+
+
 @app.post("/api/runs/import")
 def import_run(body: dict = Body(...)):
     """Link an existing run folder (a USB stick, a sync_runs.sh pull) in."""
-    source = Path(os.path.expanduser(body.get("path", ""))).resolve()
+    normalized = _validate_import_path(body.get("path", ""))
+    source = Path(normalized).resolve()
     if not source.is_dir():
         raise HTTPException(400, f"{source} is not a directory")
     target = RUNS / source.name
@@ -368,10 +397,14 @@ def download(name: str, path: str):
 def archive(name: str, analysis: bool = False):
     """The whole run as one .tar, streamed -- bags can be gigabytes."""
     run_dir(name)
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", name):
+        raise HTTPException(400, "bad run name")
     cmd = ["tar", "-C", str(RUNS), "-chf", "-"]
     if not analysis:
         cmd += ["--exclude", f"{name}/analysis"]
-    cmd.append(name)
+    # "--" stops tar from ever reading `name` as an option, even though the
+    # pattern above already rules out anything but [A-Za-z0-9_.-].
+    cmd += ["--", name]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
 
     def stream():
