@@ -11,9 +11,9 @@ into one script, `scripts/test.sh`, run inside a throwaway
 test` job in `.github/workflows/ci.yml`.
 
 ```bash
-.claude/skills/run-tests/scripts/test.sh                    # build + test everything under jetson/
-.claude/skills/run-tests/scripts/test.sh --no-test           # build only, skip colcon test
-.claude/skills/run-tests/scripts/test.sh cfr_arduino_bridge   # limit to one package
+.agents/skills/run-tests/scripts/test.sh                    # build + test everything under jetson/
+.agents/skills/run-tests/scripts/test.sh --no-test           # build only, skip colcon test
+.agents/skills/run-tests/scripts/test.sh cfr_arduino_bridge   # limit to one package
 ```
 
 The repo is mounted **read-only** (`-v $REPO:/repo:ro`) and the container is

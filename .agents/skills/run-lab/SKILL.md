@@ -122,9 +122,9 @@ Start with the bundled summarizer, not `cat summary.json` -- the JSON is
 large and mostly nested stats you don't need for the first answer:
 
 ```bash
-python .claude/skills/run-lab/scripts/summarize_run.py runs/<run>
-python .claude/skills/run-lab/scripts/summarize_run.py runs/<run> --sections --logs WARN
-python .claude/skills/run-lab/scripts/summarize_run.py runs/<a> runs/<b>     # compare
+python .agents/skills/run-lab/scripts/summarize_run.py runs/<run>
+python .agents/skills/run-lab/scripts/summarize_run.py runs/<run> --sections --logs WARN
+python .agents/skills/run-lab/scripts/summarize_run.py runs/<a> runs/<b>     # compare
 ```
 
 Standard library only; any Python works. It prints metadata, KPIs, verdicts

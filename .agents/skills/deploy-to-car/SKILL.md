@@ -11,10 +11,10 @@ on purpose (launching real hardware).
 ## 1. Sync and build
 
 ```bash
-.claude/skills/deploy-to-car/scripts/deploy.sh sync                # sync + colcon build on the Orin
-.claude/skills/deploy-to-car/scripts/deploy.sh sync --test          # also colcon test there
-.claude/skills/deploy-to-car/scripts/deploy.sh sync --dry-run       # show what would transfer, change nothing
-.claude/skills/deploy-to-car/scripts/deploy.sh sync --host tejam@192.168.0.167  # e.g. over Wi-Fi instead of USB-Ethernet
+.agents/skills/deploy-to-car/scripts/deploy.sh sync                # sync + colcon build on the Orin
+.agents/skills/deploy-to-car/scripts/deploy.sh sync --test          # also colcon test there
+.agents/skills/deploy-to-car/scripts/deploy.sh sync --dry-run       # show what would transfer, change nothing
+.agents/skills/deploy-to-car/scripts/deploy.sh sync --host tejam@192.168.0.167  # e.g. over Wi-Fi instead of USB-Ethernet
 ```
 
 `--host` without a `user@` prefix (e.g. `--host 192.168.0.167`) has the
@@ -43,7 +43,7 @@ real bug there than after a round-trip sync to the robot.
 ## 2. Launching on the car
 
 ```bash
-.claude/skills/deploy-to-car/scripts/deploy.sh launch-cmd [launch.sh args...]
+.agents/skills/deploy-to-car/scripts/deploy.sh launch-cmd [launch.sh args...]
 ```
 
 This only **prints** the `ssh -t ... launch.sh ...` command -- it does not
