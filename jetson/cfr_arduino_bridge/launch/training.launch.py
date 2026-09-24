@@ -7,7 +7,11 @@ ground-truth pose bridge the RL environment needs.
 `sensors:=true` adds the rendered ZED and bridges its point cloud, so the
 environment can build observations through the same cloud_scan path the robot
 uses instead of ray-casting known bale geometry. It costs real-time factor
-(measured 1.00 -> 0.63), so it is off by default.
+(measured 1.00 -> 0.63), so it is off by default. The cloud passes through
+zed_cloud_noise_node on its way to the ZED topic, exactly as it does in
+simulation.launch.py, so a policy trains on the same stereo-like cloud it is
+evaluated and deployed against; `cloud_noise:=false` bridges Gazebo's perfect
+cloud straight through instead, as runs before that did.
 
 Gazebo runs freely rather than being stepped by the environment: driving it
 through WorldControl `multi_step` triggers heap corruption in the server
@@ -32,6 +36,7 @@ from launch.substitutions import (
     EnvironmentVariable,
     LaunchConfiguration,
     PathJoinSubstitution,
+    PythonExpression,
 )
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
@@ -81,11 +86,53 @@ def generate_launch_description():
 
     gazebo = OpaqueFunction(function=gazebo_actions)
 
+    cloud_noise_arg = DeclareLaunchArgument(
+        "cloud_noise",
+        default_value="true",
+        description="with sensors:=true, add the stereo noise simulation.launch.py adds",
+    )
+    noisy = PythonExpression(
+        [
+            "'",
+            LaunchConfiguration("sensors"),
+            "'.lower() in ('true', '1') and '",
+            LaunchConfiguration("cloud_noise"),
+            "'.lower() in ('true', '1')",
+        ]
+    )
+    clean = PythonExpression(
+        [
+            "'",
+            LaunchConfiguration("sensors"),
+            "'.lower() in ('true', '1') and '",
+            LaunchConfiguration("cloud_noise"),
+            "'.lower() not in ('true', '1')",
+        ]
+    )
+    # With noise, the raw cloud keeps its Gazebo name and zed_cloud_noise
+    # publishes the ZED's; without, the bridge renames it straight across.
     points_bridge = Node(
         package="ros_gz_bridge",
         executable="parameter_bridge",
         output="screen",
-        condition=IfCondition(LaunchConfiguration("sensors")),
+        condition=IfCondition(noisy),
+        arguments=[
+            "/zed/gz/rgbd/points@sensor_msgs/msg/PointCloud2[gz.msgs.PointCloudPacked",
+        ],
+    )
+    zed_cloud_noise = Node(
+        package="cfr_arduino_bridge",
+        executable="zed_cloud_noise_node",
+        name="zed_cloud_noise",
+        output="screen",
+        parameters=[{"use_sim_time": True}],
+        condition=IfCondition(noisy),
+    )
+    clean_points_bridge = Node(
+        package="ros_gz_bridge",
+        executable="parameter_bridge",
+        output="screen",
+        condition=IfCondition(clean),
         arguments=[
             "/zed/gz/rgbd/points@sensor_msgs/msg/PointCloud2[gz.msgs.PointCloudPacked",
         ],
@@ -144,9 +191,12 @@ def generate_launch_description():
             params_arg,
             world_arg,
             sensors_arg,
+            cloud_noise_arg,
             resource_path,
             gazebo,
             points_bridge,
+            zed_cloud_noise,
+            clean_points_bridge,
             teleport_api,
             command_bridge,
             gazebo_bridge,

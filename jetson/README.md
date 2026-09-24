@@ -7,7 +7,14 @@ Traxxas Slash 4X4 through the Arduino over the USB serial link described in the
 | Package | Contents |
 | ------- | -------- |
 | [`cfr_interfaces`](cfr_interfaces/) | `DriveCommand`, `ArduinoStatus`, `PathSegment`, `StartSignal`, `LapCount` messages; `DrivePath` action |
-| [`cfr_arduino_bridge`](cfr_arduino_bridge/) | `arduino_bridge_node`, `cmd_vel_to_drive_node`, `path_follower_node`, `start_signal_detector_node`, `lap_counter_node`, `obstacle_randomizer_node` |
+| [`cfr_arduino_bridge`](cfr_arduino_bridge/) | `arduino_bridge_node`, `cmd_vel_to_drive_node`, `path_follower_node`, `left_wall_follower_node`, `cloud_segmentation_node`, `zed_cloud_noise_node`, `start_signal_detector_node`, `lap_counter_node`, `obstacle_randomizer_node` |
+
+Everything that runs once per camera frame or once per control period is C++:
+the drive chain, the wall follower, the segmenter and the simulated camera's
+noise. Python is kept for what runs once a run or once a second -- the start
+signal detector, the lap counter, the randomizer, characterization -- and for
+the RL policies, whose observation code is shared with their training. See
+[Per-frame nodes](#per-frame-nodes) for why and what it measured.
 
 ## Gazebo Simulation
 
@@ -236,11 +243,13 @@ Slash and publishes it under ZED-compatible names:
 $110^\circ$ horizontal field of view, $640 \times 360$, 15 Hz, 0.2 m to 20 m.
 Color and depth come from one `rgbd_camera` sensor, so they share one
 calibration and there is one `camera_info` rather than two. The published
-point cloud passes through `zed_cloud_noise_node.py`: forward range gets
+point cloud passes through `zed_cloud_noise_node`: forward range gets
 Gaussian noise with sigma `0.01 + 0.008 * range²` metres, with 3% independent
 invalid pixels. Its XYZ values stay on the original camera rays, and color is
 preserved. This is a stereo-like approximation, not a calibration from real
 ZED point clouds; the bridged depth image remains Gazebo's ideal depth.
+`training.launch.py` routes its cloud through the same node (`cloud_noise:=false`
+turns that off), so an RL policy trains on the cloud it is evaluated against.
 
 Rendered sensors need a render context, so they live in a second world file
 and are off by default:
@@ -273,17 +282,26 @@ LIBGL_ALWAYS_SOFTWARE=1 ros2 launch cfr_arduino_bridge speed_course.launch.py se
 
 ### Point cloud segmentation
 
-`src/cloud_segmentation.py` classifies every point of the ZED cloud as
+`cloud_segmentation` classifies every point of the ZED cloud as
 ground, obstacle, hoop, car wash or overhead. Ground includes the ramps, deck,
 helix, bank, pothole board and gravel; hoops and the car wash are things to
 drive through; overhead covers the tunnel roof and anything else above the
 car with open floor seen under it. It reads only the cloud and the camera's
-pitch and roll, so the same code runs on the car. `scan_from_segmentation`
+pitch and roll, so the same code runs on the car.
+
+It is C++ (`include/cfr_arduino_bridge/cloud_segmentation.hpp`, built as
+`libcfr_cloud_segmentation.so`), and `src/cloud_segmentation.py` loads that
+same library through a C interface rather than being a second implementation:
+the fixture tests, and any training code, score exactly what
+`cloud_segmentation_node` runs. The Python module finds the library beside it
+once installed, on the loader path of a sourced workspace, or at
+`$CFR_CLOUD_SEGMENTATION_LIB`. `Params` there is built from the header's own
+table, so a tunable is added in one place. `scan_from_segmentation`
 reduces the result to the same bearing-binned scan
 `rl/bale_follower/cloud_scan.py` produces, with only blocking points in it: a
 gate's posts block, its bar and ribbons do not.
 
-With `sensors:=true`, `cloud_segmentation_node.py` republishes the cloud
+With `sensors:=true`, `cloud_segmentation_node` republishes the cloud
 colored by class on `/zed/segmented/points`, bridged to Gazebo transport.
 The browser viewer's **Color by class** button switches the robot view to it.
 
@@ -304,7 +322,8 @@ docker run --rm -v "$PWD:/repo" -w /repo unfrobotics/docker-ros2-jazzy-gz-rviz2:
         python3 jetson/scripts/capture_segmentation_fixtures.py --preview /tmp/preview'
 ```
 
-`python3 test/test_cloud_segmentation.py --report` prints the per-view table
+`python3 test/test_cloud_segmentation.py --report` (with the workspace sourced,
+or `CFR_CLOUD_SEGMENTATION_LIB` pointing at a built library) prints the per-view table
 the thresholds were set against. The views the segmenter still gets wrong are
 listed in `KNOWN_LIMITATIONS` in the test as strict expected failures, each
 with its reason. They are all the car wash, seen from inside it or from 2 m
@@ -343,6 +362,41 @@ per-part directory: the individual files carry no assembly relationships, so
 a car wash or a start signal cannot be put back together from them.
 
 ## Nodes
+
+### Per-frame nodes
+
+`left_wall_follower_node`, `cloud_segmentation_node` and `zed_cloud_noise_node`
+were Python and are C++ now. The follower is the car's whole sensor-to-command
+path; the noise node sits on the simulator's camera path, in front of
+everything that reads the cloud there, and the real car has no such hop; the
+segmenter feeds RViz and the browser viewer, and is the perception the
+obstacle course will need. Their control laws were ported line for line and
+checked against the Python they replace: the segmenter's labels are identical
+on all 14.3 million points of the 62 fixtures, the follower's commands agree
+to 1e-9 rad.
+
+Measured on a desktop core with 15 Hz, 640 x 360 clouds from the fixtures (an
+Orin core is roughly three times slower). The end-to-end rows are ranges over
+several 20 s runs, and include the Python test harness's own handling of each
+3.7 MB message, the same for both:
+
+| | Python | C++ |
+| --- | --- | --- |
+| Segmentation, per frame | 75-95 ms | 8-19 ms |
+| Segmented cloud, camera to viewer | 90-139 ms mean, 183-285 ms p95; 57-63% of frames dropped | 36 ms mean, 56 ms p95; none dropped |
+| Follower, cloud to `/cmd_vel` | 25-44 ms mean; 47-57% of clouds dropped | 15-18 ms mean; 11-12% |
+| Noise model, per frame | 10 ms | 0.6 ms |
+
+Two things besides the language made up the difference. The follower used to
+compute on a 10 Hz timer, so a cloud waited up to 100 ms before it was acted
+on; it now commands as each cloud arrives, and the timer only keeps `/cmd_vel`
+alive and stops the car when the cloud goes stale. And cloud subscribers were
+best effort, which between processes loses most of a camera-sized message --
+thousands of fragments, any one of which loses the frame. They now subscribe
+reliably and keep only the newest frame. A reliable subscriber hears nothing
+from a best-effort publisher, so `cloud_reliable:=false` is there for a camera
+driver configured that way; the ZED wrapper's default is reliable, and the
+follower warns every two seconds when it is started with no cloud arriving.
 
 ### `arduino_bridge_node`
 
@@ -1085,7 +1139,8 @@ The initial cloud controller is capped at 0.6 m/s and needs a controlled
 on-robot trial before relying on it for a full course run.
 
 The ZED color and cloud topics can be overridden with `image_topic:=` and
-`cloud_topic:=`. The usual Arduino auto-active and E-Stop interlocks still
+`cloud_topic:=`. The follower commands as each cloud arrives; see
+[Per-frame nodes](#per-frame-nodes). The usual Arduino auto-active and E-Stop interlocks still
 apply. Use this launch by itself; `scripts/launch.sh` would start a second
 bridge and camera.
 
