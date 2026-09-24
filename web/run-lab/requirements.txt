@@ -1,0 +1,9 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+rosbags>=0.10
+numpy>=1.26
+pyyaml>=6
+pillow>=10
+# Must match frontend/package.json @rerun-io/web-viewer exactly: the embedded
+# viewer reads the .rrd this SDK writes.
+rerun-sdk==0.38.1

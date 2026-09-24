@@ -1,0 +1,519 @@
+"""Run Lab: pull runs off the Orin, analyse them, replay them.
+
+    web/run-lab/run.sh          # builds the UI if needed, serves on :8765
+
+Everything is local.  Runs live in <repo>/runs (the directory sync_runs.sh
+already fills and .gitignore already excludes), or $CFR_RUNS_LOCAL.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import yaml
+from fastapi import Body, FastAPI, HTTPException
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+import analyze  # noqa: E402
+import course as course_mod  # noqa: E402
+import orin  # noqa: E402
+from jobs import JobRunner  # noqa: E402
+from replay import ReplayManager, ros_available  # noqa: E402
+
+REPO = HERE.parents[2]
+RUNS = Path(os.environ.get("CFR_RUNS_LOCAL", REPO / "runs")).expanduser()
+RUNS.mkdir(parents=True, exist_ok=True)
+SETTINGS = RUNS / ".runlab.json"
+DIST = HERE.parent / "frontend" / "dist"
+
+app = FastAPI(title="CfR Run Lab")
+jobs = JobRunner()
+replay = ReplayManager()
+
+
+def settings():
+    base = {"host": orin.DEFAULT_HOST, "remote": orin.DEFAULT_REMOTE}
+    try:
+        base.update(json.loads(SETTINGS.read_text()))
+    except (OSError, ValueError):
+        pass
+    return base
+
+
+def run_dir(name: str) -> Path:
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", name):
+        raise HTTPException(400, "bad run name")
+    path = RUNS / name
+    if not path.is_dir():
+        raise HTTPException(404, f"no run {name}")
+    return path
+
+
+def analysis_file(name, filename):
+    path = run_dir(name) / "analysis" / filename
+    if not path.exists():
+        raise HTTPException(404, f"{filename} not found; process the run first")
+    return path
+
+
+# ------------------------------------------------------------------ general
+
+
+@app.get("/api/health")
+def health():
+    return {
+        "runs_dir": str(RUNS),
+        "ros_available": ros_available(),
+        "version": analyze.VERSION,
+        "settings": settings(),
+    }
+
+
+@app.post("/api/settings")
+def save_settings(body: dict = Body(...)):
+    current = settings()
+    for key in ("host", "remote"):
+        if key in body and isinstance(body[key], str) and body[key].strip():
+            current[key] = body[key].strip()
+    SETTINGS.write_text(json.dumps(current, indent=1))
+    return current
+
+
+@app.get("/api/jobs")
+def list_jobs():
+    return jobs.list()
+
+
+@app.get("/api/jobs/{job_id}")
+def get_job(job_id: str):
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "no such job")
+    return job.as_dict()
+
+
+# --------------------------------------------------------------------- orin
+
+
+@app.get("/api/orin")
+def orin_status():
+    s = settings()
+    status = orin.status(s["host"], s["remote"])
+    local = {p.name for p in RUNS.iterdir() if p.is_dir()}
+    for run in status.get("runs", []):
+        run["local"] = run["name"] in local
+        marker = RUNS / run["name"] / ".pulled.json"
+        if marker.exists():
+            try:
+                run["pulled"] = json.loads(marker.read_text())
+            except ValueError:
+                pass
+    return status
+
+
+@app.post("/api/orin/pull")
+def orin_pull(body: dict = Body(...)):
+    s = settings()
+    name = body.get("run", "")
+    process_after = bool(body.get("process", True))
+
+    def work(job):
+        result = orin.pull(name, RUNS, job, s["host"], s["remote"])
+        if process_after and analyze_ready(RUNS / name):
+            job.update(0.98, "queued for processing")
+            submit_process(name)
+        return result
+
+    return jobs.submit("pull", name, work).as_dict()
+
+
+@app.post("/api/orin/delete")
+def orin_delete(body: dict = Body(...)):
+    s = settings()
+    try:
+        return orin.delete(body.get("run", ""), RUNS, s["host"], s["remote"])
+    except (RuntimeError, ValueError) as error:
+        raise HTTPException(409, str(error)) from error
+
+
+# --------------------------------------------------------------------- runs
+
+
+def analyze_ready(path: Path):
+    return (
+        (path / "bag").is_dir()
+        or any(path.glob("*.mcap"))
+        or (path / "metadata.yaml").exists()
+        and (path / "bag").exists()
+    )
+
+
+def run_entry(path: Path):
+    meta = {}
+    if (path / "metadata.yaml").exists():
+        try:
+            meta = yaml.safe_load((path / "metadata.yaml").read_text()) or {}
+        except yaml.YAMLError:
+            meta = {}
+    entry = {
+        "name": path.name,
+        "kind": meta.get("kind")
+        or ("characterization" if meta.get("profile") else "drive"),
+        "label": meta.get("label") or meta.get("profile") or path.name,
+        "started_utc": meta.get("started_utc"),
+        "driver": meta.get("driver"),
+        "speed_scale": meta.get("speed_scale"),
+        "has_bag": (path / "bag").is_dir() or any(path.glob("*.mcap")),
+        "recording": (path / "RECORDING").exists(),
+        "processed": False,
+    }
+    summary_path = path / "analysis" / "summary.json"
+    if summary_path.exists():
+        try:
+            summary = json.loads(summary_path.read_text())
+            entry["processed"] = True
+            entry["stale"] = summary.get("meta", {}).get("version") != analyze.VERSION
+            entry["kpis"] = summary.get("kpis")
+            entry["simulation"] = summary.get("meta", {}).get("simulation")
+            entry["verdict_counts"] = {
+                k: len(v) for k, v in summary.get("verdicts", {}).items()
+            }
+        except (OSError, ValueError):
+            pass
+    try:
+        entry["pulled"] = json.loads((path / ".pulled.json").read_text())
+    except (OSError, ValueError):
+        pass
+    job = jobs.active("process", path.name)
+    if job:
+        entry["job"] = job.as_dict()
+    return entry
+
+
+@app.get("/api/runs")
+def list_runs():
+    runs = []
+    for path in sorted(RUNS.iterdir(), reverse=True):
+        if path.is_dir() and not path.name.startswith("."):
+            runs.append(run_entry(path))
+    return runs
+
+
+@app.get("/api/runs/{name}")
+def get_run(name: str):
+    return run_entry(run_dir(name))
+
+
+def submit_process(name, clouds=True, images=True):
+    path = RUNS / name
+
+    def work(job):
+        summary = analyze.process(path, job.update, clouds=clouds, images=images)
+        return {"kpis": summary["kpis"]}
+
+    return jobs.submit("process", name, work)
+
+
+@app.post("/api/runs/{name}/process")
+def process_run(name: str, body: dict = Body(default={})):
+    run_dir(name)
+    return submit_process(
+        name, clouds=body.get("clouds", True), images=body.get("images", True)
+    ).as_dict()
+
+
+@app.post("/api/runs/import")
+def import_run(body: dict = Body(...)):
+    """Link an existing run folder (a USB stick, a sync_runs.sh pull) in."""
+    source = Path(os.path.expanduser(body.get("path", ""))).resolve()
+    if not source.is_dir():
+        raise HTTPException(400, f"{source} is not a directory")
+    target = RUNS / source.name
+    if target.exists():
+        raise HTTPException(409, f"{source.name} already exists")
+    target.symlink_to(source, target_is_directory=True)
+    return run_entry(target)
+
+
+@app.delete("/api/runs/{name}")
+def delete_run(name: str, analysis_only: bool = False):
+    path = run_dir(name)
+    if analysis_only:
+        shutil.rmtree(path / "analysis", ignore_errors=True)
+    elif path.is_symlink():
+        path.unlink()
+    else:
+        shutil.rmtree(path)
+    return {"deleted": name, "analysis_only": analysis_only}
+
+
+@app.get("/api/runs/{name}/summary")
+def summary(name: str):
+    return FileResponse(
+        analysis_file(name, "summary.json"), media_type="application/json"
+    )
+
+
+@app.get("/api/runs/{name}/series")
+def series(name: str):
+    return FileResponse(
+        analysis_file(name, "series.json"), media_type="application/json"
+    )
+
+
+@app.get("/api/runs/{name}/course")
+def course(name: str):
+    path = run_dir(name) / "analysis" / "course.json"
+    if path.exists():
+        return FileResponse(path, media_type="application/json")
+    config = course_mod.load_config(run_dir(name))
+    return {**course_mod.geometry(config), "sections": course_mod.zones(config)}
+
+
+@app.get("/api/course")
+def default_course():
+    config = course_mod.load_config()
+    return {**course_mod.geometry(config), "sections": course_mod.zones(config)}
+
+
+@app.get("/api/runs/{name}/recording.rrd")
+def recording(name: str):
+    """The run for the Rerun viewer (embedded in the Replay page)."""
+    return FileResponse(
+        analysis_file(name, "recording.rrd"),
+        media_type="application/octet-stream",
+        filename=f"{name}.rrd",
+        content_disposition_type="inline",
+    )
+
+
+# One native Rerun viewer at a time, owned by the server.
+_viewer = {"proc": None}
+
+
+@app.post("/api/runs/{name}/rerun")
+def open_native_rerun(name: str, body: dict = Body(default={})):
+    """Open the native Rerun viewer on this machine: the analysed recording,
+    or (which="bag") the raw MCAP bag, which Rerun reads directly."""
+    path = run_dir(name)
+    if body.get("which") == "bag":
+        files = sorted((path / "bag").glob("*.mcap"))
+        if not files:
+            raise HTTPException(404, "no .mcap files in this run's bag")
+        target = [str(f) for f in files]
+    else:
+        target = [str(analysis_file(name, "recording.rrd"))]
+    rerun_bin = Path(sys.executable).with_name("rerun")
+    if not rerun_bin.exists():
+        raise HTTPException(
+            409, "the rerun viewer is not installed in the Run Lab venv"
+        )
+    old = _viewer["proc"]
+    if old is not None and old.poll() is None:
+        old.terminate()
+    _viewer["proc"] = subprocess.Popen(
+        [str(rerun_bin), *target],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return {"opened": target}
+
+
+# -------------------------------------------------------------------- files
+
+GROUPS = [
+    ("Bag", lambda rel: rel.parts[0] == "bag"),
+    ("Policy", lambda rel: rel.parts[0] == "policy"),
+    ("ZED", lambda rel: rel.parts[0] == "zed"),
+    ("Parameters", lambda rel: rel.parts[0] == "params"),
+    ("Logs", lambda rel: rel.parts[0] == "logs" or rel.suffix == ".log"),
+    ("Analysis", lambda rel: rel.parts[0] == "analysis"),
+    ("Run", lambda rel: True),
+]
+
+
+@app.get("/api/runs/{name}/files")
+def files(name: str):
+    root = run_dir(name)
+    out = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(root)
+        group = next(g for g, test in GROUPS if test(rel))
+        out.append({"path": str(rel), "bytes": path.stat().st_size, "group": group})
+    return out
+
+
+@app.get("/api/runs/{name}/file")
+def download(name: str, path: str):
+    root = run_dir(name).resolve()
+    target = (root / path).resolve()
+    if not target.is_relative_to(root) or not target.is_file():
+        raise HTTPException(404, "no such file")
+    return FileResponse(target, filename=target.name)
+
+
+@app.get("/api/runs/{name}/archive")
+def archive(name: str, analysis: bool = False):
+    """The whole run as one .tar, streamed -- bags can be gigabytes."""
+    run_dir(name)
+    cmd = ["tar", "-C", str(RUNS), "-chf", "-"]
+    if not analysis:
+        cmd += ["--exclude", f"{name}/analysis"]
+    cmd.append(name)
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+
+    def stream():
+        try:
+            while chunk := proc.stdout.read(1 << 20):
+                yield chunk
+        finally:
+            proc.kill()
+
+    return StreamingResponse(
+        stream(),
+        media_type="application/x-tar",
+        headers={"Content-Disposition": f'attachment; filename="{name}.tar"'},
+    )
+
+
+@app.get("/api/runs/{name}/report.md")
+def report(name: str):
+    s = json.loads(analysis_file(name, "summary.json").read_text())
+    return Response(
+        markdown_report(name, s),
+        media_type="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename="{name}_report.md"'},
+    )
+
+
+def markdown_report(name, s):
+    lines = [f"# Run {name}", ""]
+    meta = s.get("meta", {}).get("metadata", {})
+    for key in (
+        "label",
+        "started_utc",
+        "driver",
+        "speed_scale",
+        "git_sha",
+        "surface",
+        "notes",
+    ):
+        if meta.get(key):
+            lines.append(f"- **{key}**: {meta[key]}")
+    lines += ["", "## Headline", ""]
+    for k in s.get("kpis", []):
+        lines.append(
+            f"- {k['label']}: {k.get('value')} {k.get('unit', '') or ''}".rstrip()
+        )
+    for title, key in (("What worked", "worked"), ("What did not", "failed")):
+        lines += ["", f"## {title}", ""]
+        for v in s.get("verdicts", {}).get(key, []):
+            lines.append(f"- **{v['title']}** -- {v['detail']}")
+    laps = s.get("laps", {}).get("laps", [])
+    if laps:
+        lines += [
+            "",
+            "## Laps",
+            "",
+            "| lap | time s | max m/s | min clearance m | mean abs CTE m |",
+            "|---|---|---|---|---|",
+        ]
+        for lap in laps:
+            lines.append(
+                f"| {lap['lap']} | {lap['time']} | {lap['max_speed']} | {lap['min_clearance']} | {lap['mean_abs_cte']} |"
+            )
+    return "\n".join(lines) + "\n"
+
+
+# ------------------------------------------------------------------- replay
+
+
+@app.get("/api/replay")
+def replay_status():
+    return replay.status()
+
+
+@app.post("/api/replay/gazebo")
+def replay_gazebo(body: dict = Body(...)):
+    try:
+        return replay.start_gazebo(
+            run_dir(body["run"]),
+            gui=bool(body.get("gui", False)),
+            web=bool(body.get("web", True)),
+            rate=float(body.get("rate", 1.0)),
+            start=float(body.get("start", 0.0)),
+            loop=bool(body.get("loop", False)),
+        )
+    except (RuntimeError, FileNotFoundError) as error:
+        raise HTTPException(409, str(error)) from error
+
+
+@app.post("/api/replay/rviz")
+def replay_rviz(body: dict = Body(...)):
+    try:
+        return replay.start_rviz(
+            run_dir(body["run"]),
+            rate=float(body.get("rate", 1.0)),
+            start=float(body.get("start", 0.0)),
+            loop=bool(body.get("loop", False)),
+        )
+    except RuntimeError as error:
+        raise HTTPException(409, str(error)) from error
+
+
+@app.post("/api/replay/gui")
+def replay_gui():
+    try:
+        return replay.open_gazebo_gui()
+    except RuntimeError as error:
+        raise HTTPException(409, str(error)) from error
+
+
+@app.post("/api/replay/control")
+def replay_control(body: dict = Body(...)):
+    action = body.get("action")
+    paths = {"seek": "/seek", "pause": "/pause", "play": "/play", "rate": "/rate"}
+    if action not in paths:
+        raise HTTPException(400, "unknown action")
+    try:
+        return replay.ghost_control(paths[action], body)
+    except OSError as error:
+        raise HTTPException(409, f"ghost not reachable: {error}") from error
+
+
+@app.post("/api/replay/stop")
+def replay_stop():
+    return replay.stop()
+
+
+@app.on_event("shutdown")
+def _shutdown():
+    replay.stop()
+
+
+# ------------------------------------------------------------------- static
+
+if DIST.exists():
+    app.mount("/", StaticFiles(directory=DIST, html=True), name="ui")
+else:
+
+    @app.get("/")
+    def no_ui():
+        return JSONResponse(
+            {
+                "error": "UI not built: cd web/run-lab/frontend && npm ci && npm run build"
+            },
+            503,
+        )

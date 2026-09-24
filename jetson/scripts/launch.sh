@@ -18,6 +18,9 @@ ROSBOARD_DIR="${ROSBOARD_DIR:-$HOME/rosboard}"
 
 DEVICE="${ARDUINO_DEVICE:-/dev/ttyACM0}"
 CAMERA_MODEL="${ZED_CAMERA_MODEL:-zed2i}"
+# Empty means cfr_arduino_bridge's installed config/cfr_zed2i.yaml, resolved
+# once the workspace is sourced.
+ZED_PARAMS="${ZED_PARAMS:-}"
 USE_CMD_VEL=true
 USE_ZED=true
 USE_BRIDGE=true
@@ -37,7 +40,10 @@ Brings up the onboard stack from $ROS2_WS:
 Options:
   -d, --device DEV     Arduino serial device (env ARDUINO_DEVICE, default: $DEVICE)
   -m, --camera MODEL   ZED model (env ZED_CAMERA_MODEL, default: $CAMERA_MODEL)
-      --no-zed         Do not start the ZED camera node
+      --zed-params FILE
+                       ZED wrapper override file (env ZED_PARAMS, default: the
+                       race configuration, cfr_arduino_bridge config/cfr_zed2i.yaml)
+      --no-zed        Do not start the ZED camera node
       --no-bridge      Do not start the Arduino bridge
       --no-cmd-vel     Do not start cmd_vel_to_drive_node
       --rosboard       Also start rosboard from $ROSBOARD_DIR
@@ -66,6 +72,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -m | --camera)
             CAMERA_MODEL="$2"
+            shift 2
+            ;;
+        --zed-params)
+            ZED_PARAMS="$2"
             shift 2
             ;;
         --no-zed)
@@ -181,6 +191,22 @@ if [[ "$USE_ZED" == true ]] && ! ros2 pkg prefix zed_wrapper >/dev/null 2>&1; th
     exit 1
 fi
 
+# The race configuration is not optional.  Without it the wrapper runs on
+# whatever defaults its revision ships, and formula_one_node and lap_counter
+# drive on the pose those produce -- see config/cfr_zed2i.yaml for what it
+# pins and why.  A missing file is an error rather than a silent fallback.
+if [[ "$USE_ZED" == true ]]; then
+    if [[ -z "$ZED_PARAMS" ]]; then
+        BRIDGE_PREFIX="$(ros2 pkg prefix cfr_arduino_bridge 2>/dev/null || true)"
+        ZED_PARAMS="$BRIDGE_PREFIX/share/cfr_arduino_bridge/config/cfr_zed2i.yaml"
+    fi
+    if [[ ! -f "$ZED_PARAMS" ]]; then
+        echo "error: no ZED override file at $ZED_PARAMS" >&2
+        echo "       build cfr_arduino_bridge ($SCRIPT_DIR/build.sh), or pass --zed-params" >&2
+        exit 1
+    fi
+fi
+
 if [[ "$USE_ROSBOARD" == true && ! -x "$ROSBOARD_DIR/run" ]]; then
     echo "error: rosboard not found at $ROSBOARD_DIR" >&2
     exit 1
@@ -199,10 +225,11 @@ if [[ "$USE_BRIDGE" == true ]]; then
 fi
 
 if [[ "$USE_ZED" == true ]]; then
-    ros2 launch zed_wrapper zed_camera.launch.py "camera_model:=$CAMERA_MODEL" &
+    ros2 launch zed_wrapper zed_camera.launch.py "camera_model:=$CAMERA_MODEL" \
+        "ros_params_override_path:=$ZED_PARAMS" &
     ZED_PID=$!
     PIDS+=("$ZED_PID")
-    echo "zed camera (PID $ZED_PID) model $CAMERA_MODEL"
+    echo "zed camera (PID $ZED_PID) model $CAMERA_MODEL, params $ZED_PARAMS"
 fi
 
 if [[ "$USE_ROSBOARD" == true ]]; then

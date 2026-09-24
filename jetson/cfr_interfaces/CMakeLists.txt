@@ -12,6 +12,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/PathSegment.msg"
   "msg/StartSignal.msg"
   "msg/LapCount.msg"
+  "msg/DriverTelemetry.msg"
   "action/DrivePath.action"
   DEPENDENCIES std_msgs action_msgs
 )
