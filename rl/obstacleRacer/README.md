@@ -95,6 +95,9 @@ stops and has to back off.
 
 `sensor.py` ray-marches the visual grid from wherever the body put the camera,
 following the surface out from under the car the way the segmenter does.
+It steps over open floor in one go (`sight_skip`), and the plant skips the
+collision check for a car far from every obstacle; neither changes a
+result, which `bench.py --check` confirms.
 
 ## Layouts and starts
 
@@ -183,3 +186,4 @@ Other checks:
 | `python3 reward.py` | Episode-level incentives |
 | `python3 centerline.py` | Every layout's line is clear of the walls |
 | `python3 layouts.py --check` | Exported layouts match the randomizer |
+| `python3 bench.py --policy runs/v5/best_model.zip` | Env steps/s and where a step's time goes; `--save`/`--check` for a speedup that must change nothing |

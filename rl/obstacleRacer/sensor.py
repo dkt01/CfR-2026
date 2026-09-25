@@ -43,6 +43,7 @@ import numba as nb
 import numpy as np
 
 import course_model
+import plant as P
 import world as world_module
 
 # Gate kinds, as the segmenter's.
@@ -110,6 +111,69 @@ class SensorConfig:
 FOLLOW_STEP = 0.06
 
 
+# Open-floor skipping.  Most of a ray's 2 cm samples cross open floor, and
+# nothing on open floor can stop the ray or move the surface it follows.  A
+# cell is "open" when it has one exposed layer at the same height as its four
+# neighbors, no car-wash ribbon, and nothing visual that reaches
+# GROUND_TOLERANCE above the lowest surface a ray can follow (so it cannot
+# block against any surface).  sight_skip stores, per layout and cell, how
+# far a ray can go from anywhere in the cell and stay on open cells.
+#
+# Over such a stretch the result cannot change: no sample blocks, the
+# followed surface is flat and unchanged, and the horizon it sets is either
+# already at its highest (surface above the camera) or at its highest on the
+# last sample, which the ray still reads (surface below the camera).
+SKIP_MARGIN = 2  # cells: a point anywhere in either cell, not the centers
+SKIP_BELOW = 0.05  # m under the lowest layer that a followed surface may sit
+
+
+def sight_skip(model):
+    """(SKIP, skip_from): per-layout skip distances in cells, uint8, on the
+    static grid's (row, col), and the lowest followed surface they hold for."""
+    from scipy.ndimage import distance_transform_edt
+
+    s, w = model.static, model.window
+    tops = [s["E_top"][s["E_n"] > m, m] for m in range(s["E_top"].shape[-1])]
+    tops += [w["E_top"][w["E_n"] > m, m] for m in range(w["E_top"].shape[-1])]
+    lowest = float(min(t.min() for t in tops if t.size))
+    skip_from = lowest - SKIP_BELOW
+    reach = skip_from + course_model.GROUND_TOLERANCE
+
+    def open_(f):
+        # One exposed layer, nothing that can block, no car-wash ribbon; the
+        # layer's height rides along in the same array for the flat test.
+        kv = np.arange(f["V_hi"].shape[-1])
+        tall = ((f["V_hi"] > reach) & (kv < f["V_n"][..., None])).any(-1)
+        ok = (f["E_n"] == 1) & ~tall & (f["C_n"] == 0)
+        return np.where(ok, f["E_top"][..., 0], np.nan)
+
+    out = []
+    for top in P.per_layout(model, open_):
+        # NaN (not open) is unequal to everything, so this is also the open
+        # test; the grid's edge rows stay closed: off the grid is floor.
+        flat = np.zeros(top.shape, bool)
+        c = top[1:-1, 1:-1]
+        flat[1:-1, 1:-1] = (
+            (c == top[2:, 1:-1])
+            & (c == top[:-2, 1:-1])
+            & (c == top[1:-1, 2:])
+            & (c == top[1:-1, :-2])
+        )
+        cells = np.floor(distance_transform_edt(flat)) - SKIP_MARGIN
+        out.append(np.clip(cells, 0, 255).astype(np.uint8))
+    return np.stack(out), skip_from
+
+
+@nb.njit(cache=True, inline="always")
+def _skip_steps(SKIP, G, lay, x, y, step):
+    """Ray steps from (x, y) that stay on open floor, at least 1."""
+    i = int(math.floor((x - G[0]) / course_model.RES))
+    j = int(math.floor((y - G[1]) / course_model.RES))
+    if i < 0 or j < 0 or i >= SKIP.shape[2] or j >= SKIP.shape[1]:
+        return 1
+    return max(1, int(SKIP[lay, j, i] * course_model.RES / step))
+
+
 @nb.njit(cache=True, inline="always")
 def _cast(
     LAY,
@@ -128,6 +192,8 @@ def _cast(
     min_range,
     step,
     wash_solid_from,
+    SKIP,
+    skip_from,
 ):
     """Plan range to the first visible blocking cell along one ray, or max."""
     c = math.cos(heading + bearing)
@@ -162,6 +228,12 @@ def _cast(
                     and el_hi > horizon
                 ):
                     return r
+        # Open floor ahead (sight_skip): the samples it holds can neither
+        # block nor change the followed surface, so step over them.  r
+        # still advances one step at a time, to land on the same values.
+        if zref >= skip_from:
+            for _ in range(_skip_steps(SKIP, LAY[0], lay, px, py, step) - 1):
+                r += step
         r += step
     return max_range
 
@@ -203,6 +275,8 @@ def sense(
     bins,
     gates,
     wash_misread,
+    SKIP,
+    skip_from,
     out_scan,
     out_gate,
 ):
@@ -256,6 +330,8 @@ def sense(
                     min_range,
                     step,
                     wash_from,
+                    SKIP,
+                    skip_from,
                 )
                 if rng < best:
                     best = rng
@@ -335,6 +411,7 @@ class Sensor:
         self.sc = SensorConfig(cfg)
         self.cfg = cfg["sensor"]
         self.LAY, self.VIS, self.WASH = model.tables()[2]
+        self.SKIP, self.skip_from = sight_skip(model)
         self.gates = gate_table(model)
         self.n = n
         self.rng = rng
@@ -344,8 +421,6 @@ class Sensor:
 
     def read(self, lay, state, idx=None):
         """(scan, gate) for every car, or just for cars `idx`."""
-        import plant as P
-
         if idx is None:
             s, L, scan, gate = state, lay, self.scan, self.gate
         else:
@@ -370,6 +445,8 @@ class Sensor:
             self.sc.bins,
             self.gates,
             misread,
+            self.SKIP,
+            self.skip_from,
             scan,
             gate,
         )
