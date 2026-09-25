@@ -98,7 +98,6 @@ Options:
                     formulaTwo policy to deploy (env F2_RUN, default: f2_v2_40M)
       --no-f1       Do not sync formulaOne or its policy
       --no-f2       Do not sync formulaTwo or its policy
-      --no-f1       Do not sync formulaOne or its policy
   -r, --racer-policy RUN
                     obstacleRacer policy to deploy, from rl/obstacleRacer/runs/RUN
                     (env RACER_RUN, default: none -- code and config only)
@@ -145,6 +144,8 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-f2)
       SYNC_F2=false
+      shift
+      ;;
     -r | --racer-policy)
       RACER_RUN="$2"
       shift 2
@@ -445,8 +446,8 @@ if [[ "${SYNC_RACER}" == true ]]; then
   fi
 fi
 
-if [[ "${SYNC_F1}" == true || "${SYNC_RACER}" == true ]]; then
-  # Both drivers resolve the course files and record_run.py as
+if [[ "${SYNC_F1}" == true || "${SYNC_F2}" == true || "${SYNC_RACER}" == true ]]; then
+  # All three drivers resolve the course files and record_run.py as
   # <two dirs above themselves>/jetson/..., which is the repo's layout.  Here
   # that is ~/jetson, so point it at the synced jetson/ tree.  Never replaces
   # a real directory of that name.
@@ -457,7 +458,6 @@ if [[ "${SYNC_F1}" == true || "${SYNC_RACER}" == true ]]; then
     "${SSH_CMD[@]}" "${REMOTE_HOST}" "
       link=${link_parent}/jetson
       if [ -e \"\$link\" ] && [ ! -L \"\$link\" ]; then
-        echo \"warning: \$link exists and is not a symlink; the drivers will not find the course\" >&2
         echo \"warning: \$link exists and is not a symlink; the RL drivers will not find the course or record_run.py\" >&2
       else
         ln -sfn ${REMOTE_DIR} \"\$link\" && echo \"linked \$link -> ${REMOTE_DIR}\"
