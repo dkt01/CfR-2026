@@ -1,0 +1,22 @@
+== f2_v2 40M (final)
+  nominal  100.0%   35.86 +/- 0.01 s/lap  clear +0.074 / p10 +0.074  cte 0.048  gate 0.95  jerk 0.0156  crash 0/32  dist 344 m
+           laps 36.80 / 35.40 / 35.37 s   stop +13.3 m
+  dr 0.25  100.0%   35.76 +/- 0.16 s/lap  clear +0.041 / p10 +0.064  cte 0.046  gate 0.95  jerk 0.0244  crash 0/64  dist 344 m
+           laps 36.73 / 35.28 / 35.28 s   stop +13.6 m
+  dr 0.5    90.6%   35.81 +/- 0.32 s/lap  clear -0.007 / p10 +0.023  cte 0.053  gate 0.94  jerk 0.0343  crash 6/64  dist 344 m
+           laps 36.80 / 35.32 / 35.31 s   stop +13.8 m
+  dr 0.75   48.4%   35.88 +/- 0.48 s/lap  clear -0.043 / p10 -0.013  cte 0.069  gate 0.90  jerk 0.0452  crash 33/64  dist 312 m
+           laps 36.88 / 35.38 / 35.38 s   stop +13.9 m
+  field     14.8%   36.28 +/- 0.45 s/lap  clear -0.057 / p10 -0.028  cte 0.082  gate 0.87  jerk 0.0578  crash 109/128  dist 58 m
+           laps 37.34 / 35.76 / 35.73 s   stop +13.3 m
+
+== v12, same test
+  nominal    0.0%     nan +/-  nan s/lap  clear -0.010 / p10 -0.010  cte 0.053  gate 0.93  jerk 0.0092  crash 32/32  dist 89 m
+  dr 0.25   40.6%   35.83 +/- 0.18 s/lap  clear -0.036 / p10 -0.019  cte 0.061  gate 0.91  jerk 0.0177  crash 38/64  dist 89 m
+           laps 36.85 / 35.34 / 35.32 s   stop +13.5 m
+  dr 0.5    12.5%   35.81 +/- 0.39 s/lap  clear -0.046 / p10 -0.035  cte 0.066  gate 0.90  jerk 0.0287  crash 56/64  dist 23 m
+           laps 36.89 / 35.26 / 35.28 s   stop +13.9 m
+  dr 0.75    1.6%   36.93 +/- 0.00 s/lap  clear -0.063 / p10 -0.033  cte 0.078  gate 0.87  jerk 0.0401  crash 63/64  dist 23 m
+           laps 37.96 / 36.42 / 36.42 s   stop +12.3 m
+  field      0.8%   36.50 +/- 0.00 s/lap  clear -0.072 / p10 -0.041  cte 0.089  gate 0.84  jerk 0.0532  crash 127/128  dist 23 m
+           laps 37.48 / 36.09 / 35.93 s   stop +11.3 m
