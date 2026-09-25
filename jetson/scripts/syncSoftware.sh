@@ -437,6 +437,11 @@ if [[ "${SYNC_RACER}" == true ]]; then
     echo "policy ${RACER_RUN} -> ${REMOTE_HOST}:${RACER_REMOTE}/"
     copy_file "${RACER_POLICY_DIR}/policy.npz" "${RACER_REMOTE}/policy.npz"
     copy_file "${RACER_POLICY_DIR}/config.yaml" "${RACER_REMOTE}/config.yaml"
+    # Which run this is, for launchObstacleRacer.sh to label recordings with.
+    run_file="$(mktemp)"
+    echo "${RACER_RUN}" >"${run_file}"
+    copy_file "${run_file}" "${RACER_REMOTE}/POLICY_RUN"
+    rm -f "${run_file}"
   fi
 fi
 
@@ -517,7 +522,6 @@ if [[ "${SYNC_F2}" == true ]]; then
   echo "  formulaTwo: ${REMOTE_DIR}/scripts/launchFormulaTwo.sh      (${F2_RUN}, speed_scale 0.3 by default)"
 fi
 if [[ "${SYNC_RACER}" == true ]]; then
-  echo "obstacle racer (with launch.sh --no-cmd-vel up, E-Stop in hand):"
-  echo "  ros2 launch ${REMOTE_DIR}/obstacleRacer/obstacle_racer_car.launch.py speed_scale:=0.3"
+  echo "  obstacleRacer: ${REMOTE_DIR}/scripts/launchObstacleRacer.sh  (${RACER_RUN:-policy already on the Orin}, speed_scale 0.3 by default)"
 fi
 echo "  (one driver at a time -- all publish /drive_cmd)"

@@ -40,10 +40,15 @@ track:
   speed_floor_taper: 1.9
   speed_floor_open: 5.0
   # The floor is clipped by the coast-feasible profile of a car with this much
-  # of the nominal drag -- the lowest the randomisation draws (coast_scale
-  # 0.88 / mass_scale 1.15 = 0.77).  Against nominal drag, v12's floor asks a
-  # low-drag car for up to 0.35 m/s more than it can shed before a hairpin.
-  floor_drag_scale: 0.75
+  # of the nominal drag.  1.0 is v12's floor, and it IS the pace: both
+  # policies hold the throttle at the floor on 100% of ticks.  Floor-driven
+  # flying laps: 1.00 -> 33.45 s, 0.90 -> 34.05, 0.85 -> 34.60, 0.75 -> 35.65.
+  # f2_v2 trained at 0.75 (to stay feasible down to drag x0.77) and lost
+  # ~2.2 s/lap to v12 for it.  So the floor is v12's again, and instead the
+  # DRAG RANGE is narrowed (coast_scale, mass_scale below) to where v12's
+  # floor stays reachable: at drag x0.90 it asks at most 0.03 m/s too much,
+  # at x0.85 already 0.15.
+  floor_drag_scale: 1.0
   sdf_res: 0.02
   sdf_margin: 2.0
   vehicle_start: [20.15, 4.76]
@@ -197,7 +202,10 @@ randomize:
   enabled: true
   # --- v12's draws, same ranges
   dead_time: [0.13, 0.26, 0.19]
-  coast_scale: [0.88, 1.12, 1.0]      # narrowed: mass now scales drag too
+  # Lowest drag drawn = coast_scale lo / mass_scale hi = 0.95 / 1.055 = 0.90,
+  # the least v12's floor can take (see track.floor_drag_scale).  More drag is
+  # always feasible -- it only makes the car slow sooner -- so the top end stays.
+  coast_scale: [0.95, 1.12, 1.0]
   accel_scale: [0.80, 1.20, 1.0]
   slew_scale: [0.75, 1.25, 1.0]
   steer_gain: [0.82, 1.10, 1.0]
@@ -224,7 +232,7 @@ randomize:
   mu: [0.60, 1.10, 1.0]
   # Battery, mounts, wiring.  Scales drag deceleration and accel by 1/m.  Not
   # the yaw lag: yaw_tau_scale already spans the measured per-trace spread.
-  mass_scale: [0.90, 1.15, 1.0]
+  mass_scale: [0.95, 1.055, 1.0]
   motor_tau: [0.0, 0.12, 0.0]         # s
   throttle_delay: [0.0, 0.06, 0.0]    # s, on top of dead_time, throttle only
 

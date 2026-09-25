@@ -268,6 +268,12 @@ def main():
         help="on --resume, shift the throttle bias so its raw mean sits at -1",
     )
     ap.add_argument(
+        "--learning-rate",
+        type=float,
+        default=None,
+        help="override train.learning_rate (a fine-tune wants less than a fresh run)",
+    )
+    ap.add_argument(
         "--dr-start",
         type=float,
         default=None,
@@ -284,6 +290,8 @@ def main():
     torch.set_num_threads(4)
     cfg = yaml.safe_load(args.config.read_text())
     tcfg = cfg["train"]
+    if args.learning_rate is not None:
+        tcfg["learning_rate"] = args.learning_rate
     total = args.steps or int(tcfg["total_steps"])
     args.dir.mkdir(parents=True, exist_ok=True)
     (args.dir / "config.yaml").write_text(args.config.read_text())
