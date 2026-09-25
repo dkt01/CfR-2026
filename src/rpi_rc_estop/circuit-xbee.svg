@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg version="1.1" width="760" height="420" viewBox="0 0 760 420" xmlns="http://www.w3.org/2000/svg" font-family="Arial" font-size="12">
+	<rect x="0" y="0" width="760" height="420" fill="#ffffff" />
+	<text x="380" y="26" text-anchor="middle" font-size="16" font-weight="bold">Course E-Stop RJ-45 to XBee Pro S1 GPIO (laptop side)</text>
+
+	<!-- RJ-45 -->
+	<rect x="60" y="70" width="170" height="270" fill="none" stroke="#000" stroke-width="2" />
+	<text x="145" y="92" text-anchor="middle" font-weight="bold">E-Stop RJ-45 (cable end)</text>
+	<g stroke="#000" stroke-width="2">
+		<line x1="230" y1="120" x2="300" y2="120" /><line x1="230" y1="150" x2="300" y2="150" />
+		<line x1="230" y1="200" x2="300" y2="200" /><line x1="230" y1="230" x2="300" y2="230" />
+		<line x1="230" y1="280" x2="300" y2="280" /><line x1="230" y1="300" x2="300" y2="300" />
+		<line x1="230" y1="320" x2="300" y2="320" /><line x1="230" y1="340" x2="300" y2="340" />
+	</g>
+	<g text-anchor="start">
+		<text x="70" y="124">Pin 1</text><text x="70" y="154">Pin 2</text>
+		<text x="70" y="204">Pin 3</text><text x="70" y="234">Pin 4</text>
+		<text x="70" y="284">Pin 5</text><text x="70" y="304">Pin 6</text>
+		<text x="70" y="324">Pin 7</text><text x="70" y="344">Pin 8</text>
+	</g>
+
+	<!-- bus bars -->
+	<g stroke="#000" stroke-width="2" fill="none">
+		<line x1="300" y1="120" x2="300" y2="150" />
+		<line x1="300" y1="200" x2="300" y2="230" />
+		<line x1="300" y1="280" x2="300" y2="340" />
+	</g>
+	<g fill="#000"><circle cx="300" cy="120" r="3" /><circle cx="300" cy="150" r="3" /><circle cx="300" cy="200" r="3" /><circle cx="300" cy="230" r="3" /><circle cx="300" cy="280" r="3" /><circle cx="300" cy="300" r="3" /><circle cx="300" cy="320" r="3" /><circle cx="300" cy="340" r="3" /></g>
+
+	<!-- runs to XBee -->
+	<g stroke-width="2" fill="none">
+		<polyline stroke="#000" points="300,135 400,135 400,380 480,380" />
+		<polyline stroke="#b58900" points="300,215 380,215 380,190 480,190" />
+		<polyline stroke="#c62828" points="300,310 360,310 360,120 480,120" />
+	</g>
+	<g fill="#000"><circle cx="300" cy="135" r="3" /><circle cx="300" cy="215" r="3" /><circle cx="300" cy="310" r="3" /></g>
+	<text x="310" y="129" fill="#000" font-size="11">1-2: GND</text>
+	<text x="310" y="209" fill="#b58900" font-size="11">3-4: cable sense</text>
+	<text x="310" y="304" fill="#c62828" font-size="11">5-8: E-Stop loop</text>
+
+	<!-- XBee -->
+	<rect x="480" y="70" width="200" height="340" fill="none" stroke="#000" stroke-width="2" />
+	<text x="580" y="92" text-anchor="middle" font-weight="bold">XBee Pro S1 (TUI side)</text>
+	<text x="580" y="110" text-anchor="middle" font-size="11">through-hole pin numbers</text>
+	<text x="490" y="124">Pin 20  DIO0 (D0)</text>
+	<text x="490" y="194">Pin 19  DIO1 (D1)</text>
+	<text x="490" y="384">Pin 10  GND</text>
+	<text x="490" y="230" font-size="11" fill="#555">D0 = 3 (DIGITAL_IN), D1 = 3 (DIGITAL_IN)</text>
+	<text x="490" y="246" font-size="11" fill="#555">PR = FF (internal pull-ups on)</text>
+	<text x="490" y="262" font-size="11" fill="#555">All other pins unchanged</text>
+
+	<!-- legend -->
+	<text x="60" y="380" font-size="11" fill="#555">E-Stop inactive: 1-4 shorted to 5-8, D0 reads LOW, D1 reads LOW.</text>
+	<text x="60" y="396" font-size="11" fill="#555">E-Stop asserted: 5-8 open, D0 pulled HIGH, D1 still LOW.  Cable unplugged: D0 and D1 both HIGH.</text>
+</svg>

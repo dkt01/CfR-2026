@@ -99,6 +99,18 @@ SERIAL_TRACE_ENV = "ESTOP_SERIAL_TRACE"
 # SERIAL_TRACE_DEFAULT = "/tmp/xbee-serial.log"
 SERIAL_TRACE_DEFAULT = None
 
+# The course E-Stop RJ-45 is wired to the laptop-side XBee's own GPIO rather
+# than to a Raspberry Pi.  The XBee is polled with the local AT command IS
+# ("force sample"), so both pins must be configured as digital inputs (D0=3,
+# D1=3) with pull-ups enabled (PR); see the README's commissioning section.
+# python-xbee reports the S1 DIO pins as "dio-N".
+XBEE_ESTOP_DIO = "dio-0"  # RJ-45 pins 5-8; LOW = loop closed, HIGH = E-Stop
+XBEE_SENSE_DIO = "dio-1"  # RJ-45 pins 3-4; LOW = cable plugged in
+AT_FRAME_ID = b""  # Distinct from the tx frame id so replies are separable
+# Sample age beyond which the physical E-Stop is treated as asserted.  The poll
+# runs at the 20Hz command rate, so this tolerates a few lost replies.
+TIMEOUT_XBEE_GPIO = 0.5
+
 # Candidate serial adapters preferred during auto-discovery, most specific first.
 SERIAL_PORT_PREFERRED_TOKENS = ("xbee", "ftdi", "cp210", "usb")
 
@@ -124,7 +136,12 @@ class LEDState:
 
 @dataclass
 class InputState:
+    # Physical E-Stop: the RJ-45 loop (Pi GPIO or XBee GPIO).  Subject to
+    # estop_override.
     estop: bool = False
+    # Operator-commanded E-Stop (TUI keyboard, controller loss).  Never
+    # overridden.
+    estop_software: bool = False
     estop_sense: bool = False
     estop_override: bool = False
     auto_arm: bool = False
@@ -491,7 +508,7 @@ def compute_led_state(
     else:
         newLedState.comms = LEDMode.BLINK
 
-    if inputState.estop:
+    if inputState.estop or inputState.estop_software:
         newLedState.estop = LEDMode.ON
 
     if inputState.estop_sense:
@@ -499,7 +516,9 @@ def compute_led_state(
 
     if inputState.estop_override:
         newLedState.estop_override = LEDMode.ON
-        if newLedState.estop == LEDMode.ON:
+        # Blink means the physical E-Stop is being ignored, which only matters
+        # while nothing else is holding the robot stopped.
+        if inputState.estop and not inputState.estop_software:
             newLedState.estop = LEDMode.BLINK
 
     if inputState.auto_arm:
@@ -753,9 +772,11 @@ def serializeState(
     inputStateLock: threading.Lock,
 ) -> bytes:
     with inputStateLock:
-        estop = False
-        if not inputState.estop_override:
-            estop = inputState.estop
+        # The override masks only the physical E-Stop; a software E-Stop always
+        # gets through.
+        estop = inputState.estop_software or (
+            inputState.estop and not inputState.estop_override
+        )
         # The E-Stop and arming bits live in flag byte A alongside controller
         # buttons, so they are collected here and merged below rather than
         # packed independently.
@@ -817,6 +838,30 @@ def deserializeState(
         return False
 
 
+def apply_gpio_sample(
+    samples,
+    inputState: InputState,
+    inputStateLock: threading.Lock,
+    sampleTime: list[float],
+) -> bool:
+    """Fold an XBee IS response into inputState.  Fails closed: a sample that
+    lacks either configured pin is rejected, leaving the sample stale so the
+    comm loop asserts the physical E-Stop."""
+    try:
+        sample = samples[0]
+        loopOpen = bool(sample[XBEE_ESTOP_DIO])
+        cableAbsent = bool(sample[XBEE_SENSE_DIO])
+    except (IndexError, KeyError, TypeError):
+        return False
+    with inputStateLock:
+        # An unplugged cable already floats the loop pin HIGH, but a wiring
+        # fault could hold it LOW, so an absent cable asserts the E-Stop too.
+        inputState.estop = loopOpen or cableAbsent
+        inputState.estop_sense = not cableAbsent
+        sampleTime[0] = time.monotonic()
+    return True
+
+
 # Receive data from robot
 def receiveData(
     xbee: XBee,
@@ -825,9 +870,15 @@ def receiveData(
     robotStateMutex: threading.Lock,
     runEvent: threading.Event,
     cycleMonitor: CycleRateMonitor,
+    inputState: InputState,
+    inputStateMutex: threading.Lock,
+    gpioTime: list[float],
 ):
     oldCB = xbee._callback
     oldTC = xbee._thread_continue
+    # S1 firmware sends an empty IS success response, followed by a separate
+    # local 0x83 I/O sample.  Only accept that sample after our IS response.
+    pendingLocalSampleUntil = 0.0
     xbee._callback = True
     # XBee tests this attribute directly rather than calling it.  A lambda is
     # always truthy, so it prevents wait_read_frame() from seeing shutdown.
@@ -846,6 +897,36 @@ def receiveData(
                         robotState.tx_status = data["status"][0]
                         robotState.tx_ack = robotState.tx_status == 0
                     cycleMonitor.record("comm-tx-ack")
+                elif data["id"] == "at_response":
+                    if data["frame_id"] == AT_FRAME_ID and data.get("command") == b"IS":
+                        pendingLocalSampleUntil = 0.0
+                        if data.get("status") == b"\x00":
+                            if "parameter" in data:
+                                if apply_gpio_sample(
+                                    data["parameter"],
+                                    inputState,
+                                    inputStateMutex,
+                                    gpioTime,
+                                ):
+                                    cycleMonitor.record("comm-gpio")
+                            else:
+                                pendingLocalSampleUntil = (
+                                    time.monotonic() + TIMEOUT_XBEE_GPIO
+                                )
+                elif data["id"] == "rx_io_data":
+                    # Local forced samples have a zero source, RSSI and options.
+                    # An unrelated RF I/O sample must never clear the E-Stop.
+                    if (
+                        time.monotonic() < pendingLocalSampleUntil
+                        and data.get("source_addr") == b"\x00\x00"
+                        and data.get("rssi") == b"\x00"
+                        and data.get("options") == b"\x00"
+                    ):
+                        pendingLocalSampleUntil = 0.0
+                        if apply_gpio_sample(
+                            data.get("samples"), inputState, inputStateMutex, gpioTime
+                        ):
+                            cycleMonitor.record("comm-gpio")
                 elif deserializeState(
                     data["rf_data"], robotState, robotStateMutex, recvTime
                 ):
@@ -889,11 +970,17 @@ def commControl(
     inputStateMutex: threading.Lock,
     runEvent: threading.Event,
     cycleMonitor: CycleRateMonitor,
+    xbeeGpio: bool = False,
 ):
+    """xbeeGpio: take the physical E-Stop and cable sense from the XBee's GPIO
+    (laptop TUI).  Leave False where another source, such as the Pi's GPIO,
+    owns inputState.estop."""
     m_ser = None
     m_xbee = None
     # Needs to be list so we can pass by reference to the rx thread
     latestReceiveTime = [time.monotonic()]
+    # Start stale so nothing is trusted until the first valid sample arrives.
+    latestGpioTime = [float("-inf")]
     thread_read = None
     runReadEvent = threading.Event()
     runReadEvent.clear()
@@ -929,6 +1016,9 @@ def commControl(
                     robotStateMutex,
                     runReadEvent,
                     cycleMonitor,
+                    inputState,
+                    inputStateMutex,
+                    latestGpioTime,
                 ),
             )
             thread_read.start()
@@ -950,7 +1040,13 @@ def commControl(
                 )
                 cycleMonitor.record("comm-send")
                 cycleMonitor.record_duration("comm-send", time.monotonic() - sendStart)
+                if xbeeGpio:
+                    m_xbee.send("at", frame_id=AT_FRAME_ID, command=b"IS")
                 endTime = time.monotonic()
+                if xbeeGpio and endTime - latestGpioTime[0] >= TIMEOUT_XBEE_GPIO:
+                    with inputStateMutex:
+                        inputState.estop = True
+                        inputState.estop_sense = False
                 if endTime - latestReceiveTime[0] >= TIMEOUT_COMMS:
                     with robotStateMutex:
                         robotState.comms_ok = False
@@ -964,6 +1060,11 @@ def commControl(
             # (it raises AttributeError on self._thread), so stop the
             # reader thread ourselves instead.
             runReadEvent.clear()
+            if xbeeGpio:
+                # Losing the XBee loses the physical E-Stop input.
+                with inputStateMutex:
+                    inputState.estop = True
+                    inputState.estop_sense = False
             if m_xbee is not None:
                 # wait_read_frame() polls this boolean and raises
                 # ThreadQuitException.  Do this before closing the serial port
