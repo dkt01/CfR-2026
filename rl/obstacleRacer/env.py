@@ -161,6 +161,7 @@ class ObstacleEnv:
         self.prior = z.copy()
         self.ret = z.copy()
         self.min_clear = z.copy()
+        self.top_speed = z.copy()
         self.terms = {k: z.copy() for k in R.TERMS}
         self.yaw_noise = z.copy()
         self.speed_noise = z.copy()
@@ -375,6 +376,7 @@ class ObstacleEnv:
         self.prev_dsteer[idx] = 0.0
         self.ret[idx] = 0.0
         self.min_clear[idx] = np.inf
+        self.top_speed[idx] = 0.0
         for v in self.terms.values():
             v[idx] = 0.0
         self.attitude[idx] = 0.0
@@ -538,6 +540,7 @@ class ObstacleEnv:
         # Reward.
         clearance = P.body_clearance(self.plant.OBS, lay, st, CLEARANCE_RINGS)
         self.min_clear = np.minimum(self.min_clear, clearance)
+        self.top_speed = np.maximum(self.top_speed, np.abs(st[:, P.S_V]))
         dsteer = steer - self.prev_steer
         ddsteer = dsteer - self.prev_dsteer
         lap_time = self.t * self.goal / np.maximum(self.dist, 1e-3)
@@ -682,6 +685,7 @@ class ObstacleEnv:
                 ]
             ],
             "min_clearance": float(self.min_clear[i]),
+            "top_speed": float(self.top_speed[i]),
             "touches": int(self.touches[i]),
             "v_lost": float(self.v_lost[i]),
             "terms": {k: float(v[i]) for k, v in self.terms.items()},

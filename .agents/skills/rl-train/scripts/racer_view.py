@@ -94,6 +94,9 @@ def render(run_dir: Path, ui, patience, min_evals, threshold) -> str:
     def series(key, part):
         return [r[part][key] for r in records if r.get(part)]
 
+    def series_opt(key, part):
+        return [r[part][key] for r in records if r.get(part) and key in r[part]]
+
     def fmt_lap(value):
         return f"{value:5.1f} s" if value else "   -   "
 
@@ -109,6 +112,13 @@ def render(run_dir: Path, ui, patience, min_evals, threshold) -> str:
         )
         lines.append(f"          finish   {ui.sparkline(finish)}")
         lines.append(f"          progress {ui.sparkline(prog)}")
+        # Runs before speed was logged have no avg_speed; show nothing for them.
+        if rec.get("avg_speed") is not None:
+            avg = series_opt("avg_speed", part)
+            lines.append(
+                f"          speed    {ui.sparkline(avg)}  avg {rec['avg_speed']:.2f} m/s "
+                f"along the course, top {rec['top_speed']:.2f} m/s (mean per run)"
+            )
     laps = [r["heldout"]["lap_time"] for r in records if r["heldout"].get("lap_time")]
     if laps:
         lines.append(

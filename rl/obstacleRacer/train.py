@@ -182,6 +182,10 @@ def summarize(records):
         lap_time=float(np.mean([r["time"] for r in finished])) if finished else None,
         best_lap=float(np.min([r["time"] for r in finished])) if finished else None,
         hoops=float(np.mean([r["hoops"] for r in records])),
+        # Centerline meters per second over the whole run, finished or not,
+        # and the fastest the car went; lap_time only exists once laps do.
+        avg_speed=float(np.mean([r["dist"] / max(r["time"], 1e-3) for r in records])),
+        top_speed=float(np.mean([r.get("top_speed", 0.0) for r in records])),
         ret=float(np.mean([r["episode"]["r"] for r in records])),
         min_clearance=float(np.min([r["min_clearance"] for r in records])),
         touches=float(np.mean([r["touches"] for r in records])),
@@ -361,6 +365,7 @@ def main():
             f"  [{label}] train {100 * tr['finish']:3.0f}% {lap(tr['lap_time'])} "
             f"{100 * tr['progress']:3.0f}% of lap | held-out {100 * he['finish']:3.0f}% "
             f"{lap(he['lap_time'])} {100 * he['progress']:3.0f}% of lap, hoops {he['hoops']:.1f}, "
+            f"{he['avg_speed']:.2f} m/s (top {he['top_speed']:.2f}), "
             f"obstacles {100 * float(np.mean(list(he['sections'].values()))):3.0f}% | "
             f"ends {dict(list(he['ends'].items())[:3])}",
             flush=True,
