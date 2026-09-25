@@ -528,7 +528,9 @@ def pose2d_blueprint(extent=None):
         origin="pose2d",
         name="ZED pose, map frame (red: jumps)",
         eye_controls=rrb.EyeControls3D(
-            position=[cx, cy - 0.01, height], look_target=[cx, cy, 0.0], eye_up=[0, 1, 0]
+            position=[cx, cy - 0.01, height],
+            look_target=[cx, cy, 0.0],
+            eye_up=[0, 1, 0],
         ),
     )
     return rrb.Blueprint(
