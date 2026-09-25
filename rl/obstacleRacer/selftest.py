@@ -160,6 +160,42 @@ def gate_parity(cfg, model):
     )
 
 
+def sensor_on_slopes(cfg, model):
+    """Up the ramp and down the helix, the lane ahead reads open.
+
+    v1 trained with the ramp's own surface reading as a wall 0.3 m ahead in
+    every bin -- the rays' ground reference started at the car, 0.06 m below
+    the road under the camera -- so the car climbed the ramp blind.
+    """
+    import sensor as S
+
+    cfg = dict(cfg, randomize=dict(cfg["randomize"], enabled=False))
+    cfg["sensor"] = dict(
+        cfg["sensor"], noise_a=0.0, noise_b=0.0, dropout=0.0, phantom=0.0
+    )
+    spots = [("ramp foot", 4.0, 0.0, 0.0), ("ramp", 4.6, 0.0, 0.0)]
+    pl = P.Plant(cfg, model, len(spots), np.random.default_rng(0))
+    v = np.array([s[1:] for s in spots])
+    pl.reset(
+        np.arange(len(spots)),
+        0,
+        v[:, 0],
+        v[:, 1],
+        np.ones(len(spots)),
+        v[:, 2],
+        np.zeros(len(spots)),
+    )
+    sen = S.Sensor(cfg, model, len(spots), np.random.default_rng(0))
+    scan, _ = sen.read(pl.lay, pl.state)
+    mid = scan.shape[1] // 2
+    ahead = scan[:, mid - 1 : mid + 1].min(1)
+    return check(
+        "the lane ahead reads open on the ramp",
+        bool((ahead > 3.0).all()),
+        ", ".join(f"{s[0]} {a:.1f} m" for s, a in zip(spots, ahead)),
+    )
+
+
 def rollout(cfg, model, cars, seconds, start_box_only=True):
     import env as env_module
 
@@ -214,6 +250,7 @@ def main() -> int:
     failures += plant_checks(cfg, model)
     print("sensor")
     failures += gate_parity(cfg, model)
+    failures += sensor_on_slopes(cfg, model)
 
     print("env")
     env, infos, rate = rollout(cfg, model, 64, 4.0 if args.quick else 60.0)

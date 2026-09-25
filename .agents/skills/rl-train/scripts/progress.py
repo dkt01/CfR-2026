@@ -272,7 +272,11 @@ def verdict(evals, patience, min_evals, threshold):
             f"{evals[best_index]['steps']} steps",
             **common,
         }
-    if since_best >= patience and (gain is None or gain < threshold):
+    # Window-over-window gain is noise once the best is far behind: a dip
+    # followed by a recovery reads as "gain" forever. A run that has not set a
+    # new best in 3x patience evals has plateaued whatever the windows say.
+    stale = since_best >= 3 * patience
+    if since_best >= patience and (gain is None or gain < threshold or stale):
         drift = "unknown" if gain is None else f"{abs(delta):.1f} m"
         return {
             "verdict": "plateau",

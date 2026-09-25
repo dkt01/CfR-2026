@@ -33,6 +33,12 @@ env:
   start_yaw_noise_deg: 5.0  # uniform +/-
   dealt_speed: [0.0, 2.0]   # m/s for starts dealt part way round
   dealt_finish_margin_m: 6.0
+  deal_on_helix: true
+  # Half the dealt starts go a few meters before a spot where a recent
+  # training episode failed, so the hard obstacles get practiced.
+  fail_start_prob: 0.5
+  fail_backoff_m: [0.5, 6.0]
+  fail_memory: 400          # failures remembered per layout
   # Terminations.
   stall_speed: 0.25         # m/s
   stall_s: 2.5
@@ -72,7 +78,8 @@ prior:
   gap_min_depth: 1.5        # m: a bin this deep or deeper is "open"
   straight_bias: 0.15       # prefer gaps near dead ahead
   yaw_damping: 0.45         # road-wheel rad per rad/s of yaw rate (swept, see prior_sweep)
-  residual_scale: 0.5       # policy steering = prior + this * a0
+  residual_scale: 1.0       # policy steering = prior + this * a0; v1's 0.5
+                            # could not turn in early enough for the helix
   smoothing_s: 0.15         # low-pass on the prior's command
 
 reward:
@@ -117,7 +124,7 @@ randomize:
   speed_noise: [0.0, 0.05]      # m/s, 1 sigma, above the tach floor
 
 train:
-  total_steps: 30000000
+  total_steps: 150000000   # ~9 h; v1's 30M saw the helix too rarely
   n_envs: 256
   n_steps: 64
   batch_size: 4096
@@ -130,5 +137,5 @@ train:
   lr_final_fraction: 0.05
   net_arch: [128, 128]
   log_std_init: -1.0
-  eval_every_steps: 1000000
+  eval_every_steps: 2000000
   eval_episodes_per_layout: 8

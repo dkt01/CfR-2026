@@ -46,6 +46,7 @@ HOOP_ATTEMPT_HALF = 1.5
 # was driven round, which is a miss however it was done.
 HOOP_LATE_M = 1.0
 
+FAILURES = ("crash", "rollover", "hoop_miss", "stall", "off_course", "no_progress")
 OUTCOMES = (
     "finish",
     "crash",
@@ -173,8 +174,10 @@ class ObstacleEnv:
     def _deal_table(self):
         """Per layout: arc lengths a car can be dealt in at, part way round.
 
-        Off the helix (a 1.2 m spiral with a drop either side), clear of the
-        run-in to the finish, and not on top of a bucket.
+        Clear of the run-in to the finish, not on top of a bucket or a hoop.
+        The helix is dealt too (place() sets the car on its segments): it is
+        where v1 crashed, and a policy that only meets it at the end of a
+        ramp climb practices it a few times per million steps.
         """
         e = self.cfg["env"]
         self.deal = []
@@ -184,7 +187,9 @@ class ObstacleEnv:
             for s in np.arange(
                 0.5, line.lap_length - float(e["dealt_finish_margin_m"]), 0.25
             ):
-                if line.helix_start_s - 0.8 <= s <= line.helix_end_s + 0.3:
+                if not e.get("deal_on_helix", True) and (
+                    line.helix_start_s - 0.8 <= s <= line.helix_end_s + 0.3
+                ):
                     continue
                 x, y, _, _ = line.pose_at(s)
                 if (
@@ -199,6 +204,11 @@ class ObstacleEnv:
                     continue
                 ok.append(s)
             self.deal.append(np.asarray(ok))
+        # Where recent training episodes failed, per layout, for dealing
+        # starts a few meters before the obstacles the policy cannot yet do.
+        memory = int(e.get("fail_memory", 400))
+        self.fail_s = np.zeros((len(self.deal), memory))
+        self.fail_n = np.zeros(len(self.deal), np.int64)
 
     # --------------------------------------------------------------- reset
 
@@ -227,6 +237,12 @@ class ObstacleEnv:
             else:
                 table = self.deal[lay[i]]
                 s0[i] = table[self.rng.integers(len(table))]
+                n_fail = min(self.fail_n[lay[i]], self.fail_s.shape[1])
+                if n_fail and self.rng.random() < float(e.get("fail_start_prob", 0.0)):
+                    back = self.rng.uniform(*e["fail_backoff_m"])
+                    target = self.fail_s[lay[i], self.rng.integers(n_fail)] - back
+                    j = np.searchsorted(table, target, side="right") - 1
+                    s0[i] = table[max(j, 0)]
                 x[i], y[i], z[i], yaw[i] = self.lines.lines[lay[i]].pose_at(s0[i])
                 speed[i] = self.rng.uniform(*e["dealt_speed"])
         x += self.rng.uniform(-xy, xy, k)
@@ -377,6 +393,7 @@ class ObstacleEnv:
             clearance,
             dsteer,
             ddsteer,
+            covered / self.lines.lap_length[lay],
         )
         self.prev_dsteer = dsteer
         self.prev_steer = steer
@@ -427,6 +444,10 @@ class ObstacleEnv:
             )
             for i in done:
                 infos[i] = self._episode_info(i, causes[i])
+                if not self.start_box_only and causes[i] in FAILURES:
+                    L = int(lay[i])
+                    self.fail_s[L, self.fail_n[L] % self.fail_s.shape[1]] = self.s[i]
+                    self.fail_n[L] += 1
                 infos[i]["terminal_observation"] = obs[i].copy()
             self._reset_idx(done)
             obs[done] = self.stack.obs[done]

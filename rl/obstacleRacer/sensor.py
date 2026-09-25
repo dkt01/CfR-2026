@@ -166,6 +166,27 @@ def _cast(
     return max_range
 
 
+@nb.njit(cache=True, inline="always")
+def _surface_at(LAY, lay, x0, y0, z0, x1, y1, step):
+    """The followed surface's height at (x1, y1), walked out from the car.
+
+    Rays start at the camera, 0.315 m ahead of the car; on the 19% ramp the
+    surface there is 0.06 m above the car's own, more than one follow step,
+    so starting from the car's height reads the whole ramp as a wall.
+    """
+    d = math.hypot(x1 - x0, y1 - y0)
+    k = max(1, int(d / step))
+    zref = z0
+    for i in range(1, k + 1):
+        f = i / k
+        top = course_model.nearest_layer(
+            LAY, lay, x0 + f * (x1 - x0), y0 + f * (y1 - y0), zref
+        )
+        if abs(top - zref) <= FOLLOW_STEP:
+            zref = top
+    return zref
+
+
 @nb.njit(cache=True, parallel=True)
 def sense(
     LAY,
@@ -204,6 +225,7 @@ def sense(
         cx = x[k] + cam_fwd * cp * math.cos(yaw[k])
         cy = y[k] + cam_fwd * cp * math.sin(yaw[k])
         cz = z[k] + cam_fwd * math.sin(pitch[k]) + cam_h * cp
+        zref0 = _surface_at(LAY, lay[k], x[k], y[k], z[k], cx, cy, step)
         # The segmenter levels with the IMU's attitude, which is not quite
         # the true one: the error tips its idea of "up" by this much.
         dp = np.random.normal(0.0, att_noise)
@@ -225,7 +247,7 @@ def sense(
                     cx,
                     cy,
                     cz,
-                    z[k],
+                    zref0,
                     yaw[k],
                     bearing,
                     el_c,

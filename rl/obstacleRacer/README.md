@@ -17,7 +17,7 @@ Two frames are stacked. `observation.py` builds this, for both training and
 `obstacle_racer_node.py` on the car.
 
 It gives a `DriveCommand`:
-- steering = a map-free follow-the-gap prior + 0.5 × the policy's residual
+- steering = a map-free follow-the-gap prior + the policy's residual (full authority)
 - speed from 0 to 3.5 m/s. The car has no brakes, so speed is limited by
   sight distance.
 
@@ -64,7 +64,10 @@ means the same course in Gazebo.
 Episodes start either:
 - in the start box, (−0.7, 0) ± 0.1 m in x and y and ± 5° in heading, from
   rest. Evaluation always starts here.
-- dealt part way round, with the same noise.
+- dealt part way round, with the same noise, the helix included. Half of
+  these start 0.5-6 m before a spot where a recent training episode failed,
+  so the obstacles the policy cannot yet do get practiced. Progress and the
+  finish bonus count from the episode's own start point.
 
 ## Running
 
