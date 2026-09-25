@@ -25,46 +25,163 @@ import re
 import time
 from pathlib import Path
 
+# The distance is signed. It is arc length along the course centerline, so a
+# policy that runs the loop backwards scores negative -- and an early policy
+# that mostly circles scores either side of zero. An unsigned pattern here
+# does not fail loudly, it just drops those evals, which reads as "the eval
+# callback stopped running" and hides exactly the readings that say the
+# policy is going the wrong way.
 EVAL_RE = re.compile(
-    r"\[deterministic eval\] (\d+) steps: mean ([\d.]+) m over (\d+) episodes"
+    r"\[deterministic eval\] (\d+) steps: mean (-?[\d.]+) m over (\d+) episodes"
 )
 CHUNK_RE = re.compile(
     r"chunk (\d+) (?:finished cleanly|died with status (\d+)) "
     r"\(\+(\d+) steps, (\d+)/(\d+)\)"
 )
+TARGET_RE = re.compile(r"target \d+ steps into (\S+)")
 REW_RE = re.compile(r"\|\s+ep_rew_mean\s+\|\s+([-\d.e+]+)\s+\|")
 STEPS_RE = re.compile(r"bale_follower_(\d+)_steps\.zip")
 
 
-def chunk_offsets(resilient_log):
+RESTART_MARKER = "Wrapping the env in a DummyVecEnv."
+
+# Smallest change in eval distance worth reading as a change at all. The course
+# is 110 m around, so a window-to-window move of under a metre is noise.
+MEANINGFUL_M = 1.0
+
+
+def own_attempt_text(path):
+    """This chunk log's own content, stripped of any leftover prior attempt.
+
+    train_chunk_N.log is opened in append mode and the filename is reused
+    across separate runs (and across a crash-restart within a run), so a
+    fresh attempt's output can land after a previous, unrelated attempt's
+    full log -- including that attempt's own eval lines and traceback. SB3
+    prints RESTART_MARKER exactly once, when the model is constructed, so the
+    text after its LAST occurrence is always this attempt's own and only its
+    own.
+    """
+    text = path.read_text(errors="replace")
+    index = text.rfind(RESTART_MARKER)
+    return text if index == -1 else text[index:]
+
+
+def default_log_dir(checkpoint_dir):
+    """Where this run's logs are, old layout or new.
+
+    train_resilient.sh writes its logs into the checkpoint directory now, so
+    each run's logs cannot collide with another's. Runs from before that
+    change left theirs in the parent, under shared filenames -- so fall back
+    there only when the parent's log actually mentions this run. Falling back
+    unconditionally is what let a directory with no logs of its own (a run
+    that has not started yet, say) display the last run's entire eval history
+    as if it were its own.
+    """
+    if (checkpoint_dir / "train_resilient.log").exists():
+        return checkpoint_dir
+    legacy = checkpoint_dir.parent / "train_resilient.log"
+    if legacy.exists():
+        for line in legacy.read_text(errors="replace").splitlines():
+            match = TARGET_RE.search(line)
+            if match and match.group(1) == checkpoint_dir.name:
+                return checkpoint_dir.parent
+    return checkpoint_dir
+
+
+def chunk_offsets(resilient_log, run_name):
     """Cumulative step offset at the start of each chunk, plus restart notes.
 
     SB3 restarts its own step counter on every resume, so a chunk's eval lines
     report in-chunk steps. train_resilient.sh logs the cumulative total after
     each chunk, and that is what makes the per-chunk numbers comparable.
+
+    train_resilient.log and train_chunk_*.log are shared filenames across every
+    run in the checkpoint parent dir -- a later run reuses "train_chunk_1.log"
+    etc. So only lines logged after THIS run's own "target N steps into
+    <run_name>" marker count; anything before it belongs to a previous run and
+    must not leak into this run's offsets or restart notes.
+
+    The cumulative total in the "chunk N died" line is not trusted when the
+    following "resuming from ..._<steps>_steps.zip" line disagrees with it. A
+    chunk's checkpoints are numbered from zero (SB3 resets the counter every
+    time train.py calls learn()), so the checkpoint a chunk is resumed from
+    states that chunk's own progress directly. Older train_resilient.sh
+    subtracted a leftover checkpoint from a previous run when the directory was
+    reused, which understated the total -- one observed run logged "+13000"
+    for a chunk that had reached 35000. Reading the resume line keeps the step
+    axis right for runs whose logs were written by that version.
     """
     offsets = {1: 0}
     notes = []
     if not resilient_log.exists():
         return offsets, notes
-    for line in resilient_log.read_text(errors="replace").splitlines():
-        match = CHUNK_RE.search(line)
-        if not match:
-            continue
-        chunk, status, gained, cumulative, _target = match.groups()
-        offsets[int(chunk) + 1] = int(cumulative)
+    lines = resilient_log.read_text(errors="replace").splitlines()
+    start = 0
+    for index, line in enumerate(lines):
+        match = TARGET_RE.search(line)
+        if match and match.group(1) == run_name:
+            start = index
+    # Built by summing each chunk's own gain rather than reading the log's
+    # running total, because that total is the quantity the old bug corrupted:
+    # once one chunk is charged too few steps, every cumulative printed after
+    # it inherits the error.
+    running = 0
+    pending = None
+
+    def commit(chunk, gained, status=None):
+        nonlocal running
+        running += gained
+        offsets[chunk + 1] = running
         if status:
+            # Reported here, not where the death is parsed, so the note quotes
+            # the corrected step count rather than the log's understated one.
             notes.append(
                 f"chunk {chunk} died with status {status} after +{gained} steps"
             )
+
+    for line in lines[start:]:
+        if pending is not None and "resuming from" in line:
+            resumed = STEPS_RE.search(line)
+            if resumed:
+                # The checkpoint a chunk resumes from states what that chunk
+                # actually reached, and outranks a smaller logged gain.
+                commit(
+                    pending["chunk"],
+                    max(pending["gained"], int(resumed.group(1))),
+                    pending["status"],
+                )
+                pending = None
+                continue
+        match = CHUNK_RE.search(line)
+        if not match:
+            continue
+        if pending is not None:  # died with no resume line to correct it
+            commit(pending["chunk"], pending["gained"], pending["status"])
+            pending = None
+        chunk, status, gained, _cumulative, _target = match.groups()
+        if status:
+            # Hold it open: the next line may correct its step count.
+            pending = {
+                "chunk": int(chunk),
+                "gained": int(gained),
+                "status": status,
+            }
+        else:
+            commit(int(chunk), int(gained))
+    if pending is not None:
+        commit(pending["chunk"], pending["gained"], pending["status"])
     return offsets, notes
 
 
-def collect_evals(log_dir):
-    offsets, notes = chunk_offsets(log_dir / "train_resilient.log")
+def collect_evals(log_dir, run_name):
+    offsets, notes = chunk_offsets(log_dir / "train_resilient.log", run_name)
     evals = []
     chunk_logs = sorted(
-        log_dir.glob("train_chunk_*.log"),
+        (
+            p
+            for p in log_dir.glob("train_chunk_*.log")
+            if int(re.search(r"(\d+)", p.name).group(1)) in offsets
+        ),
         key=lambda p: int(re.search(r"(\d+)", p.name).group(1)),
     )
     if not chunk_logs:
@@ -73,7 +190,7 @@ def collect_evals(log_dir):
         match = re.search(r"train_chunk_(\d+)", path.name)
         chunk = int(match.group(1)) if match else 1
         offset = offsets.get(chunk, 0)
-        for line in path.read_text(errors="replace").splitlines():
+        for line in own_attempt_text(path).splitlines():
             found = EVAL_RE.search(line)
             if found:
                 in_chunk, distance, episodes = found.groups()
@@ -88,13 +205,15 @@ def collect_evals(log_dir):
     return evals, notes
 
 
-def recent_rewards(log_dir, count=3):
+def recent_rewards(log_dir, valid_chunks, count=3):
     values = []
-    logs = sorted(log_dir.glob("train_chunk_*.log")) or list(log_dir.glob("rl_run.log"))
+    logs = sorted(
+        p
+        for p in log_dir.glob("train_chunk_*.log")
+        if int(re.search(r"(\d+)", p.name).group(1)) in valid_chunks
+    ) or list(log_dir.glob("rl_run.log"))
     for path in logs:
-        values.extend(
-            float(value) for value in REW_RE.findall(path.read_text(errors="replace"))
-        )
+        values.extend(float(value) for value in REW_RE.findall(own_attempt_text(path)))
     return values[-count:]
 
 
@@ -130,22 +249,31 @@ def verdict(evals, patience, min_evals, threshold):
     recent = distances[-window:]
     previous = distances[-2 * window : -window]
     gain = None
+    delta = None
     if previous:
         previous_mean = sum(previous) / len(previous)
         recent_mean = sum(recent) / len(recent)
-        gain = (recent_mean - previous_mean) / max(previous_mean, 1e-6)
+        delta = recent_mean - previous_mean
+        # Divide by the magnitude, floored at MEANINGFUL_M. The distance is
+        # signed now, so a raw ratio against a mean near zero -- or a negative
+        # one -- produces nonsense: a window sitting at -0.23 m reported
+        # "-15000000%" and flipped the sign of every comparison.
+        gain = delta / max(abs(previous_mean), MEANINGFUL_M)
 
     common = {"evals_since_best": since_best, "steps_since_best": steps_since_best}
-    if gain is not None and gain < -0.10:
+    # A regression has to be a real loss of distance, not noise: two windows
+    # either side of zero on a 110 m course differ by centimetres, and calling
+    # that "regressing" buries an actual collapse when one happens.
+    if gain is not None and gain < -0.10 and delta < -MEANINGFUL_M:
         return {
             "verdict": "regressing",
-            "reason": f"last {window} evals average {gain * 100:+.0f}% against the "
+            "reason": f"last {window} evals average {delta:+.1f} m against the "
             f"{window} before them; best was {distances[best_index]:.1f} m at "
             f"{evals[best_index]['steps']} steps",
             **common,
         }
     if since_best >= patience and (gain is None or gain < threshold):
-        drift = "unknown" if gain is None else f"{abs(gain) * 100:.1f}%"
+        drift = "unknown" if gain is None else f"{abs(delta):.1f} m"
         return {
             "verdict": "plateau",
             "reason": f"no new best in {since_best} evals ({steps_since_best} steps); "
@@ -194,8 +322,8 @@ def main():
         "--logs",
         default=None,
         help="directory holding train_resilient.log and train_chunk_*.log "
-        "(defaults to the checkpoint directory's parent, which is where "
-        "train_resilient.sh writes them)",
+        "(defaults to the checkpoint directory, or its parent for runs "
+        "started before the logs moved there)",
     )
     parser.add_argument(
         "--patience",
@@ -214,15 +342,20 @@ def main():
     args = parser.parse_args()
 
     checkpoint_dir = Path(args.dir).resolve()
-    log_dir = Path(args.logs).resolve() if args.logs else checkpoint_dir.parent
+    log_dir = (
+        Path(args.logs).resolve() if args.logs else default_log_dir(checkpoint_dir)
+    )
 
-    evals, notes = collect_evals(log_dir)
+    evals, notes = collect_evals(log_dir, checkpoint_dir.name)
+    valid_chunks, _ = chunk_offsets(
+        log_dir / "train_resilient.log", checkpoint_dir.name
+    )
     state = checkpoint_state(checkpoint_dir)
     result = {
         "checkpoints": state,
         "evals": evals,
         "restarts": notes,
-        "recent_ep_rew_mean": recent_rewards(log_dir),
+        "recent_ep_rew_mean": recent_rewards(log_dir, valid_chunks),
         "slope_m_per_10k_steps": slope_per_10k(evals),
     }
     result.update(verdict(evals, args.patience, args.min_evals, args.threshold))

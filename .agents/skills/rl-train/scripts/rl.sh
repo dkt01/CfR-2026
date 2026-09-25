@@ -10,6 +10,7 @@
 #   rl.sh start [--course speed|obstacle] [--steps N] [--dir NAME]
 #               [--resume-from PATH] [--sensors|--no-sensors] [--curriculum] [--force]
 #   rl.sh status [--dir NAME]
+#   rl.sh tui [--dir NAME|PATH] [--interval SECONDS] [--once]  # live dashboard
 #   rl.sh logs [--lines N]
 #   rl.sh eval --checkpoint PATH [--episodes N]
 #   rl.sh stop
@@ -46,6 +47,16 @@ REPO_DIR="$(cd "$SCRIPT_DIR" && git rev-parse --show-toplevel)"
 RL_DIR="$REPO_DIR/rl/bale_follower"
 
 PYTHON_BIN="$(command -v python3 || command -v python)"
+
+# MSYS_NO_PATHCONV also stops Git Bash converting paths handed to a Windows
+# python.exe, which then cannot open /c/Users/...; convert those explicitly.
+winpath() {
+    if command -v cygpath >/dev/null 2>&1; then
+        cygpath -w "$1"
+    else
+        printf '%s' "$1"
+    fi
+}
 
 log() { echo "[rl.sh] $*"; }
 die() { echo "[rl.sh] error: $*" >&2; exit 1; }
@@ -256,6 +267,34 @@ status() {
     "$PYTHON_BIN" "$SCRIPT_DIR/progress.py" --dir "$dir" --logs "$RL_DIR"
 }
 
+# ---- tui ------------------------------------------------------------------
+
+tui() {
+    local dir="" interval=5 extra=()
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --dir) dir="$2"; shift 2 ;;
+            --interval) interval="$2"; shift 2 ;;
+            --once) extra+=("--once"); shift ;;
+            *) die "unknown tui option '$1'" ;;
+        esac
+    done
+
+    # A path that exists is used as is -- that is how an rl/obstacleRacer run
+    # (rl/obstacleRacer/runs/NAME) is watched; a bare name is a bale_follower
+    # checkpoint directory, as for status.
+    if [ -z "$dir" ]; then
+        dir="$(ls -td "$RL_DIR"/checkpoints* 2>/dev/null | head -1 || true)"
+        [ -n "$dir" ] || die "no checkpoint directory found under rl/bale_follower"
+    elif [ ! -d "$dir" ]; then
+        dir="$RL_DIR/$dir"
+    fi
+
+    "$PYTHON_BIN" "$(winpath "$SCRIPT_DIR/tui.py")" --dir "$(winpath "$dir")" \
+        --root "$(winpath "$RL_DIR")" --container "$CONTAINER" \
+        --interval "$interval" "${extra[@]}"
+}
+
 # ---- logs -----------------------------------------------------------------
 
 logs() {
@@ -320,6 +359,7 @@ case "$command" in
     setup) setup "$@" ;;
     start) start "$@" ;;
     status) status "$@" ;;
+    tui) tui "$@" ;;
     logs) logs "$@" ;;
     eval) evaluate "$@" ;;
     stop) stop "$@" ;;

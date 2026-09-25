@@ -141,29 +141,40 @@ HOOPS = [
 ]
 HOOP_BASE_LENGTH = 0.709
 
-# The wall between the car wash's open area and the bucket section is four
+# The banked turn's plywood wall, measured off bank.stl in the mesh's own
+# frame: (name, (center x, center y), (size x, size y)) in meters.  22 in
+# tall, from the floor.  The mesh's +x edge is the bank's high side.
+BANK_WALL_HEIGHT = 22 * INCH
+BANK_WALLS = (
+    ("wall_outer", (0.6095, 0.0), (0.013, 3.252)),
+    ("wall_end_a", (-0.0065, 1.632), (1.219, 0.012)),
+    ("wall_end_b", (-0.0065, -1.632), (1.219, 0.012)),
+)
+
+# The bucket section's east wall is four
 # bale-widths tall.  The drawing only puts three bales on it, leaving the
 # fourth's width as the entrance; obstacle_randomizer_node now parks a
 # different one of the four off-course on every draw, so all four have to be
 # their own model rather than baked into the static bale wall like the rest
 # of the 121 dxf_obstacle_bales() bales.  (x feet, y feet, yaw radians in the
 # world frame -- unlike HOOPS above, these are the pose the bale stands at
-# directly, not a DXF-frame angle to be flipped by build_bales.)  Ordered
-# nearest the car wash to nearest the bucket-room corner; index 0, nearest
-# the car wash, is the one left parked on reset, matching the layout the
-# drawing showed before this was randomized.
+# directly, not a DXF-frame angle to be flipped by build_bales.)  They are
+# the bucket section's east wall, where the car enters from the east
+# corridor, ordered north to south; index 0, the slot the drawing leaves
+# open, is the one left parked on reset.  The wall on the bucket section's
+# west side, toward the hoops, is not randomized: its opening is the exit.
 GAP_BALES = [
-    (100.406, 115.035, 4.71239),
-    (101.072, 117.869, 0.00000),
-    (100.406, 120.035, 4.71239),
-    (100.406, 122.867, 4.71239),
+    (86.894, 113.645, 4.71239),
+    (86.894, 116.828, 4.71239),
+    (86.894, 119.661, 4.71239),
+    (86.894, 122.494, 4.71239),
 ]
 # The three of the four GAP_BALES that are real dxf_obstacle_bales() hatches
-# (all but index 0, which does not exist in the drawing) land inside this box
-# in world meters.  build_bales() excludes them so they are not drawn twice;
-# picked by position rather than DXF order, since HATCH order is not stable
-# across edits to the drawing.
-GAP_WALL_BOUNDS = ((-1.3, -4.4), (-0.7, -2.4))
+# (all but index 0, which the drawing leaves open as the entrance) land inside
+# this box in world meters.  build_bales() excludes them so they are not drawn
+# twice; picked by position rather than DXF order, since HATCH order is not
+# stable across edits to the drawing.
+GAP_WALL_BOUNDS = ((3.0, -4.4), (3.5, -2.0))
 # Reuses the buckets' off-course row, one slot past the highest bucket index.
 GAP_BALE_PARKING_INDEX = BUCKET_MAX
 
@@ -413,7 +424,7 @@ def build_bales(bales) -> str:
     on_gap_wall = [(x, y) for x, y, _ in cleared if gx0 <= x <= gx1 and gy0 <= y <= gy1]
     if len(on_gap_wall) != 3:
         raise RuntimeError(
-            "Expected 3 bales on the wide-area/bucket wall within "
+            "Expected 3 bales on the bucket section's east wall within "
             f"GAP_WALL_BOUNDS, found {len(on_gap_wall)} -- update GAP_BALES "
             "and GAP_WALL_BOUNDS to match the drawing"
         )
@@ -913,8 +924,22 @@ def build_bank() -> str:
         PLYWOOD,
         visual=False,
     )
-    return "    <!-- 8.5 degree banked turn, 48 in by 128 in. -->\n" + static_model(
-        "bank", body
+    # The plywood wall round it -- along the high, outboard edge and across
+    # both ends, leaving the low side open for the car to come in and go
+    # out.  bank.stl already draws it; without these it was only drawn, and a
+    # car that ran wide drove through it and off the high edge.  Positions
+    # are the mesh's own, in its frame, turned by the same half turn.
+    for name, (local_x, local_y), (size_x, size_y) in BANK_WALLS:
+        body += box(
+            name,
+            (x - local_x, y - local_y, BANK_WALL_HEIGHT / 2, 0, 0, 0),
+            (size_x, size_y, BANK_WALL_HEIGHT),
+            PLYWOOD,
+            visual=False,
+        )
+    return (
+        "    <!-- 8.5 degree banked turn, 48 in by 128 in, walled on three sides. -->\n"
+        + static_model("bank", body)
     )
 
 
@@ -927,13 +952,13 @@ def parking_spot(index: int) -> tuple[float, float]:
 def build_gap_bales() -> str:
     """One model per wall bale, parked here by default at index 0.
 
-    Matches the fixed layout the drawing showed before this was randomized:
-    index 0 (nearest the car wash) stands off-course, the other three stand
-    on the wall.
+    Matches the layout the drawing shows: index 0, the slot it leaves open
+    as the entrance, stands off-course, the other three stand on the wall.
     """
     out = (
-        "    <!-- Gap bales: the wall between the car wash's open area and"
-        " the bucket section is four bale-widths tall. obstacle_randomizer_node"
+        "    <!-- Gap bales: the bucket section's east wall, where the car"
+        " enters it from the east corridor, is four bale-widths tall."
+        " obstacle_randomizer_node"
         " parks one of the four off-course on every draw, moving the"
         " one-bale entrance rather than leaving it fixed. -->\n"
     )
@@ -1270,12 +1295,12 @@ obstacle_randomizer:
       # Where the drawing itself puts them; the reset service restores these.
       nominal:
 {nominal}    gap_bales:
-      # The wall between the car wash's open area and the bucket section is
-      # four bale-widths tall.  Exactly one of the four stands off-course at
-      # `parking` on every draw, leaving a one-bale gap for the entrance; the
-      # other three stand at their own position on the wall.  `default_gap`
-      # is which one is left out on reset, matching the layout the drawing
-      # showed before this was randomized.
+      # The bucket section's east wall, where the car enters it from the
+      # east corridor, is four bale-widths tall.  Exactly one of the four
+      # stands off-course at `parking` on every draw, leaving a one-bale gap
+      # for the entrance; the other three stand at their own position on the
+      # wall.  `default_gap` is which one is left out on reset, matching the
+      # opening the drawing shows.
       names: [{gap_names}]
       default_gap: gap_bale_0
       parking: [{gap_parking_x:.4f}, {gap_parking_y:.4f}]
