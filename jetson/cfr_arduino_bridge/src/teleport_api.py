@@ -24,6 +24,18 @@ SPAWN_HEIGHT_M = 0.02
 
 MAX_ABS_X = 30.0
 MAX_ABS_Y = 20.0
+# The Obstacle Course's bridge deck is the highest drivable surface, at
+# 25 inches. Anything above this is a caller mistake, not a place the car
+# can be put down.
+MAX_GROUND_Z = 1.0
+# gz service's own wait for Gazebo's reply. 2000ms was fine on a quiet host
+# but timed out routinely with a second training container's Gazebo server
+# sharing the same CPU (observed: "Service call timed out" mid-run). 20000ms,
+# then 40000ms, were each blown past in turn -- the other container's CPU use
+# is spiky (observed 237% mid-spike vs. this one's 20%) rather than a steady
+# load, so no fixed timeout is truly safe, only progressively less likely to
+# lose the race. Tripled from the last value for real margin against a spike.
+GZ_SERVICE_TIMEOUT_MS = 120000
 
 
 class TeleportHandler(BaseHTTPRequestHandler):
@@ -48,15 +60,28 @@ class TeleportHandler(BaseHTTPRequestHandler):
             x = float(payload["x"])
             y = float(payload["y"])
             heading = float(payload["heading"])
+            # Height of the *ground* under the car, not of the car. Optional
+            # and 0.0 by default, so every existing caller is unchanged.
+            # The Obstacle Course needs it: its ramp and bridge deck are
+            # 0.635 m up, and without this a teleport onto them drops the
+            # car through to the floor, which is why RL training could only
+            # ever be dealt into the flat part of that course.
+            ground_z = float(payload.get("z", 0.0))
         except (KeyError, TypeError, ValueError):
             self.respond(
                 400, {"success": False, "message": "x, y, and heading must be numbers"}
             )
             return
 
-        if not all(math.isfinite(value) for value in (x, y, heading)):
+        if not all(math.isfinite(value) for value in (x, y, heading, ground_z)):
             self.respond(
                 400, {"success": False, "message": "pose values must be finite"}
+            )
+            return
+        if not 0.0 <= ground_z <= MAX_GROUND_Z:
+            self.respond(
+                400,
+                {"success": False, "message": "z is outside the course's height range"},
             )
             return
         if abs(x) > MAX_ABS_X or abs(y) > MAX_ABS_Y:
@@ -72,7 +97,7 @@ class TeleportHandler(BaseHTTPRequestHandler):
         half_heading = math.radians(heading) / 2.0
         request = (
             f'name: "{MODEL}" '
-            f"position {{ x: {x:.9g} y: {y:.9g} z: {SPAWN_HEIGHT_M:.9g} }} "
+            f"position {{ x: {x:.9g} y: {y:.9g} z: {ground_z + SPAWN_HEIGHT_M:.9g} }} "
             "orientation { x: 0 y: 0 "
             f"z: {math.sin(half_heading):.17g} w: {math.cos(half_heading):.17g} }}"
         )
@@ -86,13 +111,20 @@ class TeleportHandler(BaseHTTPRequestHandler):
             "--reptype",
             "gz.msgs.Boolean",
             "--timeout",
-            "2000",
+            str(GZ_SERVICE_TIMEOUT_MS),
             "--req",
             request,
         ]
         try:
+            # A couple seconds above --timeout above: gz service should return
+            # on its own within that budget, so this is only a backstop against
+            # gz itself hanging, not the normal path out of a slow response.
             result = subprocess.run(
-                command, capture_output=True, text=True, timeout=3, check=False
+                command,
+                capture_output=True,
+                text=True,
+                timeout=GZ_SERVICE_TIMEOUT_MS / 1000 + 2,
+                check=False,
             )
         except FileNotFoundError:
             self.respond(

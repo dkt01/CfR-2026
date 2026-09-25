@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 #
 # Sync the Jetson ROS 2 packages from a development host to the Orin, and with
-# them the formulaOne driver and the one policy it races with.
+# them the two RL drivers: formulaOne (Speed Course) with the one policy it
+# races with, and obstacleRacer (Obstacle Course) with its policy if one is
+# named.
 #
 # Source only: the host is x86_64 and the Orin is aarch64, so build artifacts
 # are never transferred.  Use --build to compile on the Orin after syncing.
@@ -11,15 +13,19 @@
 #   ~/software/                 jetson/ (the ROS packages and scripts)
 #   ~/software/formulaOne/      rl/formulaOne/ code, plus the chosen policy's
 #                               policy.npz and config.yaml at its top level
-#   ~/jetson -> ~/software      formulaOne finds the course files and
+#   ~/software/obstacleRacer/   rl/obstacleRacer/ code and config.yaml, plus
+#                               the chosen policy's policy.npz and config.yaml
+#                               at its top level when --racer-policy is given
+#   ~/jetson -> ~/software      both drivers find the course files and
 #                               record_run.py under <two dirs up>/jetson/,
-#                               as it does in the repo
+#                               as they do in the repo
 
 set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly SOURCE_DIR="$(dirname "${SCRIPT_DIR}")"
 readonly F1_DIR="$(dirname "${SOURCE_DIR}")/rl/formulaOne"
+readonly RACER_DIR="$(dirname "${SOURCE_DIR}")/rl/obstacleRacer"
 
 REMOTE_HOST="${ORIN_HOST:-tejam@192.168.55.1}"
 REMOTE_DIR="${ORIN_DIR:-~/software}"
@@ -29,6 +35,12 @@ ROS_DISTRO_NAME="${ORIN_ROS_DISTRO:-jazzy}"
 # committed, or failing that from rl/formulaOne/runs/<run>/.
 F1_RUN="${F1_RUN:-v12}"
 SYNC_F1=true
+# The obstacle racer's policy, from rl/obstacleRacer/runs/<run>/ (policy.npz,
+# made by export_policy.py, and the run's config.yaml).  Empty syncs the code
+# and the tree's config.yaml only -- enough for driver:=prior, and it leaves
+# any policy already on the Orin alone.
+RACER_RUN="${RACER_RUN:-}"
+SYNC_RACER=true
 
 DRY_RUN=false
 DELETE=false
@@ -77,7 +89,11 @@ Options:
   -d, --dir DIR     Destination directory    (env ORIN_DIR, default: ~/software)
   -w, --ws DIR      colcon workspace on Orin (env ORIN_WS, default: ~/ros2_ws)
   -p, --policy RUN  formulaOne policy to deploy (env F1_RUN, default: v12)
-      --no-f1       Sync jetson/ only, not formulaOne or its policy
+      --no-f1       Do not sync formulaOne or its policy
+  -r, --racer-policy RUN
+                    obstacleRacer policy to deploy, from rl/obstacleRacer/runs/RUN
+                    (env RACER_RUN, default: none -- code and config only)
+      --no-racer    Do not sync obstacleRacer
   -n, --dry-run    Show what would transfer without changing anything
       --delete      Remove files on the Orin that no longer exist locally
   -b, --build       Run colcon build on the Orin after syncing
@@ -88,6 +104,7 @@ Examples:
   $(basename "$0") --dry-run
   $(basename "$0") --host orin.local --build
   ORIN_HOST=tejam@192.168.55.1 $(basename "$0") --build --test
+  $(basename "$0") --racer-policy v4 --build
 EOF
 }
 
@@ -111,6 +128,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-f1)
       SYNC_F1=false
+      shift
+      ;;
+    -r | --racer-policy)
+      RACER_RUN="$2"
+      shift 2
+      ;;
+    --no-racer)
+      SYNC_RACER=false
       shift
       ;;
     -n | --dry-run)
@@ -236,6 +261,20 @@ if [[ "${SYNC_F1}" == true ]]; then
   echo "formulaOne policy: ${F1_POLICY_DIR#"$(dirname "$(dirname "${F1_DIR}")")"/}"
 fi
 
+if [[ "${SYNC_RACER}" == true && -n "${RACER_RUN}" ]]; then
+  RACER_POLICY_DIR="${RACER_DIR}/runs/${RACER_RUN}"
+  if [[ ! -f "${RACER_POLICY_DIR}/policy.npz" || ! -f "${RACER_POLICY_DIR}/config.yaml" ]]; then
+    echo "error: no policy.npz + config.yaml in ${RACER_POLICY_DIR}" >&2
+    echo "       export one first:" >&2
+    echo "         cd rl/obstacleRacer && .venv/Scripts/python.exe export_policy.py \\" >&2
+    echo "           runs/${RACER_RUN}/best_model.zip -o runs/${RACER_RUN}/policy.npz" >&2
+    exit 1
+  fi
+  echo "obstacleRacer policy: rl/obstacleRacer/runs/${RACER_RUN}"
+elif [[ "${SYNC_RACER}" == true ]]; then
+  echo "obstacleRacer: code and config only, no policy (--racer-policy RUN to send one)"
+fi
+
 # What gets synced is exactly one NUL-delimited list of paths relative to
 # the local tree, consumed identically by both the rsync and scp-fallback paths
 # below, so they can never again disagree on what to exclude (see the git
@@ -337,11 +376,33 @@ if [[ "${SYNC_F1}" == true ]]; then
     [[ "${DRY_RUN}" == true ]] && cache_args+=(--dry-run)
     rsync "${cache_args[@]}" "${F1_DIR}/.cache/" "${REMOTE_HOST}:${F1_REMOTE}/.cache/"
   fi
+fi
 
-  # formulaOne resolves the course files and record_run.py as
-  # <two dirs above itself>/jetson/..., which is the repo's layout.  Here that
-  # is ~/jetson, so point it at the synced jetson/ tree.  Never replaces a
-  # real directory of that name.
+if [[ "${SYNC_RACER}" == true ]]; then
+  RACER_REMOTE="${REMOTE_DIR}/obstacleRacer"
+  # The driver and its launch files.  runs/ and .venv are gitignored, so
+  # list_files leaves them out.  The tree's config.yaml goes across (the prior
+  # driver needs one) unless a policy is named, whose own config replaces it:
+  # a policy must drive with the config it was trained under.
+  if [[ -n "${RACER_RUN}" ]]; then
+    list_files "${RACER_DIR}" | grep -z -v -E '^config\.yaml$' >"${FILE_LIST}"
+  else
+    list_files "${RACER_DIR}" >"${FILE_LIST}"
+  fi
+  sync_tree "${RACER_DIR}" "${RACER_REMOTE}"
+
+  if [[ -n "${RACER_RUN}" ]]; then
+    echo "policy ${RACER_RUN} -> ${REMOTE_HOST}:${RACER_REMOTE}/"
+    copy_file "${RACER_POLICY_DIR}/policy.npz" "${RACER_REMOTE}/policy.npz"
+    copy_file "${RACER_POLICY_DIR}/config.yaml" "${RACER_REMOTE}/config.yaml"
+  fi
+fi
+
+if [[ "${SYNC_F1}" == true || "${SYNC_RACER}" == true ]]; then
+  # Both drivers resolve the course files and record_run.py as
+  # <two dirs above themselves>/jetson/..., which is the repo's layout.  Here
+  # that is ~/jetson, so point it at the synced jetson/ tree.  Never replaces
+  # a real directory of that name.
   link_parent="$(dirname "${REMOTE_DIR}")"
   if [[ "${DRY_RUN}" == true ]]; then
     echo "would link ${link_parent}/jetson -> ${REMOTE_DIR}"
@@ -349,7 +410,7 @@ if [[ "${SYNC_F1}" == true ]]; then
     "${SSH_CMD[@]}" "${REMOTE_HOST}" "
       link=${link_parent}/jetson
       if [ -e \"\$link\" ] && [ ! -L \"\$link\" ]; then
-        echo \"warning: \$link exists and is not a symlink; formulaOne will not find the course\" >&2
+        echo \"warning: \$link exists and is not a symlink; the RL drivers will not find the course or record_run.py\" >&2
       else
         ln -sfn ${REMOTE_DIR} \"\$link\" && echo \"linked \$link -> ${REMOTE_DIR}\"
       fi
@@ -406,3 +467,7 @@ echo
 echo "on the Orin:"
 echo "  source ${REMOTE_WS}/install/setup.bash"
 echo "  ros2 launch cfr_arduino_bridge arduino_bridge.launch.py"
+if [[ "${SYNC_RACER}" == true ]]; then
+  echo "obstacle racer (with launch.sh --no-cmd-vel up, E-Stop in hand):"
+  echo "  ros2 launch ${REMOTE_DIR}/obstacleRacer/obstacle_racer_car.launch.py speed_scale:=0.3"
+fi

@@ -141,31 +141,72 @@ HOOPS = [
 ]
 HOOP_BASE_LENGTH = 0.709
 
-# The wall between the car wash's open area and the bucket section is four
+# The banked turn's plywood wall, measured off bank.stl in the mesh's own
+# frame: (name, (center x, center y), (size x, size y)) in meters.  22 in
+# tall, from the floor.  The mesh's +x edge is the bank's high side.
+BANK_WALL_HEIGHT = 22 * INCH
+BANK_WALLS = (
+    ("wall_outer", (0.6095, 0.0), (0.013, 3.252)),
+    ("wall_end_a", (-0.0065, 1.632), (1.219, 0.012)),
+    ("wall_end_b", (-0.0065, -1.632), (1.219, 0.012)),
+)
+
+# The bucket section's east wall is four
 # bale-widths tall.  The drawing only puts three bales on it, leaving the
 # fourth's width as the entrance; obstacle_randomizer_node now parks a
 # different one of the four off-course on every draw, so all four have to be
 # their own model rather than baked into the static bale wall like the rest
 # of the 121 dxf_obstacle_bales() bales.  (x feet, y feet, yaw radians in the
 # world frame -- unlike HOOPS above, these are the pose the bale stands at
-# directly, not a DXF-frame angle to be flipped by build_bales.)  Ordered
-# nearest the car wash to nearest the bucket-room corner; index 0, nearest
-# the car wash, is the one left parked on reset, matching the layout the
-# drawing showed before this was randomized.
+# directly, not a DXF-frame angle to be flipped by build_bales.)  They are
+# the bucket section's east wall, where the car enters from the east
+# corridor, ordered north to south; index 0, the slot the drawing leaves
+# open, is the one left parked on reset.  The wall on the bucket section's
+# west side, toward the hoops, is not randomized: its opening is the exit.
 GAP_BALES = [
-    (100.406, 115.035, 4.71239),
-    (101.072, 117.869, 0.00000),
-    (100.406, 120.035, 4.71239),
-    (100.406, 122.867, 4.71239),
+    (86.894, 113.645, 4.71239),
+    (86.894, 116.828, 4.71239),
+    (86.894, 119.661, 4.71239),
+    (86.894, 122.494, 4.71239),
 ]
 # The three of the four GAP_BALES that are real dxf_obstacle_bales() hatches
-# (all but index 0, which does not exist in the drawing) land inside this box
-# in world meters.  build_bales() excludes them so they are not drawn twice;
-# picked by position rather than DXF order, since HATCH order is not stable
-# across edits to the drawing.
-GAP_WALL_BOUNDS = ((-1.3, -4.4), (-0.7, -2.4))
+# (all but index 0, which the drawing leaves open as the entrance) land inside
+# this box in world meters.  build_bales() excludes them so they are not drawn
+# twice; picked by position rather than DXF order, since HATCH order is not
+# stable across edits to the drawing.
+GAP_WALL_BOUNDS = ((3.0, -4.4), (3.5, -2.0))
 # Reuses the buckets' off-course row, one slot past the highest bucket index.
 GAP_BALE_PARKING_INDEX = BUCKET_MAX
+
+# The Wide Section's own bales.  The drawing calls the section "approx 11' by
+# 26' open area with changeable boundaries", so these seven are movable
+# models (wide_bale_<number>) that obstacle_randomizer_node places anywhere
+# in the section, at any yaw, keeping a 20 in track through it (the course's
+# guarantee).  Picked by where the drawing puts them, in world meters, rather
+# than by number, since HATCH order is not stable; the numbers are the
+# course_bales index each had, so the names match maps of the course.
+WIDE_BALES = [
+    (107, 6.0319, -7.9883),
+    (112, 6.1526, -6.5450),
+    (113, 5.9945, -4.8310),
+    (114, 5.9896, -3.9669),
+    (115, 5.4901, -6.5407),
+    (116, 5.1067, -1.3100),
+    (117, 4.3608, -1.3055),
+]
+# Where a Wide Section bale may stand (x0, y0, x1, y1), the potholes lane's
+# mouth it must keep out of (x, y, yaw, length, width), the box the 20 in
+# path is found in, and the path's ends: the lane's mouth, and -- when the
+# layout has no gap bales -- the drawing's entrance slot.
+WIDE_BOUNDS = (3.47, -9.25, 6.60, -0.87)
+WIDE_KEEP_OUT = (3.45, -8.20, 0.0, 0.90, 2.20)
+WIDE_PATH_BOUNDS = (3.00, -9.30, 6.90, -0.60)
+WIDE_ENTRY = (3.35, -8.25)
+WIDE_MIN_TRACK = 20 * INCH
+WIDE_GRID = 0.04
+# The fixed bales listed as the section's walls: every course bale whose
+# center is in this box.
+WIDE_WALL_BOX = (2.0, -9.9, 7.3, 0.1)
 
 # The direction the car drives away from the start line.  to_world() turns
 # the drawing so that this is +x, which is what makes a path goal read the
@@ -395,11 +436,15 @@ WHITE = "1 1 1 1"
 GRAVEL_GRAY = "0.44 0.43 0.40 1"
 
 
-def build_bales(bales) -> str:
-    # Placed in world meters before anything is written out, because the one
-    # or two bales the start signal's board stands in have to move along the
-    # wall to clear it, and that is a world-space measurement against the
-    # board's footprint.  See start_signal.clear_bales.
+def placed_bales(bales) -> list[tuple[float, float, float]]:
+    """The course_bales in world meters, numbered as the world numbers them.
+
+    Placed in world meters before anything is written out, because the one
+    or two bales the start signal's board stands in have to move along the
+    wall to clear it, and that is a world-space measurement against the
+    board's footprint.  See start_signal.clear_bales.  The gap-bale wall's
+    three drawn bales are left out: they are their own models.
+    """
     placed = [(*to_world(x_ft, y_ft), yaw + math.pi) for x_ft, y_ft, yaw in bales]
     cleared = start_signal.clear_bales(
         placed, SIGNAL_POSITION, LANE_HEADING, (BALE_LENGTH, BALE_WIDTH)
@@ -412,18 +457,41 @@ def build_bales(bales) -> str:
     on_gap_wall = [(x, y) for x, y, _ in cleared if gx0 <= x <= gx1 and gy0 <= y <= gy1]
     if len(on_gap_wall) != 3:
         raise RuntimeError(
-            "Expected 3 bales on the wide-area/bucket wall within "
+            "Expected 3 bales on the bucket section's east wall within "
             f"GAP_WALL_BOUNDS, found {len(on_gap_wall)} -- update GAP_BALES "
             "and GAP_WALL_BOUNDS to match the drawing"
         )
-    cleared = [
+    return [
         (x, y, yaw)
         for x, y, yaw in cleared
         if not (gx0 <= x <= gx1 and gy0 <= y <= gy1)
     ]
 
+
+def wide_bale_number(x: float, y: float):
+    """The WIDE_BALES number of a bale standing at (x, y), or None."""
+    for number, wx, wy in WIDE_BALES:
+        if math.hypot(x - wx, y - wy) < 0.02:
+            return number
+    return None
+
+
+def build_bales(bales) -> str:
+    cleared = placed_bales(bales)
+    wide = [index for index, (x, y, _) in enumerate(cleared) if wide_bale_number(x, y)]
+    if sorted(wide_bale_number(*cleared[i][:2]) for i in wide) != sorted(
+        n for n, _, _ in WIDE_BALES
+    ):
+        raise RuntimeError(
+            "WIDE_BALES do not match the drawing's bales -- update them to "
+            "the Wide Section bales' world positions"
+        )
+
     body = ""
     for index, (x, y, yaw) in enumerate(cleared):
+        # Numbered in place, so every other bale keeps its number.
+        if wide_bale_number(x, y):
+            continue
         body += box(
             f"bale_{index}",
             (x, y, BALE_HEIGHT / 2, 0, 0, yaw),
@@ -929,8 +997,22 @@ def build_bank() -> str:
         BATTLESHIP_GRAY,
         visual=False,
     )
-    return "    <!-- 8.5 degree banked turn, 48 in by 128 in. -->\n" + static_model(
-        "bank", body
+    # The plywood wall round it -- along the high, outboard edge and across
+    # both ends, leaving the low side open for the car to come in and go
+    # out.  bank.stl already draws it; without these it was only drawn, and a
+    # car that ran wide drove through it and off the high edge.  Positions
+    # are the mesh's own, in its frame, turned by the same half turn.
+    for name, (local_x, local_y), (size_x, size_y) in BANK_WALLS:
+        body += box(
+            name,
+            (x - local_x, y - local_y, BANK_WALL_HEIGHT / 2, 0, 0, 0),
+            (size_x, size_y, BANK_WALL_HEIGHT),
+            BATTLESHIP_GRAY,
+            visual=False,
+        )
+    return (
+        "    <!-- 8.5 degree banked turn, 48 in by 128 in, walled on three sides. -->\n"
+        + static_model("bank", body)
     )
 
 
@@ -940,16 +1022,47 @@ def parking_spot(index: int) -> tuple[float, float]:
     return x - BUCKET_PARKING_PITCH * index, y
 
 
+def build_wide_bales(bales) -> str:
+    """One model per Wide Section bale, where the drawing puts it."""
+    out = (
+        "    <!-- Wide Section bales: the drawing calls the section an open area\n"
+        "         with changeable boundaries, so obstacle_randomizer_node moves\n"
+        "         these (wide_bales in obstacle_course_layout.yaml).  Placed here\n"
+        "         where the drawing puts them. -->\n"
+    )
+    by_number = {
+        wide_bale_number(x, y): (x, y, yaw)
+        for x, y, yaw in placed_bales(bales)
+        if wide_bale_number(x, y)
+    }
+    for number, _, _ in WIDE_BALES:
+        x, y, yaw = by_number[number]
+        body = box(
+            "bale",
+            (0, 0, BALE_HEIGHT / 2, 0, 0, 0),
+            (BALE_LENGTH, BALE_WIDTH, BALE_HEIGHT),
+            STRAW,
+            friction=BALE_FRICTION,
+        )
+        out += (
+            f'    <model name="wide_bale_{number}"><static>true</static>'
+            f"<pose>{x:.4f} {y:.4f} 0 0 0 {yaw:.5f}</pose>\n"
+            f'      <link name="link">\n{body}      </link>\n'
+            "    </model>\n"
+        )
+    return out
+
+
 def build_gap_bales() -> str:
     """One model per wall bale, parked here by default at index 0.
 
-    Matches the fixed layout the drawing showed before this was randomized:
-    index 0 (nearest the car wash) stands off-course, the other three stand
-    on the wall.
+    Matches the layout the drawing shows: index 0, the slot it leaves open
+    as the entrance, stands off-course, the other three stand on the wall.
     """
     out = (
-        "    <!-- Gap bales: the wall between the car wash's open area and"
-        " the bucket section is four bale-widths tall. obstacle_randomizer_node"
+        "    <!-- Gap bales: the bucket section's east wall, where the car"
+        " enters it from the east corridor, is four bale-widths tall."
+        " obstacle_randomizer_node"
         " parks one of the four off-course on every draw, moving the"
         " one-bale entrance rather than leaving it fixed. -->\n"
     )
@@ -1163,6 +1276,7 @@ def build_world(dxf_file: Path) -> str:
         + build_bank()
         + "\n"
         + build_gap_bales()
+        + build_wide_bales(bales)
         + build_buckets()
         + build_hoops()
         + build_start_signal()
@@ -1205,7 +1319,61 @@ def dxf_pothole_bumps(dxf_file: Path) -> list[tuple[float, float]]:
     return bumps
 
 
-def build_layout_yaml() -> str:
+def wide_bales_yaml(bales) -> str:
+    """The wide_bales block: bounds, the fixed walls, the drawing's poses."""
+    cleared = placed_bales(bales)
+    bx0, by0, bx1, by1 = WIDE_WALL_BOX
+    walls = [
+        (x, y, yaw, BALE_LENGTH, BALE_WIDTH)
+        for x, y, yaw in cleared
+        if not wide_bale_number(x, y) and bx0 < x < bx1 and by0 < y < by1
+    ]
+    nominal = {
+        wide_bale_number(x, y): (x, y, yaw)
+        for x, y, yaw in cleared
+        if wide_bale_number(x, y)
+    }
+    gap_x, gap_y = to_world(*GAP_BALES[0][:2])
+
+    def row(values, digits=4):
+        return ", ".join(f"{v:.{digits}f}" for v in values)
+
+    lines = [
+        "    wide_bales:",
+        "      # The Wide Section, drawn as \"approx 11' x 26' open area with",
+        '      # changeable boundaries": these bales stand anywhere inside `bounds`',
+        "      # at any yaw, never overlapping `walls`, `keep_out` or each other,",
+        "      # and always leaving a path min_track_width wide (the course's 20 in",
+        "      # guarantee) from `entry`, where the potholes lane opens into the",
+        "      # section, to whichever gap_bales slot is open.  `exit` is the path's",
+        "      # end when there are no gap bales.  `walls` are the fixed bales",
+        "      # around the section as flat (x, y, yaw, length, width) groups;",
+        "      # `keep_out` is the potholes lane's mouth.  `nominal` is the",
+        "      # drawing's pose, restored by ~/reset.",
+        "      names: [" + ", ".join(f"wide_bale_{n}" for n, _, _ in WIDE_BALES) + "]",
+        f"      size: [{row((BALE_LENGTH, BALE_WIDTH))}]",
+        f"      bounds: [{row(WIDE_BOUNDS)}]",
+        f"      keep_out: [{row(WIDE_KEEP_OUT)}]",
+        f"      path_bounds: [{row(WIDE_PATH_BOUNDS)}]",
+        f"      entry: [{row(WIDE_ENTRY)}]",
+        f"      exit: [{row((gap_x, gap_y))}]",
+        f"      min_track_width: {WIDE_MIN_TRACK:.4f}",
+        f"      grid: {WIDE_GRID:.4f}",
+        "      walls: [",
+    ]
+    for index, wall in enumerate(walls):
+        lines.append("        " + row(wall) + ("," if index < len(walls) - 1 else ""))
+    lines.append("      ]")
+    for number, _, _ in WIDE_BALES:
+        x, y, yaw = nominal[number]
+        lines += [
+            f"      wide_bale_{number}:",
+            f"        nominal: [{x:.4f}, {y:.4f}, {yaw:.5f}]",
+        ]
+    return "\n".join(lines) + "\n"
+
+
+def build_layout_yaml(bales) -> str:
     """Randomization bounds, in world meters, for obstacle_randomizer_node.
 
     Shaped as a ROS 2 parameter file, which means nested maps of scalars and
@@ -1290,16 +1458,16 @@ obstacle_randomizer:
       # Where the drawing itself puts them; the reset service restores these.
       nominal:
 {nominal}    gap_bales:
-      # The wall between the car wash's open area and the bucket section is
-      # four bale-widths tall.  Exactly one of the four stands off-course at
-      # `parking` on every draw, leaving a one-bale gap for the entrance; the
-      # other three stand at their own position on the wall.  `default_gap`
-      # is which one is left out on reset, matching the layout the drawing
-      # showed before this was randomized.
+      # The bucket section's east wall, where the car enters it from the
+      # east corridor, is four bale-widths tall.  Exactly one of the four
+      # stands off-course at `parking` on every draw, leaving a one-bale gap
+      # for the entrance; the other three stand at their own position on the
+      # wall.  `default_gap` is which one is left out on reset, matching the
+      # opening the drawing shows.
       names: [{gap_names}]
       default_gap: gap_bale_0
       parking: [{gap_parking_x:.4f}, {gap_parking_y:.4f}]
-{gap_bales}    hoops:
+{gap_bales}{wide_bales_yaml(bales)}    hoops:
       names: [{names}]
 {hoops}{signal}"""
 
@@ -1327,7 +1495,9 @@ def main() -> None:
     print(f"wrote {world.relative_to(PACKAGE.parent)}")
 
     layout = config / "obstacle_course_layout.yaml"
-    layout.write_text(build_layout_yaml(), newline="\n")
+    layout.write_text(
+        build_layout_yaml(dxf_obstacle_bales(args.dxf_file)), newline="\n"
+    )
     print(f"wrote {layout.relative_to(PACKAGE.parent)}")
 
 

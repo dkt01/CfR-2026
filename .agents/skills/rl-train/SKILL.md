@@ -1,6 +1,6 @@
 ---
 name: rl-train
-description: Start, watch and end a reinforcement-learning training run for the CfR-2026 bale-following policy (rl/bale_follower, PPO via stable-baselines3) on the speed or obstacle course, inside the Docker sim container, and judge from the deterministic-eval trend whether the run is still improving or has plateaued and should be stopped early. Use this whenever the user asks to train, retrain, resume, launch a PPO/RL run, check on training, ask "is it still learning", "how's the run going", "should we stop it", wants a checkpoint evaluated, or asks about training on the obstacle course -- and prefer it over reconstructing launch_training.sh / train_resilient.sh / train_curriculum.sh invocations or tailing logs by hand.
+description: Start, watch and end a reinforcement-learning training run for the CfR-2026 bale-following policy (rl/bale_follower, PPO via stable-baselines3) on the speed course inside the Docker sim container, or for the obstacle-course racer (rl/obstacleRacer, numpy, no container), with a live TUI dashboard, and judge from the deterministic-eval trend whether the run is still improving or has plateaued and should be stopped early. Use this whenever the user asks to train, retrain, resume, launch a PPO/RL run, check on training, ask "is it still learning", "how's the run going", "should we stop it", wants a checkpoint evaluated, or asks about training on the obstacle course -- and prefer it over reconstructing launch_training.sh / train_resilient.sh / train_curriculum.sh invocations or tailing logs by hand.
 ---
 
 # CfR-2026 RL training runs
@@ -19,6 +19,7 @@ logic is worth more than a tidier command line.
 .agents/skills/rl-train/scripts/rl.sh setup                      # once per machine
 .agents/skills/rl-train/scripts/rl.sh start --steps 200000 --dir checkpoints_v10
 .agents/skills/rl-train/scripts/rl.sh status --dir checkpoints_v10
+.agents/skills/rl-train/scripts/rl.sh tui --dir checkpoints_v10      # live full-screen dashboard
 .agents/skills/rl-train/scripts/rl.sh logs --lines 60
 .agents/skills/rl-train/scripts/rl.sh eval --checkpoint checkpoints_v10/best_model.zip
 .agents/skills/rl-train/scripts/rl.sh stop
@@ -99,6 +100,18 @@ apart — the v3 run had a healthy training curve while the mean action floored
 the throttle and crashed within seconds. `progress.py` prints `ep_rew_mean` as
 context and never judges on it.
 
+`rl.sh tui` shows the same data as `status`, redrawn every few seconds
+(`--interval`) as a full-screen dashboard. It adds three things a single
+`status` call can't show:
+- a step gauge against the run's own logged target
+- a sparkline of the deterministic-eval trend
+- a table across every run that has kept a `best_model.json`, so a plateau
+  reads against what earlier runs already reached
+
+Leave it running in its own terminal; `Ctrl+C` stops it and `--once` prints a
+single frame. Given a path to an `rl/obstacleRacer` run, it shows that run
+instead (see below).
+
 On `plateau`, bring it to the user with the evidence and a recommendation
 rather than either killing the run or letting it grind on:
 
@@ -133,7 +146,38 @@ Five episodes is a small sample with randomized starts. Quote the range and the
 clean-episode distance, not the best single number — REPORT.md's v6 entry is
 the precedent (112-120 m mean, ~130 m clean).
 
-## The obstacle course
+## The obstacle course: rl/obstacleRacer
+
+The Obstacle Course is trained by `rl/obstacleRacer`, in numpy, the way
+`rl/formulaOne` trains the Speed Course. It does not use this skill's Docker
+container or `start`. The course comes in from the Gazebo world: collision
+primitives for physics, visual meshes for the segmented-camera model. The car
+has a sprung body that pitches and rolls on it. There are 10 training layouts
+and 4 held-out ones. Gazebo only validates the result.
+
+```bash
+cd rl/obstacleRacer
+.venv/Scripts/python.exe selftest.py                    # before every run
+.venv/Scripts/python.exe train.py --dir runs/v1         # ~1.7 h per 30M steps
+.agents/skills/rl-train/scripts/rl.sh tui --dir rl/obstacleRacer/runs/v1
+```
+
+The venv is `uv venv --python 3.12 .venv`, plus `numpy scipy pyyaml
+matplotlib gymnasium stable-baselines3 numba torch` (CPU torch).
+
+`tui.py` detects a racer run by its `history.json` and shows it through
+`racer_view.py`, with no container or log parsing. The view shows:
+- held-out and training finish rate, lap time and progress
+- hoops threaded
+- how held-out runs end (outcome and course section)
+- maximum body pitch and roll per section
+- `progress.py`'s verdict, computed on held-out progress in meters
+
+Judge the run on the held-out numbers: those layouts are never trained on.
+`best_model.zip` is picked the same way: held-out finish rate first, then
+progress, then lap time.
+
+## The obstacle course in Gazebo (bale_follower, superseded)
 
 `start --course obstacle` runs `course_preflight.py` first and refuses if the
 stack cannot actually train there. As of this writing five checks fail, which

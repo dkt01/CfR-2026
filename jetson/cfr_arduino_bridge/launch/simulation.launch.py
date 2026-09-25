@@ -87,7 +87,7 @@ def generate_launch_description():
     laps_arg = DeclareLaunchArgument(
         "laps",
         default_value="3",
-        description="Laps before lap_counter latches ~/done; 3 speed, 2 obstacle",
+        description="Laps before lap_counter latches ~/done; 3 speed, 1 obstacle",
     )
     path_follower_arg = DeclareLaunchArgument(
         "path_follower",
@@ -179,6 +179,23 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration("randomizer")),
     )
 
+    # Only meaningful alongside the randomizer, which is what moves the
+    # hoops this watches; the Speed Course shares this launch file and its
+    # layout carries no hoops.names, so hoop_monitor_node just reports an
+    # always-clear status there.
+    hoop_monitor = Node(
+        package="cfr_arduino_bridge",
+        executable="hoop_monitor_node.py",
+        name="hoop_monitor",
+        output="screen",
+        parameters=[LaunchConfiguration("layout_file"), {"use_sim_time": True}],
+        remappings=[
+            ("pose", "/zed/zed_node/pose"),
+            ("hoop_layout", "/obstacle_randomizer/hoop_layout"),
+        ],
+        condition=IfCondition(LaunchConfiguration("randomizer")),
+    )
+
     command_bridge = Node(
         package="cfr_arduino_bridge",
         executable="sim_vehicle_node",
@@ -207,6 +224,17 @@ def generate_launch_description():
             # ackermann plugin's odometry above drifts and is never
             # corrected, exactly as the real camera's ~/odom is not.
             "/model/slash/pose@geometry_msgs/msg/PoseStamped[gz.msgs.Pose",
+            # Same ground-truth pose training.launch.py bridges, for anything
+            # (run_policy.py, path_racer.py's tf pose source) built against
+            # that topic instead of /zed/zed_node/pose.  Keyed on world_name,
+            # not hardcoded to the Speed Course -- see
+            # obstacle-course-dynamic-pose-bridge-bug in project memory for
+            # why this bit for a while.
+            [
+                "/world/",
+                LaunchConfiguration("world_name"),
+                "/dynamic_pose/info@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V",
+            ],
             "/zed/gz/rgbd/image@sensor_msgs/msg/Image[gz.msgs.Image",
             "/zed/gz/rgbd/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo",
             "/zed/gz/rgbd/depth_image@sensor_msgs/msg/Image[gz.msgs.Image",
@@ -280,6 +308,11 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration("cmd_vel_to_drive")),
     )
 
+    # Publishes zeros on /cmd_vel while idle, so anything else driving that
+    # topic is fighting it -- see training.launch.py, which exists precisely
+    # to leave this node out. Conditioned rather than removed because the
+    # Obstacle Course needs the randomizer and hoop_monitor from this file
+    # and so cannot simply use training.launch.py instead.
     path_follower = Node(
         package="cfr_arduino_bridge",
         executable="path_follower_node",
@@ -331,6 +364,7 @@ def generate_launch_description():
             websocket_server,
             teleport_api,
             randomizer,
+            hoop_monitor,
             command_bridge,
             gazebo_bridge,
             zed_cloud_noise,
