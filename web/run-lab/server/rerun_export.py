@@ -317,8 +317,12 @@ class RunRecording:
         first = np.flatnonzero(ok)[0]
         self.rec.log(
             "pose2d/start",
-            rr.Points3D([[x[first], y[first], 0.0]], colors=[STATUS["good"]], radii=0.12,
-                        labels=["start"]),
+            rr.Points3D(
+                [[x[first], y[first], 0.0]],
+                colors=[STATUS["good"]],
+                radii=0.12,
+                labels=["start"],
+            ),
             static=True,
         )
         # The car at the playhead: a marker and its heading, moved over time.
@@ -326,8 +330,12 @@ class RunRecording:
         ok &= np.isfinite(yaw)
         self.rec.log(
             "pose2d/car",
-            rr.Arrows3D(origins=[[0, 0, 0.02]], vectors=[[0.6, 0, 0]],
-                        colors=[SERIES[7]], radii=0.04),
+            rr.Arrows3D(
+                origins=[[0, 0, 0.02]],
+                vectors=[[0.6, 0, 0]],
+                colors=[SERIES[7]],
+                radii=0.04,
+            ),
             static=True,
         )
         half = yaw[ok] / 2
@@ -524,7 +532,9 @@ def pose2d_blueprint(extent=None):
         origin="pose2d",
         name="ZED pose, map frame (red: jumps)",
         eye_controls=rrb.EyeControls3D(
-            position=[cx, cy - 0.01, height], look_target=[cx, cy, 0.0], eye_up=[0, 1, 0]
+            position=[cx, cy - 0.01, height],
+            look_target=[cx, cy, 0.0],
+            eye_up=[0, 1, 0],
         ),
     )
     return rrb.Blueprint(

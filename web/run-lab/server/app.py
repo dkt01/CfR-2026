@@ -50,6 +50,8 @@ async def revalidate(request, call_next):
     if not request.url.path.startswith("/assets/"):
         response.headers.setdefault("Cache-Control", "no-cache")
     return response
+
+
 jobs = JobRunner()
 
 
