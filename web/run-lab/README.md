@@ -6,7 +6,7 @@ whether the problem was the policy, the car, or the localisation.
 
 The work is split between two tools. **The Run Lab does the analysis** Rerun
 can't do: pulling from the Orin, verdicts, laps and sections, the car against
-the plant model, the policy's behaviour, and replays in Gazebo. **[Rerun](https://rerun.io)
+the plant model and the policy's behaviour. **[Rerun](https://rerun.io)
 does the viewing**: the course and car in 3D, ZED clouds and the map they
 build, the camera, every channel against time, and the logs. Rerun is embedded
 in the Replay page and shares the Run Lab's timeline in both directions.
@@ -17,8 +17,7 @@ web/run-lab/run.sh            # → http://localhost:8765
 
 The first start sets up its own `.venv` and builds the UI (needs `npm` once).
 After that it starts in about a second. Reading bags needs no ROS, because it uses
-[`rosbags`](https://pypi.org/project/rosbags/). Only the Gazebo and RViz replays
-need ROS 2 Jazzy and a built workspace (`colcon build` at the repo root).
+[`rosbags`](https://pypi.org/project/rosbags/).
 
 ---
 
@@ -116,7 +115,7 @@ keys step, and shift-arrow steps 5 s.
 |---|---|
 | **Overview** | Did it finish? What worked, what didn't (each item jumps to its moment), laps, and the event list: contacts, grazes, stalls, pose jumps, link drops, errors |
 | **Track & sections** | The driven path on the surveyed course, coloured by speed, speed vs cap, clearance, CTE, steering or lap. Section table per lap, worst clearance flagged |
-| **Replay (Rerun)** | The run in the embedded Rerun viewer. It holds the course with the car (a fixed view, and a chase view that follows it), the ZED cloud at each moment plus the map they accumulate (and the ZED's own spatial map if recorded), the camera, every channel in grouped plots, and the events and `/rosout` logs. It shares the Run Lab's timeline both ways. Also: open the same recording, or the raw bag, in the native Rerun app; replay the run into **Gazebo**; play the bag into **RViz** |
+| **Replay (Rerun)** | The run in the embedded Rerun viewer. It fills the window (or goes fullscreen from its top bar) and holds the course with the car (a fixed Course view, and a Follow car view that tracks it; the *Follow car* toggle opens on that one), the ZED cloud at each moment plus the map they accumulate (and the ZED's own spatial map if recorded), the full camera frame, every channel in grouped plots, and the events and `/rosout` logs. It shares the Run Lab's timeline both ways. Also: open the same recording, or the raw bag, in the native Rerun app |
 | **Vehicle model** | The car against `plant.py`: speed envelope, speed loop (command → target → measured), coast-down, steering authority left/right, and the **command-to-yaw lag** the policy was trained with |
 | **RL policy** | Speed, clearance, CTE and steering per lap against station; section × lap clearance matrix; action saturation; prior vs residual |
 | **ZED & localisation** | Pose health: rate, gaps, jumps, odom divergence, tracking status, pose age at the driver, and the driver's position belief against the analysis |
@@ -171,20 +170,6 @@ version, because the embedded viewer reads what the SDK writes. Upgrade them
 together. Rerun collects anonymous usage statistics by default;
 `web/run-lab/.venv/bin/rerun analytics disable` turns that off on this machine.
 
-## 5. Replaying in Gazebo or RViz
-
-On the **Replay** page:
-
-- **Replay in Gazebo** launches the Speed Course with no driver and moves the
-  car along the recorded track-frame path through a bridged `set_pose` service
-  at 20 Hz (to within a sample of the recording). *Sync Gazebo to playhead*,
-  *Pause* and *Play* steer it. It runs on `ROS_DOMAIN_ID=78` and
-  `GZ_PARTITION=runlab_replay`, so it can't interfere with another simulator.
-  Tick *Gazebo window* for the native GUI, or use *Open Gazebo window* later.
-  The web viewer is started too if port 9002 is free.
-- **Play bag in RViz** runs `ros2 bag play` (with the bag's own clock for
-  simulated runs) and opens RViz with the formulaOne layout.
-
 ## Development
 
 ```bash
@@ -195,8 +180,8 @@ web/run-lab/.venv/bin/python web/run-lab/server/analyze.py runs/<run>   # headle
 
 `server/` is FastAPI (`app.py`), the bag reader (`bagio.py`), the analysis
 (`analyze.py`), the Rerun recording (`rerun_export.py`), course geometry via
-the driver's own `track.py` (`course.py`), Orin transfer (`orin.py`) and
-replays (`replay.py`, `gz_ghost.py`). `frontend/` is Vite with plain JS, uPlot
+the driver's own `track.py` (`course.py`), and Orin transfer
+(`orin.py`). `frontend/` is Vite with plain JS, uPlot
 for the analysis charts and the Rerun web viewer. Bump
 `analyze.VERSION` when outputs change shape, and the UI will offer to
 re-process older runs.

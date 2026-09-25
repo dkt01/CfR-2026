@@ -42,7 +42,7 @@ import bagio  # noqa: E402
 import course as course_mod  # noqa: E402
 import rerun_export  # noqa: E402
 
-VERSION = 4  # bump when outputs change shape; the UI re-processes older ones
+VERSION = 6  # bump when outputs change shape; the UI flags older runs to re-process
 GRID_HZ = 20.0
 ZED = "/zed/zed_node"
 GRAZE = 0.12  # m; the training reward's graze band
@@ -488,6 +488,8 @@ def process(run_dir: Path, callback=None, clouds=True, images=True):
     recording.course(geometry)
 
     with bagio.Bag(bag_dir) as bag:
+        cam_size = camera_size(bag) if images else None
+        recording.layout(cam_size)
         progress(0.04, "reading the bag")
         streams = read_streams(bag, progress)
         tb = Timebase(streams, bag.start_ns * 1e-9)
@@ -508,6 +510,7 @@ def process(run_dir: Path, callback=None, clouds=True, images=True):
         if images:
             progress(0.85, "extracting camera frames")
             result["summary"]["perception"].update(write_images(bag, tb, recording))
+            result["summary"]["perception"]["camera_size"] = cam_size
 
     summary = result["summary"]
     summary["bag"] = bag_info
@@ -524,6 +527,7 @@ def process(run_dir: Path, callback=None, clouds=True, images=True):
     }
     progress(0.93, "writing the Rerun recording")
     recording.car(result["series"], geometry, summary["window"])
+    recording.pose2d(result["series"])
     recording.metrics(result["series"])
     recording.events(summary, result["series"])
     recording.logs(result["logs"])
@@ -2176,6 +2180,11 @@ def write_clouds(
             last = msg
         if last is not None:
             xyz, rgb = bagio.cloud_to_numpy(last, max_range=1e4)
+            # Without live clouds -- the recorder's default now -- there is no
+            # ground estimate yet; take it from the map itself, the same way.
+            if ground is None and len(xyz):
+                ground = float(np.percentile(xyz[:, 2], 5))
+                info["ground_z"] = r(ground, 3)
             if transform and len(xyz):
                 x2, y2 = apply_xy(transform, xyz[:, 0], xyz[:, 1])
                 xyz = np.column_stack([x2, y2, xyz[:, 2] - (ground or 0.0)]).astype(
@@ -2193,6 +2202,25 @@ IMAGE_TOPICS = [
     ZED + "/left/image_rect_color",
     ZED + "/rgb/color/rect/image",
 ]
+
+
+def camera_size(bag, max_width=640):
+    """(width, height) of the frames write_images will log, from the first
+    one, or None when there is no camera topic."""
+    topic = next((tp for tp in IMAGE_TOPICS if bag.has(tp)), None)
+    if topic is None:
+        return None
+    for _, _, msg in bag.messages(topic):
+        if topic.endswith("compressed"):
+            try:
+                from PIL import Image as PILImage
+
+                return list(PILImage.open(io.BytesIO(bytes(msg.data))).size)
+            except Exception:
+                return None
+        w, h = msg.width, msg.height
+        return [max_width, round(h * max_width / w)] if w > max_width else [w, h]
+    return None
 
 
 def write_images(bag, tb, recording, hz=5.0, max_width=640):

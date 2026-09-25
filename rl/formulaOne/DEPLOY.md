@@ -190,9 +190,11 @@ ros2 launch ~/software/formulaOne/formula_one.launch.py \
 - **The run is recorded automatically** (`record:=auto` records whenever
   `use_sim_time:=false`) into `~/cfr_runs/<UTC>_f1_<label>/`: the bag, the exact
   policy and config, parameter dumps, ZED area memory, ROS logs and
-  tegrastats. `record_label:=<name>` names it; `record_args:="--svo --map"`
-  adds a ZED SVO and spatial map. The ZED point cloud is lowered to 1 Hz for
-  the run and restored afterwards. See §10.
+  tegrastats. `record_label:=<name>` names it. Camera frames are
+  recorded at 12 fps and JPEG quality 50. Instead of the live point cloud, the
+  ZED builds a spatial map during the run and the **finished map** is saved in
+  the bag at the end. `record_args:="--no-map"` skips the map,
+  `--cloud-hz 1` adds the live cloud at 1 Hz, `--svo` adds a ZED SVO. See §10.
 
 The car waits for the start signal and will not move until it gets one. Either
 show it the real green signal, or release it by hand:

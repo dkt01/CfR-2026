@@ -1,6 +1,6 @@
 ---
 name: run-lab
-description: Record, pull, process and read CfR-2026 drive logs with the logging tools -- jetson/scripts/record_run.py on the Orin (MCAP bag + metadata + params + ZED area memory under ~/cfr_runs), the Run Lab (web/run-lab: pull from the Orin, analyze.py verdicts/laps/sections/events, Rerun .rrd export, Gazebo/RViz replay) and /formula_one/telemetry (DriverTelemetry). Use this whenever the user asks to record a run or drive, log a test, pull/sync/download runs off the car, process or analyze a bag, asks "how did the run go", "why did it crash/stall/not finish", wants lap times, clearance, CTE, verdicts or events from a real or simulated drive, wants to open a run in Rerun, replay a run in Gazebo or RViz, or start the Run Lab -- even if they just say "the last run" or "the logs". Prefer it over hand-parsing rosbags, ros2 bag info, or dumping summary.json.
+description: Record, pull, process and read CfR-2026 drive logs with the logging tools -- jetson/scripts/record_run.py on the Orin (MCAP bag + metadata + params + ZED area memory under ~/cfr_runs), the Run Lab (web/run-lab: pull from the Orin, analyze.py verdicts/laps/sections/events, Rerun .rrd export and embedded Rerun replay) and /formula_one/telemetry (DriverTelemetry). Use this whenever the user asks to record a run or drive, log a test, pull/sync/download runs off the car, process or analyze a bag, asks "how did the run go", "why did it crash/stall/not finish", wants lap times, clearance, CTE, verdicts or events from a real or simulated drive, wants to open or replay a run in Rerun, or start the Run Lab -- even if they just say "the last run" or "the logs". Prefer it over hand-parsing rosbags, ros2 bag info, or dumping summary.json.
 ---
 
 # Run Lab: record, pull, process, read
@@ -165,10 +165,10 @@ How to reason about a result:
   (track frame, with analysis) or `rerun runs/<run>/bag/*.mcap` (raw, map
   frame). `rerun-sdk` and `@rerun-io/web-viewer` are pinned to the same
   version; upgrade them together.
-- Gazebo / RViz replay live on the Replay page and need ROS 2 Jazzy plus a
-  built workspace. Gazebo replay runs on `ROS_DOMAIN_ID=78` /
-  `GZ_PARTITION=runlab_replay`, so it won't collide with a sim you already
-  have up (see the `sim-launch` skill for that one).
+- The Replay page embeds the same recording (full-window, fullscreen from
+  the viewer's top bar); its *Follow car* toggle opens the 3D view that
+  tracks the car. There is no Gazebo/RViz replay any more: for a live ROS
+  graph, `ros2 bag play runs/<run>/bag`.
 
 ## Changing the tools
 

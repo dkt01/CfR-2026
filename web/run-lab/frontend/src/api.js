@@ -4,6 +4,11 @@
 async function request(method, path, body) {
     const res = await fetch(path, {
         method,
+        // Always ask the server.  Re-processing rewrites a run's files under
+        // the same URLs, and a copy the browser cached before the server sent
+        // Cache-Control could otherwise be served without asking; an
+        // unchanged file costs a 304.
+        cache: "no-cache",
         headers: body ? { "Content-Type": "application/json" } : {},
         body: body ? JSON.stringify(body) : undefined,
     });

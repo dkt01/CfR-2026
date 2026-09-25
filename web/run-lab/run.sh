@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start the Run Lab: pull runs off the Orin, analyse them, replay them.
+# Start the Run Lab: pull runs off the Orin, analyse them, watch them in Rerun.
 #
 #   web/run-lab/run.sh              # http://localhost:8765
 #   web/run-lab/run.sh --port 9000
@@ -7,9 +7,7 @@
 #   CFR_RUNS_LOCAL=/data/runs web/run-lab/run.sh      # runs somewhere other than <repo>/runs
 #
 # First run sets up its own venv (.venv, not the ROS Python) and builds the
-# UI; later runs start in a second.  Replays in Gazebo / RViz additionally
-# need ROS 2 Jazzy and a built workspace (`colcon build` at the repo root) --
-# everything else works without ROS.
+# UI; later runs start in a second.  Nothing here needs ROS.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 PORT=8765
@@ -19,7 +17,7 @@ while [[ $# -gt 0 ]]; do
     --port) PORT="$2"; shift 2;;
     --lan)  HOST=0.0.0.0; shift;;   # reachable from other machines: no auth, so trusted networks only
     --rebuild) rm -rf frontend/dist; shift;;
-    -h|--help) sed -n '2,12p' "$0"; exit 0;;
+    -h|--help) sed -n '2,10p' "$0"; exit 0;;
     *) echo "unknown argument: $1"; exit 2;;
   esac
 done
