@@ -46,7 +46,9 @@ def bale_polys():
     out = []
     for m in root.iter("model"):
         name = m.get("name", "")
-        if name != "course_bales" and not name.startswith("gap_bale"):
+        # Wide Section bales are movable models now; the world stands them
+        # where the drawing does, which is what the regions are drawn from.
+        if name != "course_bales" and not name.startswith(("gap_bale", "wide_bale")):
             continue
         mp = [float(t) for t in (m.findtext("pose") or "0 0 0 0 0 0").split()]
         for col in m.iter("collision"):

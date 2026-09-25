@@ -126,7 +126,7 @@ install(TARGETS ${CFR_NODES}
 )
 
 install(PROGRAMS src/teleport_api.py src/maneuver_runner_node.py src/obstacle_randomizer_node.py
-  src/start_signal_detector_node.py src/lap_counter_node.py
+  src/start_signal_detector_node.py src/lap_counter_node.py src/hoop_monitor_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -134,7 +134,7 @@ install(PROGRAMS src/teleport_api.py src/maneuver_runner_node.py src/obstacle_ra
 # same directory -- but as modules rather than programs, since they have no
 # shebang and are not meant to be run.  cloud_segmentation.py finds
 # libcfr_cloud_segmentation.so one directory up, in lib/.
-install(FILES src/start_signal_detector.py src/lap_counter.py src/cloud_segmentation.py
+install(FILES src/start_signal_detector.py src/lap_counter.py src/hoop_monitor.py src/obstacle_layout_draw.py src/cloud_segmentation.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -212,6 +212,13 @@ if(BUILD_TESTING)
   ament_add_pytest_test(test_cloud_segmentation test/test_cloud_segmentation.py
     ENV CFR_CLOUD_SEGMENTATION_LIB=$<TARGET_FILE:cfr_cloud_segmentation>
     TIMEOUT 300)
+
+  # hoop_monitor_node's per-hoop crossing logic, same pattern again.
+  ament_add_pytest_test(test_hoop_monitor test/test_hoop_monitor.py)
+
+  # obstacle_randomizer_node's layout draw, which rl/obstacleRacer's exported
+  # training layouts must keep agreeing with.
+  ament_add_pytest_test(test_obstacle_layout_draw test/test_obstacle_layout_draw.py)
 
   # maneuver_runner_node's arming/abort state machine -- unlike the two tests
   # above, this one has no ROS-free module to import: it constructs a real

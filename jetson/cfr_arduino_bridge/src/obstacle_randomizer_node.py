@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Re-lay the obstacle course's variable elements, and work the start signal.
 
-Three things about the Obstacle Course change between runs: where the buckets
-stand, where the hoops sit along their lines, and whether the start signal is
-showing red or green.  All three are moved here rather than baked into the
+Four things about the Obstacle Course change between runs: where the buckets
+stand, where the hoops sit along their lines, where the Wide Section's bales
+stand, and whether the start signal is showing red or green.  All three are moved here rather than baked into the
 world, so a layout can be re-drawn without restarting Gazebo.
 
-The buckets and hoops are separate static models, moved through Gazebo's
-``set_pose``, which is why they are separate models at all.
+The buckets, hoops and Wide Section bales are separate static models, moved
+through Gazebo's ``set_pose``, which is why they are separate models at all.
 
 The signal is not, because it has to *turn*: 90 degrees a second, like the one
 on the course, so a detector gets the part-way-round arm it will have to cope
@@ -40,7 +40,10 @@ import subprocess
 import time
 import traceback
 
+import obstacle_layout_draw
 import rclpy
+from cfr_interfaces.msg import HoopLayout
+from geometry_msgs.msg import Point
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.node import Node
@@ -91,6 +94,15 @@ class ObstacleRandomizer(Node):
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
         )
 
+        # hoop_monitor_node's only source of where the hoops currently
+        # stand -- it does not duplicate draw_hoops()'s randomization logic,
+        # it just watches where this node last put them.
+        self.hoop_layout_publisher = self.create_publisher(
+            HoopLayout,
+            "~/hoop_layout",
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
+        )
+
         # Bridged to the world's joint controller by simulation.launch.py.
         # Latching, so the setpoint survives the bridge coming up late.
         self.arm_publisher = self.create_publisher(
@@ -122,9 +134,16 @@ class ObstacleRandomizer(Node):
         self.arm_angle = float(self.signal_param("red_angle"))
         self.command_arm(self.arm_angle)
         self.publish_signal(False)
+        # The world spawns every hoop at its nominal position -- build_hoops()
+        # places them there directly -- so this is the true initial layout, not
+        # a guess, and a monitor that comes up before the first ~/randomize or
+        # ~/reset still gets a value to watch.
+        self.publish_hoop_layout(self.nominal_hoops())
         movable = f"{len(self.hoop_names())} hoops, up to {self.bucket_limit()} buckets"
         if self.has_gap_bales():
             movable += f", 1 of {len(self.gap_bale_names())} wall bales parked"
+        if self.has_wide_bales():
+            movable += f", {len(self.wide_bale_names())} Wide Section bales"
         if (
             not self.hoop_names()
             and not self.has_buckets()
@@ -180,6 +199,15 @@ class ObstacleRandomizer(Node):
 
     def gap_bale_param(self, bale: str, name: str):
         return self.get_parameter(f"gap_bales.{bale}.{name}").value
+
+    def has_wide_bales(self) -> bool:
+        """Whether this course has Wide Section bales to move (the Obstacle Course)."""
+        return self.has_parameter("wide_bales.names")
+
+    def wide_bale_names(self) -> list[str]:
+        if not self.has_wide_bales():
+            return []
+        return list(self.get_parameter("wide_bales.names").value)
 
     # ------------------------------------------------------------ gz set_pose
 
@@ -239,135 +267,46 @@ class ObstacleRandomizer(Node):
 
     # ----------------------------------------------------------------- layout
 
-    def draw_buckets(self) -> list[tuple[float, float]]:
-        """Bucket positions honoring the drawing's spacing and clearance.
+    def layout_spec(self) -> dict:
+        """This node's layout parameters, nested the way the YAML nests them.
 
-        The drawing asks for buckets "placed so a path exists around and
-        between buckets".  That does not need a separate reachability check:
-        3 ft between centers leaves a 0.62 m gap between two 0.29 m buckets,
-        and the same clearance off the walls, both of which a 0.30 m car fits
-        through.  Keeping the spacing is keeping the path.
+        obstacle_layout_draw takes the layout as a plain mapping so it can run
+        without ROS; this rebuilds that mapping from the declared parameters.
         """
-        if not self.has_buckets():
-            return []
-        low = list(self.bucket_param("region_min"))
-        high = list(self.bucket_param("region_max"))
-        clearance = float(self.bucket_param("wall_clearance"))
-        spacing = float(self.bucket_param("min_spacing"))
-        low = [value + clearance for value in low]
-        high = [value - clearance for value in high]
-        if low[0] > high[0] or low[1] > high[1]:
-            raise GazeboError("bucket clearance leaves no room in the section")
+        spec: dict = {}
+        for group in ("buckets", "hoops", "gap_bales", "wide_bales"):
+            for name, parameter in self.get_parameters_by_prefix(group).items():
+                node = spec.setdefault(group, {})
+                parts = name.split(".")
+                for part in parts[:-1]:
+                    node = node.setdefault(part, {})
+                node[parts[-1]] = parameter.value
+        return spec
 
-        count = int(self.get_parameter("bucket_count").value)
-        if count <= 0:
-            count = self.random.randint(
-                int(self.bucket_param("count_min")), int(self.bucket_param("count_max"))
+    def draw_buckets(self) -> list[tuple[float, float]]:
+        """Bucket positions; see obstacle_layout_draw.draw_buckets."""
+        try:
+            return obstacle_layout_draw.draw_buckets(
+                self.layout_spec(),
+                self.random,
+                int(self.get_parameter("bucket_count").value),
             )
-        count = max(
-            int(self.bucket_param("count_min")),
-            min(int(self.bucket_param("count_max")), count),
-        )
-
-        # Rejection sampling first, restarted rather than relaxed: a greedy
-        # fill can paint itself into a corner, and starting over is simpler
-        # than backtracking at this size.
-        for _ in range(200):
-            placed: list[tuple[float, float]] = []
-            for _ in range(count * 200):
-                if len(placed) == count:
-                    break
-                candidate = (
-                    self.random.uniform(low[0], high[0]),
-                    self.random.uniform(low[1], high[1]),
-                )
-                if all(math.dist(candidate, other) >= spacing for other in placed):
-                    placed.append(candidate)
-            if len(placed) == count:
-                return placed
-
-        # The high counts do not fall out of rejection sampling.  Nine buckets
-        # 3 ft apart fit the section, but only in very nearly a 3x3 grid, and
-        # the chance of stumbling on that by drawing points uniformly is not
-        # worth waiting for.  So lay out a grid and jitter it by whatever slack
-        # the spacing leaves: still a different layout every time, just not a
-        # uniform one, which is the honest trade at the top of the range.
-        return self.grid_layout(low, high, count, spacing)
-
-    def grid_layout(self, low, high, count: int, spacing: float):
-        span = (high[0] - low[0], high[1] - low[1])
-        best = None
-        for columns in range(1, count + 1):
-            rows = math.ceil(count / columns)
-            pitch = tuple(
-                span[axis] / (steps - 1) if steps > 1 else float("inf")
-                for axis, steps in ((0, columns), (1, rows))
-            )
-            if min(pitch) < spacing:
-                continue
-            slack = min(pitch[0] - spacing, pitch[1] - spacing)
-            if best is None or slack > best[0]:
-                best = (slack, columns, rows, pitch)
-        if best is None:
-            raise GazeboError(
-                f"{count} buckets will not fit {spacing:.2f} m apart in the section"
-            )
-
-        _, columns, rows, pitch = best
-        cells = [(column, row) for column in range(columns) for row in range(rows)]
-
-        placed = []
-        for cell in self.random.sample(cells, count):
-            position = []
-            for axis, (index, steps) in enumerate(
-                ((cell[0], columns), (cell[1], rows))
-            ):
-                if steps == 1:
-                    # A single row or column is free to sit anywhere: nothing
-                    # on this axis constrains it.
-                    position.append(self.random.uniform(low[axis], high[axis]))
-                    continue
-                jitter = (pitch[axis] - spacing) / 2
-                centre = low[axis] + index * pitch[axis]
-                offset = self.random.uniform(-jitter, jitter)
-                position.append(min(high[axis], max(low[axis], centre + offset)))
-            placed.append(tuple(position))
-        return placed
+        except obstacle_layout_draw.LayoutError as error:
+            raise GazeboError(str(error)) from error
 
     def draw_hoops(self) -> dict[str, tuple[float, float]]:
-        """A position for each hoop along the line the drawing puts it on.
+        """Hoop positions; see obstacle_layout_draw.draw_hoops."""
+        return obstacle_layout_draw.draw_hoops(self.layout_spec(), self.random)
 
-        The line spans the full width of the corridor, so the ends are clamped
-        by half the hoop's base -- a hoop centered on the very end would stand
-        half outside the bales.
-        """
-        positions = {}
-        for hoop in self.hoop_names():
-            start = list(self.hoop_param(hoop, "from"))
-            end = list(self.hoop_param(hoop, "to"))
-            span = math.dist(start, end)
-            margin = float(self.hoop_param(hoop, "base_length")) / 2.0
-            if span <= 2 * margin:
-                positions[hoop] = (
-                    (start[0] + end[0]) / 2,
-                    (start[1] + end[1]) / 2,
-                )
-                continue
-            fraction = self.random.uniform(margin / span, 1.0 - margin / span)
-            positions[hoop] = (
-                start[0] + (end[0] - start[0]) * fraction,
-                start[1] + (end[1] - start[1]) * fraction,
-            )
-        return positions
+    def nominal_hoops(self) -> dict[str, tuple[float, float]]:
+        """Where the course drawing puts every hoop -- what ~/reset restores."""
+        return {
+            hoop: tuple(self.hoop_param(hoop, "nominal")) for hoop in self.hoop_names()
+        }
 
     def draw_gap_bale(self) -> str:
-        """Which of the four wall bales stands off-course this draw.
-
-        Exactly one is always parked -- the wall is four bale-widths tall and
-        the gap it leaves is what the vehicle drives through -- so this picks
-        one name rather than a count or a set.
-        """
-        return self.random.choice(self.gap_bale_names())
+        """Which wall bale is parked; see obstacle_layout_draw.draw_gap_bale."""
+        return obstacle_layout_draw.draw_gap_bale(self.layout_spec(), self.random)
 
     def apply_gap_bale(self, parked: str) -> None:
         parking = list(self.get_parameter("gap_bales.parking").value)
@@ -378,6 +317,19 @@ class ObstacleRandomizer(Node):
             else:
                 x, y = self.gap_bale_param(bale, "position")
                 yaw = float(self.gap_bale_param(bale, "yaw"))
+            self.set_pose(bale, x, y, 0.0, yaw=yaw)
+
+    def draw_wide_bales(self, gap_bale) -> dict[str, tuple[float, float, float]]:
+        """Wide Section bale poses; see obstacle_layout_draw.draw_wide_bales."""
+        try:
+            return obstacle_layout_draw.draw_wide_bales(
+                self.layout_spec(), self.random, gap_bale
+            )
+        except obstacle_layout_draw.LayoutError as error:
+            raise GazeboError(str(error)) from error
+
+    def apply_wide_bales(self, poses) -> None:
+        for bale, (x, y, yaw) in poses.items():
             self.set_pose(bale, x, y, 0.0, yaw=yaw)
 
     def apply(self, buckets, hoops) -> None:
@@ -395,6 +347,13 @@ class ObstacleRandomizer(Node):
                 self.set_pose(f"bucket_{index}", x, y, 0.0)
         for hoop, (x, y) in hoops.items():
             self.set_pose(hoop, x, y, 0.0, yaw=float(self.hoop_param(hoop, "yaw")))
+        self.publish_hoop_layout(hoops)
+
+    def publish_hoop_layout(self, hoops: dict[str, tuple[float, float]]) -> None:
+        message = HoopLayout()
+        message.names = list(hoops.keys())
+        message.positions = [Point(x=x, y=y, z=0.0) for x, y in hoops.values()]
+        self.hoop_layout_publisher.publish(message)
 
     # --------------------------------------------------------------- services
 
@@ -429,13 +388,17 @@ class ObstacleRandomizer(Node):
             buckets = self.draw_buckets()
             hoops = self.draw_hoops()
             gap_bale = self.draw_gap_bale() if self.has_gap_bales() else None
+            # Drawn last, as obstacle_layout_draw.draw does, so the same seed
+            # gives the trainer's layout.
+            wide = self.draw_wide_bales(gap_bale) if self.has_wide_bales() else {}
             self.apply(buckets, hoops)
             if gap_bale is not None:
                 self.apply_gap_bale(gap_bale)
+            self.apply_wide_bales(wide)
         except Exception as error:  # noqa: BLE001 - a service has to answer
             return self.failed(response, error)
         response.success = True
-        if not buckets and not hoops and gap_bale is None:
+        if not buckets and not hoops and gap_bale is None and not wide:
             response.message = "this course varies nothing but the start signal"
         else:
             parts = []
@@ -454,6 +417,8 @@ class ObstacleRandomizer(Node):
                 parts.append(f"{len(hoops)} hoops repositioned")
             if gap_bale is not None:
                 parts.append(f"wall gap at {gap_bale}")
+            if wide:
+                parts.append(f"{len(wide)} Wide Section bales moved")
             response.message = f"seed {seed}: " + "; ".join(parts)
         self.get_logger().info(response.message)
         return response
@@ -473,6 +438,10 @@ class ObstacleRandomizer(Node):
             self.apply(nominal, hoops)
             if self.has_gap_bales():
                 self.apply_gap_bale(self.get_parameter("gap_bales.default_gap").value)
+            if self.has_wide_bales():
+                self.apply_wide_bales(
+                    obstacle_layout_draw.nominal(self.layout_spec())["wide_bales"]
+                )
             self.show_signal(False)
         except Exception as error:  # noqa: BLE001 - a service has to answer
             return self.failed(response, error)
