@@ -47,6 +47,11 @@ same files. Add or edit skills under `.agents/skills/` only. Symlinks need
   anything run from a Linux mount (`#!/usr/bin/env python3\r` fails with exit
   127). When editing from Windows, write bytes (or a bare `\n` newline), and
   check for CR bytes after edits and after pre-commit runs.
+* Run `pre-commit run --files <changed files>` (config:
+  `.pre-commit-config.yaml`) before every commit, and again before every push
+  to upstream. Fix anything it reports, re-stage hook-modified files, and
+  re-run until it passes. Never skip it with `--no-verify`. If `pre-commit` is
+  not installed, install it (`pip install pre-commit`) rather than skipping.
 * Run the sim and the test suite in Docker. WSL RoboStack `colcon test` cannot
   run this repo's `launch_testing` pytest tests.
 * RL: observations must be realizable from the ZED and wheel encoder; reward
