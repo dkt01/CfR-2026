@@ -20,7 +20,7 @@
 
     <model name="ground"><static>true</static><pose>0.005 -4.540 0 0 0 0</pose><link name="link">
       <collision name="collision"><geometry><plane><normal>0 0 1</normal><size>30 24</size></plane></geometry><surface><friction><ode><mu>50</mu></ode><bullet><friction>1</friction><rolling_friction>0.001</rolling_friction></bullet></friction></surface></collision>
-      <visual name="visual"><geometry><plane><normal>0 0 1</normal><size>30 24</size></plane></geometry><material><diffuse>0.16 0.25 0.13 1</diffuse></material></visual>
+      <visual name="visual"><geometry><plane><normal>0 0 1</normal><size>30 24</size></plane></geometry><material><diffuse>1 1 1 1</diffuse><pbr><metal><albedo_map>model://cfr_arduino_bridge/materials/asphalt_obstacle.png</albedo_map><roughness>0.95</roughness><metalness>0</metalness></metal></pbr></material></visual>
     </link></model>
 
     <!-- 65 ft by 48 ft obstacle course, walled with 14 x 18 x 36 in straw bales. -->
@@ -266,176 +266,176 @@
     <!-- 20% ramp up to a flat bridge deck, 25 in above the floor. -->
     <model name="bridge"><static>true</static><link name="link">
       <collision name="ramp_collision"><pose>5.0354 0.0005 0.2675 0.0000 -0.1893 0.0000</pose><geometry><box><size>3.3750 0.8128 0.1000</size></box></geometry></collision>
-      <visual name="ramp_visual"><pose>5.0354 0.0005 0.2675 0.0000 -0.1893 0.0000</pose><geometry><box><size>3.3750 0.8128 0.1000</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="ramp_visual"><pose>5.0354 0.0005 0.2675 0.0000 -0.1893 0.0000</pose><geometry><box><size>3.3750 0.8128 0.1000</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="ramp_rail_-1_collision"><pose>5.0354 -0.4309 0.3937 0.0000 -0.1893 0.0000</pose><geometry><box><size>3.3750 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="ramp_rail_-1_visual"><pose>5.0354 -0.4309 0.3937 0.0000 -0.1893 0.0000</pose><geometry><box><size>3.3750 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="ramp_rail_-1_visual"><pose>5.0354 -0.4309 0.3937 0.0000 -0.1893 0.0000</pose><geometry><box><size>3.3750 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="ramp_rail_1_collision"><pose>5.0354 0.4319 0.3937 0.0000 -0.1893 0.0000</pose><geometry><box><size>3.3750 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="ramp_rail_1_visual"><pose>5.0354 0.4319 0.3937 0.0000 -0.1893 0.0000</pose><geometry><box><size>3.3750 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="ramp_rail_1_visual"><pose>5.0354 0.4319 0.3937 0.0000 -0.1893 0.0000</pose><geometry><box><size>3.3750 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="deck_collision"><pose>7.4961 0.0005 0.6285 0.0000 0.0000 0.0000</pose><geometry><box><size>1.6066 0.8128 0.0130</size></box></geometry></collision>
-      <visual name="deck_visual"><pose>7.4961 0.0005 0.6285 0.0000 0.0000 0.0000</pose><geometry><box><size>1.6066 0.8128 0.0130</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="deck_visual"><pose>7.4961 0.0005 0.6285 0.0000 0.0000 0.0000</pose><geometry><box><size>1.6066 0.8128 0.0130</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="deck_rail_-1_collision"><pose>7.4961 -0.4309 0.7112 0.0000 0.0000 0.0000</pose><geometry><box><size>1.6066 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="deck_rail_-1_visual"><pose>7.4961 -0.4309 0.7112 0.0000 0.0000 0.0000</pose><geometry><box><size>1.6066 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="deck_rail_-1_visual"><pose>7.4961 -0.4309 0.7112 0.0000 0.0000 0.0000</pose><geometry><box><size>1.6066 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="deck_rail_1_collision"><pose>7.4961 0.4319 0.7112 0.0000 0.0000 0.0000</pose><geometry><box><size>1.6066 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="deck_rail_1_visual"><pose>7.4961 0.4319 0.7112 0.0000 0.0000 0.0000</pose><geometry><box><size>1.6066 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="deck_rail_1_visual"><pose>7.4961 0.4319 0.7112 0.0000 0.0000 0.0000</pose><geometry><box><size>1.6066 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
     </link></model>
     <!-- Tunnel: closed on top and sides, and it carries the bridge deck. -->
     <model name="tunnel"><static>true</static><link name="link">
-      <visual name="tunnel_visual"><pose>7.0976 0.4424 0.0000 0.0000 0.0000 1.5708</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/tunnel.stl</uri></mesh></geometry><material><diffuse>0.74 0.76 0.78 1</diffuse></material></visual>
+      <visual name="tunnel_visual"><pose>7.0976 0.4424 0.0000 0.0000 0.0000 1.5708</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/tunnel.stl</uri></mesh></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="wall_-1_collision"><pose>6.6662 0.4424 0.3111 0.0000 0.0000 0.0000</pose><geometry><box><size>0.0500 1.5240 0.6223</size></box></geometry></collision>
       <collision name="wall_1_collision"><pose>7.5290 0.4424 0.3111 0.0000 0.0000 0.0000</pose><geometry><box><size>0.0500 1.5240 0.6223</size></box></geometry></collision>
     </link></model>
     <!-- Helical ramp down: 4 ft centreline radius, 41.5 in wide, 11% grade. -->
     <model name="helix"><static>true</static><link name="link">
       <collision name="deck_0_collision"><pose>8.4168 0.0091 0.5718 0.0000 0.1117 6.3814</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry></collision>
-      <visual name="deck_0_visual"><pose>8.4168 0.0091 0.5718 0.0000 0.1117 6.3814</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="deck_0_visual"><pose>8.4168 0.0091 0.5718 0.0000 0.1117 6.3814</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="inner_rail_0_collision"><pose>8.3628 0.5577 0.6980 0.0000 0.1117 6.3814</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="inner_rail_0_visual"><pose>8.3628 0.5577 0.6980 0.0000 0.1117 6.3814</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="inner_rail_0_visual"><pose>8.3628 0.5577 0.6980 0.0000 0.1117 6.3814</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="outer_rail_0_collision"><pose>8.4708 -0.5394 0.6980 0.0000 0.1117 6.3814</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="outer_rail_0_visual"><pose>8.4708 -0.5394 0.6980 0.0000 0.1117 6.3814</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="outer_rail_0_visual"><pose>8.4708 -0.5394 0.6980 0.0000 0.1117 6.3814</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="deck_1_collision"><pose>8.6477 0.0551 0.5453 0.0000 0.1117 6.5777</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry></collision>
-      <visual name="deck_1_visual"><pose>8.6477 0.0551 0.5453 0.0000 0.1117 6.5777</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="deck_1_visual"><pose>8.6477 0.0551 0.5453 0.0000 0.1117 6.5777</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="inner_rail_1_collision"><pose>8.4877 0.5826 0.6715 0.0000 0.1117 6.5777</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="inner_rail_1_visual"><pose>8.4877 0.5826 0.6715 0.0000 0.1117 6.5777</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="inner_rail_1_visual"><pose>8.4877 0.5826 0.6715 0.0000 0.1117 6.5777</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="outer_rail_1_collision"><pose>8.8078 -0.4724 0.6715 0.0000 0.1117 6.5777</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="outer_rail_1_visual"><pose>8.8078 -0.4724 0.6715 0.0000 0.1117 6.5777</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="outer_rail_1_visual"><pose>8.8078 -0.4724 0.6715 0.0000 0.1117 6.5777</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="deck_2_collision"><pose>8.8653 0.1452 0.5189 0.0000 0.1117 6.7741</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry></collision>
-      <visual name="deck_2_visual"><pose>8.8653 0.1452 0.5189 0.0000 0.1117 6.7741</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="deck_2_visual"><pose>8.8653 0.1452 0.5189 0.0000 0.1117 6.7741</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="inner_rail_2_collision"><pose>8.6054 0.6313 0.6451 0.0000 0.1117 6.7741</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="inner_rail_2_visual"><pose>8.6054 0.6313 0.6451 0.0000 0.1117 6.7741</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="inner_rail_2_visual"><pose>8.6054 0.6313 0.6451 0.0000 0.1117 6.7741</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="outer_rail_2_collision"><pose>9.1251 -0.3410 0.6451 0.0000 0.1117 6.7741</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="outer_rail_2_visual"><pose>9.1251 -0.3410 0.6451 0.0000 0.1117 6.7741</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="outer_rail_2_visual"><pose>9.1251 -0.3410 0.6451 0.0000 0.1117 6.7741</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="deck_3_collision"><pose>9.0610 0.2760 0.4924 0.0000 0.1117 6.9704</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry></collision>
-      <visual name="deck_3_visual"><pose>9.0610 0.2760 0.4924 0.0000 0.1117 6.9704</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="deck_3_visual"><pose>9.0610 0.2760 0.4924 0.0000 0.1117 6.9704</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="inner_rail_3_collision"><pose>8.7113 0.7021 0.6186 0.0000 0.1117 6.9704</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="inner_rail_3_visual"><pose>8.7113 0.7021 0.6186 0.0000 0.1117 6.9704</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="inner_rail_3_visual"><pose>8.7113 0.7021 0.6186 0.0000 0.1117 6.9704</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="outer_rail_3_collision"><pose>9.4107 -0.1501 0.6186 0.0000 0.1117 6.9704</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="outer_rail_3_visual"><pose>9.4107 -0.1501 0.6186 0.0000 0.1117 6.9704</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="outer_rail_3_visual"><pose>9.4107 -0.1501 0.6186 0.0000 0.1117 6.9704</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="deck_4_collision"><pose>9.2275 0.4425 0.4659 0.0000 0.1117 7.1668</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry></collision>
-      <visual name="deck_4_visual"><pose>9.2275 0.4425 0.4659 0.0000 0.1117 7.1668</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="deck_4_visual"><pose>9.2275 0.4425 0.4659 0.0000 0.1117 7.1668</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="inner_rail_4_collision"><pose>8.8014 0.7922 0.5921 0.0000 0.1117 7.1668</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="inner_rail_4_visual"><pose>8.8014 0.7922 0.5921 0.0000 0.1117 7.1668</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="inner_rail_4_visual"><pose>8.8014 0.7922 0.5921 0.0000 0.1117 7.1668</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="outer_rail_4_collision"><pose>9.6536 0.0928 0.5921 0.0000 0.1117 7.1668</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="outer_rail_4_visual"><pose>9.6536 0.0928 0.5921 0.0000 0.1117 7.1668</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="outer_rail_4_visual"><pose>9.6536 0.0928 0.5921 0.0000 0.1117 7.1668</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="deck_5_collision"><pose>9.3583 0.6382 0.4395 0.0000 0.1117 7.3631</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry></collision>
-      <visual name="deck_5_visual"><pose>9.3583 0.6382 0.4395 0.0000 0.1117 7.3631</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="deck_5_visual"><pose>9.3583 0.6382 0.4395 0.0000 0.1117 7.3631</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="inner_rail_5_collision"><pose>8.8722 0.8981 0.5657 0.0000 0.1117 7.3631</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="inner_rail_5_visual"><pose>8.8722 0.8981 0.5657 0.0000 0.1117 7.3631</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="inner_rail_5_visual"><pose>8.8722 0.8981 0.5657 0.0000 0.1117 7.3631</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="outer_rail_5_collision"><pose>9.8445 0.3784 0.5657 0.0000 0.1117 7.3631</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="outer_rail_5_visual"><pose>9.8445 0.3784 0.5657 0.0000 0.1117 7.3631</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="outer_rail_5_visual"><pose>9.8445 0.3784 0.5657 0.0000 0.1117 7.3631</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="deck_6_collision"><pose>9.4484 0.8558 0.4130 0.0000 0.1117 7.5595</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry></collision>
-      <visual name="deck_6_visual"><pose>9.4484 0.8558 0.4130 0.0000 0.1117 7.5595</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="deck_6_visual"><pose>9.4484 0.8558 0.4130 0.0000 0.1117 7.5595</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="inner_rail_6_collision"><pose>8.9209 1.0158 0.5392 0.0000 0.1117 7.5595</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="inner_rail_6_visual"><pose>8.9209 1.0158 0.5392 0.0000 0.1117 7.5595</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="inner_rail_6_visual"><pose>8.9209 1.0158 0.5392 0.0000 0.1117 7.5595</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="outer_rail_6_collision"><pose>9.9759 0.6958 0.5392 0.0000 0.1117 7.5595</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="outer_rail_6_visual"><pose>9.9759 0.6958 0.5392 0.0000 0.1117 7.5595</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="outer_rail_6_visual"><pose>9.9759 0.6958 0.5392 0.0000 0.1117 7.5595</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="deck_7_collision"><pose>9.4944 1.0867 0.3866 0.0000 0.1117 7.7558</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry></collision>
-      <visual name="deck_7_visual"><pose>9.4944 1.0867 0.3866 0.0000 0.1117 7.7558</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="deck_7_visual"><pose>9.4944 1.0867 0.3866 0.0000 0.1117 7.7558</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="inner_rail_7_collision"><pose>8.9458 1.1407 0.5128 0.0000 0.1117 7.7558</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="inner_rail_7_visual"><pose>8.9458 1.1407 0.5128 0.0000 0.1117 7.7558</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="inner_rail_7_visual"><pose>8.9458 1.1407 0.5128 0.0000 0.1117 7.7558</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="outer_rail_7_collision"><pose>10.0430 1.0327 0.5128 0.0000 0.1117 7.7558</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="outer_rail_7_visual"><pose>10.0430 1.0327 0.5128 0.0000 0.1117 7.7558</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="outer_rail_7_visual"><pose>10.0430 1.0327 0.5128 0.0000 0.1117 7.7558</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="deck_8_collision"><pose>9.4944 1.3221 0.3601 0.0000 0.1117 7.9522</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry></collision>
-      <visual name="deck_8_visual"><pose>9.4944 1.3221 0.3601 0.0000 0.1117 7.9522</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="deck_8_visual"><pose>9.4944 1.3221 0.3601 0.0000 0.1117 7.9522</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="inner_rail_8_collision"><pose>8.9458 1.2681 0.4863 0.0000 0.1117 7.9522</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="inner_rail_8_visual"><pose>8.9458 1.2681 0.4863 0.0000 0.1117 7.9522</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="inner_rail_8_visual"><pose>8.9458 1.2681 0.4863 0.0000 0.1117 7.9522</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="outer_rail_8_collision"><pose>10.0430 1.3762 0.4863 0.0000 0.1117 7.9522</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="outer_rail_8_visual"><pose>10.0430 1.3762 0.4863 0.0000 0.1117 7.9522</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="outer_rail_8_visual"><pose>10.0430 1.3762 0.4863 0.0000 0.1117 7.9522</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="deck_9_collision"><pose>9.4484 1.5531 0.3336 0.0000 0.1117 8.1485</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry></collision>
-      <visual name="deck_9_visual"><pose>9.4484 1.5531 0.3336 0.0000 0.1117 8.1485</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="deck_9_visual"><pose>9.4484 1.5531 0.3336 0.0000 0.1117 8.1485</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="inner_rail_9_collision"><pose>8.9209 1.3931 0.4598 0.0000 0.1117 8.1485</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="inner_rail_9_visual"><pose>8.9209 1.3931 0.4598 0.0000 0.1117 8.1485</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="inner_rail_9_visual"><pose>8.9209 1.3931 0.4598 0.0000 0.1117 8.1485</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="outer_rail_9_collision"><pose>9.9759 1.7131 0.4598 0.0000 0.1117 8.1485</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="outer_rail_9_visual"><pose>9.9759 1.7131 0.4598 0.0000 0.1117 8.1485</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="outer_rail_9_visual"><pose>9.9759 1.7131 0.4598 0.0000 0.1117 8.1485</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="deck_10_collision"><pose>9.3583 1.7706 0.3072 0.0000 0.1117 8.3449</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry></collision>
-      <visual name="deck_10_visual"><pose>9.3583 1.7706 0.3072 0.0000 0.1117 8.3449</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="deck_10_visual"><pose>9.3583 1.7706 0.3072 0.0000 0.1117 8.3449</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="inner_rail_10_collision"><pose>8.8722 1.5107 0.4334 0.0000 0.1117 8.3449</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="inner_rail_10_visual"><pose>8.8722 1.5107 0.4334 0.0000 0.1117 8.3449</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="inner_rail_10_visual"><pose>8.8722 1.5107 0.4334 0.0000 0.1117 8.3449</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="outer_rail_10_collision"><pose>9.8445 2.0304 0.4334 0.0000 0.1117 8.3449</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="outer_rail_10_visual"><pose>9.8445 2.0304 0.4334 0.0000 0.1117 8.3449</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="outer_rail_10_visual"><pose>9.8445 2.0304 0.4334 0.0000 0.1117 8.3449</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="deck_11_collision"><pose>9.2275 1.9664 0.2807 0.0000 0.1117 8.5412</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry></collision>
-      <visual name="deck_11_visual"><pose>9.2275 1.9664 0.2807 0.0000 0.1117 8.5412</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="deck_11_visual"><pose>9.2275 1.9664 0.2807 0.0000 0.1117 8.5412</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="inner_rail_11_collision"><pose>8.8014 1.6167 0.4069 0.0000 0.1117 8.5412</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="inner_rail_11_visual"><pose>8.8014 1.6167 0.4069 0.0000 0.1117 8.5412</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="inner_rail_11_visual"><pose>8.8014 1.6167 0.4069 0.0000 0.1117 8.5412</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="outer_rail_11_collision"><pose>9.6536 2.3161 0.4069 0.0000 0.1117 8.5412</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="outer_rail_11_visual"><pose>9.6536 2.3161 0.4069 0.0000 0.1117 8.5412</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="outer_rail_11_visual"><pose>9.6536 2.3161 0.4069 0.0000 0.1117 8.5412</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="deck_12_collision"><pose>9.0610 2.1329 0.2543 0.0000 0.1117 8.7376</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry></collision>
-      <visual name="deck_12_visual"><pose>9.0610 2.1329 0.2543 0.0000 0.1117 8.7376</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="deck_12_visual"><pose>9.0610 2.1329 0.2543 0.0000 0.1117 8.7376</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="inner_rail_12_collision"><pose>8.7113 1.7067 0.3805 0.0000 0.1117 8.7376</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="inner_rail_12_visual"><pose>8.7113 1.7067 0.3805 0.0000 0.1117 8.7376</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="inner_rail_12_visual"><pose>8.7113 1.7067 0.3805 0.0000 0.1117 8.7376</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="outer_rail_12_collision"><pose>9.4107 2.5590 0.3805 0.0000 0.1117 8.7376</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="outer_rail_12_visual"><pose>9.4107 2.5590 0.3805 0.0000 0.1117 8.7376</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="outer_rail_12_visual"><pose>9.4107 2.5590 0.3805 0.0000 0.1117 8.7376</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="deck_13_collision"><pose>8.8653 2.2637 0.2278 0.0000 0.1117 8.9339</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry></collision>
-      <visual name="deck_13_visual"><pose>8.8653 2.2637 0.2278 0.0000 0.1117 8.9339</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="deck_13_visual"><pose>8.8653 2.2637 0.2278 0.0000 0.1117 8.9339</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="inner_rail_13_collision"><pose>8.6054 1.7775 0.3540 0.0000 0.1117 8.9339</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="inner_rail_13_visual"><pose>8.6054 1.7775 0.3540 0.0000 0.1117 8.9339</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="inner_rail_13_visual"><pose>8.6054 1.7775 0.3540 0.0000 0.1117 8.9339</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="outer_rail_13_collision"><pose>9.1251 2.7498 0.3540 0.0000 0.1117 8.9339</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="outer_rail_13_visual"><pose>9.1251 2.7498 0.3540 0.0000 0.1117 8.9339</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="outer_rail_13_visual"><pose>9.1251 2.7498 0.3540 0.0000 0.1117 8.9339</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="deck_14_collision"><pose>8.6477 2.3538 0.2014 0.0000 0.1117 9.1303</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry></collision>
-      <visual name="deck_14_visual"><pose>8.6477 2.3538 0.2014 0.0000 0.1117 9.1303</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="deck_14_visual"><pose>8.6477 2.3538 0.2014 0.0000 0.1117 9.1303</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="inner_rail_14_collision"><pose>8.4877 1.8263 0.3276 0.0000 0.1117 9.1303</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="inner_rail_14_visual"><pose>8.4877 1.8263 0.3276 0.0000 0.1117 9.1303</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="inner_rail_14_visual"><pose>8.4877 1.8263 0.3276 0.0000 0.1117 9.1303</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="outer_rail_14_collision"><pose>8.8078 2.8813 0.3276 0.0000 0.1117 9.1303</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="outer_rail_14_visual"><pose>8.8078 2.8813 0.3276 0.0000 0.1117 9.1303</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="outer_rail_14_visual"><pose>8.8078 2.8813 0.3276 0.0000 0.1117 9.1303</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="deck_15_collision"><pose>8.4168 2.3997 0.1749 0.0000 0.1117 9.3266</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry></collision>
-      <visual name="deck_15_visual"><pose>8.4168 2.3997 0.1749 0.0000 0.1117 9.3266</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="deck_15_visual"><pose>8.4168 2.3997 0.1749 0.0000 0.1117 9.3266</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="inner_rail_15_collision"><pose>8.3628 1.8511 0.3011 0.0000 0.1117 9.3266</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="inner_rail_15_visual"><pose>8.3628 1.8511 0.3011 0.0000 0.1117 9.3266</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="inner_rail_15_visual"><pose>8.3628 1.8511 0.3011 0.0000 0.1117 9.3266</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="outer_rail_15_collision"><pose>8.4708 2.9483 0.3011 0.0000 0.1117 9.3266</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="outer_rail_15_visual"><pose>8.4708 2.9483 0.3011 0.0000 0.1117 9.3266</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="outer_rail_15_visual"><pose>8.4708 2.9483 0.3011 0.0000 0.1117 9.3266</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="deck_16_collision"><pose>8.1814 2.3997 0.1484 0.0000 0.1117 9.5230</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry></collision>
-      <visual name="deck_16_visual"><pose>8.1814 2.3997 0.1484 0.0000 0.1117 9.5230</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="deck_16_visual"><pose>8.1814 2.3997 0.1484 0.0000 0.1117 9.5230</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="inner_rail_16_collision"><pose>8.2354 1.8511 0.2746 0.0000 0.1117 9.5230</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="inner_rail_16_visual"><pose>8.2354 1.8511 0.2746 0.0000 0.1117 9.5230</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="inner_rail_16_visual"><pose>8.2354 1.8511 0.2746 0.0000 0.1117 9.5230</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="outer_rail_16_collision"><pose>8.1273 2.9483 0.2746 0.0000 0.1117 9.5230</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="outer_rail_16_visual"><pose>8.1273 2.9483 0.2746 0.0000 0.1117 9.5230</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="outer_rail_16_visual"><pose>8.1273 2.9483 0.2746 0.0000 0.1117 9.5230</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="deck_17_collision"><pose>7.9504 2.3538 0.1220 0.0000 0.1117 9.7193</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry></collision>
-      <visual name="deck_17_visual"><pose>7.9504 2.3538 0.1220 0.0000 0.1117 9.7193</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="deck_17_visual"><pose>7.9504 2.3538 0.1220 0.0000 0.1117 9.7193</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="inner_rail_17_collision"><pose>8.1105 1.8263 0.2482 0.0000 0.1117 9.7193</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="inner_rail_17_visual"><pose>8.1105 1.8263 0.2482 0.0000 0.1117 9.7193</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="inner_rail_17_visual"><pose>8.1105 1.8263 0.2482 0.0000 0.1117 9.7193</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="outer_rail_17_collision"><pose>7.7904 2.8813 0.2482 0.0000 0.1117 9.7193</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="outer_rail_17_visual"><pose>7.7904 2.8813 0.2482 0.0000 0.1117 9.7193</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="outer_rail_17_visual"><pose>7.7904 2.8813 0.2482 0.0000 0.1117 9.7193</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="deck_18_collision"><pose>7.7329 2.2637 0.0955 0.0000 0.1117 9.9157</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry></collision>
-      <visual name="deck_18_visual"><pose>7.7329 2.2637 0.0955 0.0000 0.1117 9.9157</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="deck_18_visual"><pose>7.7329 2.2637 0.0955 0.0000 0.1117 9.9157</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="inner_rail_18_collision"><pose>7.9928 1.7775 0.2217 0.0000 0.1117 9.9157</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="inner_rail_18_visual"><pose>7.9928 1.7775 0.2217 0.0000 0.1117 9.9157</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="inner_rail_18_visual"><pose>7.9928 1.7775 0.2217 0.0000 0.1117 9.9157</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="outer_rail_18_collision"><pose>7.4731 2.7498 0.2217 0.0000 0.1117 9.9157</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="outer_rail_18_visual"><pose>7.4731 2.7498 0.2217 0.0000 0.1117 9.9157</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="outer_rail_18_visual"><pose>7.4731 2.7498 0.2217 0.0000 0.1117 9.9157</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="deck_19_collision"><pose>7.5371 2.1329 0.0691 0.0000 0.1117 10.1120</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry></collision>
-      <visual name="deck_19_visual"><pose>7.5371 2.1329 0.0691 0.0000 0.1117 10.1120</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="deck_19_visual"><pose>7.5371 2.1329 0.0691 0.0000 0.1117 10.1120</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="inner_rail_19_collision"><pose>7.8868 1.7067 0.1953 0.0000 0.1117 10.1120</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="inner_rail_19_visual"><pose>7.8868 1.7067 0.1953 0.0000 0.1117 10.1120</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="inner_rail_19_visual"><pose>7.8868 1.7067 0.1953 0.0000 0.1117 10.1120</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="outer_rail_19_collision"><pose>7.1874 2.5590 0.1953 0.0000 0.1117 10.1120</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="outer_rail_19_visual"><pose>7.1874 2.5590 0.1953 0.0000 0.1117 10.1120</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="outer_rail_19_visual"><pose>7.1874 2.5590 0.1953 0.0000 0.1117 10.1120</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="deck_20_collision"><pose>7.3707 1.9664 0.0426 0.0000 0.1117 10.3084</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry></collision>
-      <visual name="deck_20_visual"><pose>7.3707 1.9664 0.0426 0.0000 0.1117 10.3084</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="deck_20_visual"><pose>7.3707 1.9664 0.0426 0.0000 0.1117 10.3084</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="inner_rail_20_collision"><pose>7.7968 1.6167 0.1688 0.0000 0.1117 10.3084</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="inner_rail_20_visual"><pose>7.7968 1.6167 0.1688 0.0000 0.1117 10.3084</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="inner_rail_20_visual"><pose>7.7968 1.6167 0.1688 0.0000 0.1117 10.3084</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="outer_rail_20_collision"><pose>6.9445 2.3161 0.1688 0.0000 0.1117 10.3084</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="outer_rail_20_visual"><pose>6.9445 2.3161 0.1688 0.0000 0.1117 10.3084</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="outer_rail_20_visual"><pose>6.9445 2.3161 0.1688 0.0000 0.1117 10.3084</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="deck_21_collision"><pose>7.2399 1.7706 0.0161 0.0000 0.1117 10.5047</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry></collision>
-      <visual name="deck_21_visual"><pose>7.2399 1.7706 0.0161 0.0000 0.1117 10.5047</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="deck_21_visual"><pose>7.2399 1.7706 0.0161 0.0000 0.1117 10.5047</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="inner_rail_21_collision"><pose>7.7260 1.5107 0.1423 0.0000 0.1117 10.5047</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="inner_rail_21_visual"><pose>7.7260 1.5107 0.1423 0.0000 0.1117 10.5047</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="inner_rail_21_visual"><pose>7.7260 1.5107 0.1423 0.0000 0.1117 10.5047</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="outer_rail_21_collision"><pose>6.7537 2.0304 0.1423 0.0000 0.1117 10.5047</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="outer_rail_21_visual"><pose>6.7537 2.0304 0.1423 0.0000 0.1117 10.5047</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="outer_rail_21_visual"><pose>6.7537 2.0304 0.1423 0.0000 0.1117 10.5047</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="deck_22_collision"><pose>7.1497 1.5531 -0.0103 0.0000 0.1117 10.7010</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry></collision>
-      <visual name="deck_22_visual"><pose>7.1497 1.5531 -0.0103 0.0000 0.1117 10.7010</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="deck_22_visual"><pose>7.1497 1.5531 -0.0103 0.0000 0.1117 10.7010</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="inner_rail_22_collision"><pose>7.6772 1.3931 0.1159 0.0000 0.1117 10.7010</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="inner_rail_22_visual"><pose>7.6772 1.3931 0.1159 0.0000 0.1117 10.7010</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="inner_rail_22_visual"><pose>7.6772 1.3931 0.1159 0.0000 0.1117 10.7010</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="outer_rail_22_collision"><pose>6.6222 1.7131 0.1159 0.0000 0.1117 10.7010</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="outer_rail_22_visual"><pose>6.6222 1.7131 0.1159 0.0000 0.1117 10.7010</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="outer_rail_22_visual"><pose>6.6222 1.7131 0.1159 0.0000 0.1117 10.7010</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="deck_23_collision"><pose>7.1038 1.3221 -0.0368 0.0000 0.1117 10.8974</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry></collision>
-      <visual name="deck_23_visual"><pose>7.1038 1.3221 -0.0368 0.0000 0.1117 10.8974</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="deck_23_visual"><pose>7.1038 1.3221 -0.0368 0.0000 0.1117 10.8974</pose><geometry><box><size>0.3522 1.0525 0.1000</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="inner_rail_23_collision"><pose>7.6524 1.2681 0.0894 0.0000 0.1117 10.8974</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="inner_rail_23_visual"><pose>7.6524 1.2681 0.0894 0.0000 0.1117 10.8974</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="inner_rail_23_visual"><pose>7.6524 1.2681 0.0894 0.0000 0.1117 10.8974</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="outer_rail_23_collision"><pose>6.5552 1.3762 0.0894 0.0000 0.1117 10.8974</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry></collision>
-      <visual name="outer_rail_23_visual"><pose>6.5552 1.3762 0.0894 0.0000 0.1117 10.8974</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="outer_rail_23_visual"><pose>6.5552 1.3762 0.0894 0.0000 0.1117 10.8974</pose><geometry><box><size>0.3522 0.0500 0.1524</size></box></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
     </link></model>
     <!-- Car wash: ribbons are visual only, they cannot deflect the car. -->
     <model name="car_wash"><static>true</static><link name="link">
-      <visual name="base_visual"><pose>-2.8703 -0.0002 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/car_wash_base.stl</uri></mesh></geometry><material><diffuse>0.88 0.88 0.90 1</diffuse></material></visual>
+      <visual name="base_visual"><pose>-2.8703 -0.0002 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/car_wash_base.stl</uri></mesh></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="base_collision"><pose>-2.8703 -0.0002 0.0065 0.0000 0.0000 0.0000</pose><geometry><box><size>2.4384 1.2192 0.0130</size></box></geometry></collision>
-      <visual name="arch_0_visual"><pose>-3.8198 -0.0002 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/car_wash_arch.stl</uri></mesh></geometry><material><diffuse>0.88 0.88 0.90 1</diffuse></material></visual>
+      <visual name="arch_0_visual"><pose>-3.8198 -0.0002 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/car_wash_arch.stl</uri></mesh></geometry><material><diffuse>1 1 1 1</diffuse></material></visual>
       <collision name="upright_0_-1_collision"><pose>-3.8198 -0.5757 0.2100 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.0170</radius><length>0.4200</length></cylinder></geometry></collision>
       <collision name="upright_0_1_collision"><pose>-3.8198 0.5753 0.2100 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.0170</radius><length>0.4200</length></cylinder></geometry></collision>
       <visual name="strip_0_0_visual"><pose>-3.8198 -0.4447 0.3275 0.0000 0.0000 0.0000</pose><geometry><box><size>0.0370 0.0510 0.4250</size></box></geometry><material><diffuse>0.20 0.45 0.85 1</diffuse></material></visual>
@@ -446,7 +446,7 @@
       <visual name="strip_0_5_visual"><pose>-3.8198 0.1903 0.3275 0.0000 0.0000 0.0000</pose><geometry><box><size>0.0370 0.0510 0.4250</size></box></geometry><material><diffuse>0.90 0.25 0.20 1</diffuse></material></visual>
       <visual name="strip_0_6_visual"><pose>-3.8198 0.3173 0.3275 0.0000 0.0000 0.0000</pose><geometry><box><size>0.0370 0.0510 0.4250</size></box></geometry><material><diffuse>0.20 0.45 0.85 1</diffuse></material></visual>
       <visual name="strip_0_7_visual"><pose>-3.8198 0.4443 0.3275 0.0000 0.0000 0.0000</pose><geometry><box><size>0.0370 0.0510 0.4250</size></box></geometry><material><diffuse>0.90 0.25 0.20 1</diffuse></material></visual>
-      <visual name="arch_1_visual"><pose>-3.3626 -0.0002 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/car_wash_arch.stl</uri></mesh></geometry><material><diffuse>0.88 0.88 0.90 1</diffuse></material></visual>
+      <visual name="arch_1_visual"><pose>-3.3626 -0.0002 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/car_wash_arch.stl</uri></mesh></geometry><material><diffuse>1 1 1 1</diffuse></material></visual>
       <collision name="upright_1_-1_collision"><pose>-3.3626 -0.5757 0.2100 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.0170</radius><length>0.4200</length></cylinder></geometry></collision>
       <collision name="upright_1_1_collision"><pose>-3.3626 0.5753 0.2100 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.0170</radius><length>0.4200</length></cylinder></geometry></collision>
       <visual name="strip_1_0_visual"><pose>-3.3626 -0.4447 0.3275 0.0000 0.0000 0.0000</pose><geometry><box><size>0.0370 0.0510 0.4250</size></box></geometry><material><diffuse>0.20 0.45 0.85 1</diffuse></material></visual>
@@ -457,7 +457,7 @@
       <visual name="strip_1_5_visual"><pose>-3.3626 0.1903 0.3275 0.0000 0.0000 0.0000</pose><geometry><box><size>0.0370 0.0510 0.4250</size></box></geometry><material><diffuse>0.90 0.25 0.20 1</diffuse></material></visual>
       <visual name="strip_1_6_visual"><pose>-3.3626 0.3173 0.3275 0.0000 0.0000 0.0000</pose><geometry><box><size>0.0370 0.0510 0.4250</size></box></geometry><material><diffuse>0.20 0.45 0.85 1</diffuse></material></visual>
       <visual name="strip_1_7_visual"><pose>-3.3626 0.4443 0.3275 0.0000 0.0000 0.0000</pose><geometry><box><size>0.0370 0.0510 0.4250</size></box></geometry><material><diffuse>0.90 0.25 0.20 1</diffuse></material></visual>
-      <visual name="arch_2_visual"><pose>-2.9054 -0.0002 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/car_wash_arch.stl</uri></mesh></geometry><material><diffuse>0.88 0.88 0.90 1</diffuse></material></visual>
+      <visual name="arch_2_visual"><pose>-2.9054 -0.0002 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/car_wash_arch.stl</uri></mesh></geometry><material><diffuse>1 1 1 1</diffuse></material></visual>
       <collision name="upright_2_-1_collision"><pose>-2.9054 -0.5757 0.2100 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.0170</radius><length>0.4200</length></cylinder></geometry></collision>
       <collision name="upright_2_1_collision"><pose>-2.9054 0.5753 0.2100 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.0170</radius><length>0.4200</length></cylinder></geometry></collision>
       <visual name="strip_2_0_visual"><pose>-2.9054 -0.4447 0.3275 0.0000 0.0000 0.0000</pose><geometry><box><size>0.0370 0.0510 0.4250</size></box></geometry><material><diffuse>0.20 0.45 0.85 1</diffuse></material></visual>
@@ -468,7 +468,7 @@
       <visual name="strip_2_5_visual"><pose>-2.9054 0.1903 0.3275 0.0000 0.0000 0.0000</pose><geometry><box><size>0.0370 0.0510 0.4250</size></box></geometry><material><diffuse>0.90 0.25 0.20 1</diffuse></material></visual>
       <visual name="strip_2_6_visual"><pose>-2.9054 0.3173 0.3275 0.0000 0.0000 0.0000</pose><geometry><box><size>0.0370 0.0510 0.4250</size></box></geometry><material><diffuse>0.20 0.45 0.85 1</diffuse></material></visual>
       <visual name="strip_2_7_visual"><pose>-2.9054 0.4443 0.3275 0.0000 0.0000 0.0000</pose><geometry><box><size>0.0370 0.0510 0.4250</size></box></geometry><material><diffuse>0.90 0.25 0.20 1</diffuse></material></visual>
-      <visual name="arch_3_visual"><pose>-2.4482 -0.0002 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/car_wash_arch.stl</uri></mesh></geometry><material><diffuse>0.88 0.88 0.90 1</diffuse></material></visual>
+      <visual name="arch_3_visual"><pose>-2.4482 -0.0002 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/car_wash_arch.stl</uri></mesh></geometry><material><diffuse>1 1 1 1</diffuse></material></visual>
       <collision name="upright_3_-1_collision"><pose>-2.4482 -0.5757 0.2100 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.0170</radius><length>0.4200</length></cylinder></geometry></collision>
       <collision name="upright_3_1_collision"><pose>-2.4482 0.5753 0.2100 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.0170</radius><length>0.4200</length></cylinder></geometry></collision>
       <visual name="strip_3_0_visual"><pose>-2.4482 -0.4447 0.3275 0.0000 0.0000 0.0000</pose><geometry><box><size>0.0370 0.0510 0.4250</size></box></geometry><material><diffuse>0.20 0.45 0.85 1</diffuse></material></visual>
@@ -479,7 +479,7 @@
       <visual name="strip_3_5_visual"><pose>-2.4482 0.1903 0.3275 0.0000 0.0000 0.0000</pose><geometry><box><size>0.0370 0.0510 0.4250</size></box></geometry><material><diffuse>0.90 0.25 0.20 1</diffuse></material></visual>
       <visual name="strip_3_6_visual"><pose>-2.4482 0.3173 0.3275 0.0000 0.0000 0.0000</pose><geometry><box><size>0.0370 0.0510 0.4250</size></box></geometry><material><diffuse>0.20 0.45 0.85 1</diffuse></material></visual>
       <visual name="strip_3_7_visual"><pose>-2.4482 0.4443 0.3275 0.0000 0.0000 0.0000</pose><geometry><box><size>0.0370 0.0510 0.4250</size></box></geometry><material><diffuse>0.90 0.25 0.20 1</diffuse></material></visual>
-      <visual name="arch_4_visual"><pose>-1.9910 -0.0002 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/car_wash_arch.stl</uri></mesh></geometry><material><diffuse>0.88 0.88 0.90 1</diffuse></material></visual>
+      <visual name="arch_4_visual"><pose>-1.9910 -0.0002 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/car_wash_arch.stl</uri></mesh></geometry><material><diffuse>1 1 1 1</diffuse></material></visual>
       <collision name="upright_4_-1_collision"><pose>-1.9910 -0.5757 0.2100 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.0170</radius><length>0.4200</length></cylinder></geometry></collision>
       <collision name="upright_4_1_collision"><pose>-1.9910 0.5753 0.2100 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.0170</radius><length>0.4200</length></cylinder></geometry></collision>
       <visual name="strip_4_0_visual"><pose>-1.9910 -0.4447 0.3275 0.0000 0.0000 0.0000</pose><geometry><box><size>0.0370 0.0510 0.4250</size></box></geometry><material><diffuse>0.20 0.45 0.85 1</diffuse></material></visual>
@@ -493,7 +493,7 @@
     </link></model>
     <!-- Gravel: low friction lid and loose pebbles stand in for pea gravel. -->
     <model name="gravel_box"><static>true</static><link name="link">
-      <visual name="box_visual"><pose>2.3220 -9.9089 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/gravel_box.stl</uri></mesh></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="box_visual"><pose>2.3220 -9.9089 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/gravel_box.stl</uri></mesh></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="base_collision"><pose>2.3220 -9.9089 0.0065 0.0000 0.0000 0.0000</pose><geometry><box><size>2.4384 1.2192 0.0130</size></box></geometry></collision>
       <collision name="rail_n_collision"><pose>2.3220 -9.2993 0.0320 0.0000 0.0000 0.0000</pose><geometry><box><size>2.4384 0.0380 0.0380</size></box></geometry></collision>
       <collision name="rail_s_collision"><pose>2.3220 -10.5185 0.0320 0.0000 0.0000 0.0000</pose><geometry><box><size>2.4384 0.0380 0.0380</size></box></geometry></collision>
@@ -681,7 +681,7 @@
     </link></model>
     <!-- Potholes: bumps stand proud, holes are cut into the board mesh. -->
     <model name="pothole_section"><static>true</static><link name="link">
-      <visual name="board_visual"><pose>1.2561 -8.2255 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/pothole_board.stl</uri></mesh></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="board_visual"><pose>1.2561 -8.2255 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/pothole_board.stl</uri></mesh></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="base_collision"><pose>1.2561 -8.2255 0.0100 0.0000 0.0000 0.0000</pose><geometry><box><size>2.4384 1.2192 0.0200</size></box></geometry></collision>
       <collision name="top_0_collision"><pose>1.2569 -8.8051 0.0290 0.0000 0.0000 0.0000</pose><geometry><box><size>2.4400 0.0600 0.0181</size></box></geometry></collision>
       <collision name="top_1_collision"><pose>0.4669 -8.7651 0.0290 0.0000 0.0000 0.0000</pose><geometry><box><size>0.8600 0.0200 0.0181</size></box></geometry></collision>
@@ -791,58 +791,58 @@
       <collision name="top_105_collision"><pose>2.2669 -8.0351 0.0290 0.0000 0.0000 0.0000</pose><geometry><box><size>0.0200 0.0400 0.0181</size></box></geometry></collision>
       <collision name="top_106_collision"><pose>2.3769 -8.7151 0.0290 0.0000 0.0000 0.0000</pose><geometry><box><size>0.2000 0.0400 0.0181</size></box></geometry></collision>
       <collision name="top_107_collision"><pose>2.3869 -8.0751 0.0290 0.0000 0.0000 0.0000</pose><geometry><box><size>0.1800 0.1200 0.0181</size></box></geometry></collision>
-      <visual name="bump_0_visual"><pose>0.1958 -7.7682 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/pothole_bump.stl</uri></mesh></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="bump_0_visual"><pose>0.1958 -7.7682 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/pothole_bump.stl</uri></mesh></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="bump_0_body_collision"><pose>0.1958 -7.7682 0.0476 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.0760</radius><length>0.0190</length></cylinder></geometry></collision>
-      <visual name="bump_1_visual"><pose>0.1958 -8.3778 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/pothole_bump.stl</uri></mesh></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="bump_1_visual"><pose>0.1958 -8.3778 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/pothole_bump.stl</uri></mesh></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="bump_1_body_collision"><pose>0.1958 -8.3778 0.0476 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.0760</radius><length>0.0190</length></cylinder></geometry></collision>
-      <visual name="bump_2_visual"><pose>0.5005 -7.9269 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/pothole_bump.stl</uri></mesh></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="bump_2_visual"><pose>0.5005 -7.9269 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/pothole_bump.stl</uri></mesh></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="bump_2_body_collision"><pose>0.5005 -7.9269 0.0476 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.0760</radius><length>0.0190</length></cylinder></geometry></collision>
-      <visual name="bump_3_visual"><pose>0.5005 -8.5365 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/pothole_bump.stl</uri></mesh></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="bump_3_visual"><pose>0.5005 -8.5365 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/pothole_bump.stl</uri></mesh></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="bump_3_body_collision"><pose>0.5005 -8.5365 0.0476 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.0760</radius><length>0.0190</length></cylinder></geometry></collision>
-      <visual name="bump_4_visual"><pose>1.1038 -7.9206 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/pothole_bump.stl</uri></mesh></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="bump_4_visual"><pose>1.1038 -7.9206 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/pothole_bump.stl</uri></mesh></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="bump_4_body_collision"><pose>1.1038 -7.9206 0.0476 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.0760</radius><length>0.0190</length></cylinder></geometry></collision>
-      <visual name="bump_5_visual"><pose>1.1038 -8.5302 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/pothole_bump.stl</uri></mesh></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="bump_5_visual"><pose>1.1038 -8.5302 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/pothole_bump.stl</uri></mesh></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="bump_5_body_collision"><pose>1.1038 -8.5302 0.0476 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.0760</radius><length>0.0190</length></cylinder></geometry></collision>
-      <visual name="bump_6_visual"><pose>1.7134 -7.9206 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/pothole_bump.stl</uri></mesh></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="bump_6_visual"><pose>1.7134 -7.9206 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/pothole_bump.stl</uri></mesh></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="bump_6_body_collision"><pose>1.7134 -7.9206 0.0476 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.0760</radius><length>0.0190</length></cylinder></geometry></collision>
-      <visual name="bump_7_visual"><pose>1.7134 -8.5302 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/pothole_bump.stl</uri></mesh></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="bump_7_visual"><pose>1.7134 -8.5302 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/pothole_bump.stl</uri></mesh></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="bump_7_body_collision"><pose>1.7134 -8.5302 0.0476 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.0760</radius><length>0.0190</length></cylinder></geometry></collision>
-      <visual name="bump_8_visual"><pose>1.4086 -8.0730 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/pothole_bump.stl</uri></mesh></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="bump_8_visual"><pose>1.4086 -8.0730 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/pothole_bump.stl</uri></mesh></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="bump_8_body_collision"><pose>1.4086 -8.0730 0.0476 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.0760</radius><length>0.0190</length></cylinder></geometry></collision>
-      <visual name="bump_9_visual"><pose>1.4086 -8.6826 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/pothole_bump.stl</uri></mesh></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="bump_9_visual"><pose>1.4086 -8.6826 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/pothole_bump.stl</uri></mesh></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="bump_9_body_collision"><pose>1.4086 -8.6826 0.0476 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.0760</radius><length>0.0190</length></cylinder></geometry></collision>
-      <visual name="bump_10_visual"><pose>2.0182 -7.7682 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/pothole_bump.stl</uri></mesh></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="bump_10_visual"><pose>2.0182 -7.7682 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/pothole_bump.stl</uri></mesh></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="bump_10_body_collision"><pose>2.0182 -7.7682 0.0476 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.0760</radius><length>0.0190</length></cylinder></geometry></collision>
-      <visual name="bump_11_visual"><pose>2.0182 -8.3778 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/pothole_bump.stl</uri></mesh></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="bump_11_visual"><pose>2.0182 -8.3778 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/pothole_bump.stl</uri></mesh></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="bump_11_body_collision"><pose>2.0182 -8.3778 0.0476 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.0760</radius><length>0.0190</length></cylinder></geometry></collision>
-      <visual name="bump_12_visual"><pose>2.3230 -7.9206 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/pothole_bump.stl</uri></mesh></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="bump_12_visual"><pose>2.3230 -7.9206 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/pothole_bump.stl</uri></mesh></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="bump_12_body_collision"><pose>2.3230 -7.9206 0.0476 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.0760</radius><length>0.0190</length></cylinder></geometry></collision>
-      <visual name="bump_13_visual"><pose>2.3230 -8.5302 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/pothole_bump.stl</uri></mesh></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="bump_13_visual"><pose>2.3230 -8.5302 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/pothole_bump.stl</uri></mesh></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="bump_13_body_collision"><pose>2.3230 -8.5302 0.0476 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.0760</radius><length>0.0190</length></cylinder></geometry></collision>
-      <visual name="bump_14_visual"><pose>0.8054 -8.0730 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/pothole_bump.stl</uri></mesh></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="bump_14_visual"><pose>0.8054 -8.0730 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/pothole_bump.stl</uri></mesh></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="bump_14_body_collision"><pose>0.8054 -8.0730 0.0476 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.0760</radius><length>0.0190</length></cylinder></geometry></collision>
-      <visual name="bump_15_visual"><pose>0.8054 -8.6826 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/pothole_bump.stl</uri></mesh></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="bump_15_visual"><pose>0.8054 -8.6826 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/pothole_bump.stl</uri></mesh></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="bump_15_body_collision"><pose>0.8054 -8.6826 0.0476 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.0760</radius><length>0.0190</length></cylinder></geometry></collision>
     </link></model>
     <model name="pothole_entry_ramp"><static>true</static><link name="link">
-      <visual name="pothole_entry_ramp_visual"><pose>-0.3693 -8.4286 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/ramp_pothole_entry.stl</uri></mesh></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="pothole_entry_ramp_visual"><pose>-0.3693 -8.4286 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/ramp_pothole_entry.stl</uri></mesh></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="pothole_entry_ramp_wedge_collision"><pose>-0.3693 -8.4286 -0.0010 0.0000 -0.0468 0.0000</pose><geometry><box><size>0.8138 0.8129 0.0400</size></box></geometry></collision>
     </link></model>
     <model name="pothole_exit_ramp"><static>true</static><link name="link">
-      <visual name="pothole_exit_ramp_visual"><pose>2.8814 -8.2252 0.0000 0.0000 0.0000 3.1416</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/ramp_pothole_entry.stl</uri></mesh></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="pothole_exit_ramp_visual"><pose>2.8814 -8.2252 0.0000 0.0000 0.0000 3.1416</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/ramp_pothole_entry.stl</uri></mesh></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="pothole_exit_ramp_wedge_collision"><pose>2.8814 -8.2252 -0.0010 0.0000 0.0468 0.0000</pose><geometry><box><size>0.8138 1.2192 0.0400</size></box></geometry></collision>
     </link></model>
     <model name="gravel_entry_ramp"><static>true</static><link name="link">
-      <visual name="gravel_entry_ramp_visual"><pose>3.9476 -9.9089 0.0000 0.0000 0.0000 3.1416</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/ramp_up.stl</uri></mesh></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="gravel_entry_ramp_visual"><pose>3.9476 -9.9089 0.0000 0.0000 0.0000 3.1416</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/ramp_up.stl</uri></mesh></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="gravel_entry_ramp_wedge_collision"><pose>3.9476 -9.9089 0.0054 0.0000 0.0624 0.0000</pose><geometry><box><size>0.8145 0.8126 0.0400</size></box></geometry></collision>
     </link></model>
     <model name="gravel_exit_ramp"><static>true</static><link name="link">
-      <visual name="gravel_exit_ramp_visual"><pose>0.6963 -9.9089 0.0000 0.0000 0.0000 3.1416</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/ramp_narrowing.stl</uri></mesh></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="gravel_exit_ramp_visual"><pose>0.6963 -9.9089 0.0000 0.0000 0.0000 3.1416</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/ramp_narrowing.stl</uri></mesh></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="gravel_exit_ramp_wedge_collision"><pose>0.6963 -9.9089 0.0054 0.0000 -0.0624 0.0000</pose><geometry><box><size>0.8145 1.2192 0.0400</size></box></geometry></collision>
     </link></model>
     <!-- 8.5 degree banked turn, 48 in by 128 in. -->
     <model name="bank"><static>true</static><link name="link">
-      <visual name="bank_visual"><pose>-4.0276 -9.3717 0.0000 0.0000 0.0000 3.1416</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/bank.stl</uri></mesh></geometry><material><diffuse>0.62 0.48 0.31 1</diffuse></material></visual>
+      <visual name="bank_visual"><pose>-4.0276 -9.3717 0.0000 0.0000 0.0000 3.1416</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/bank.stl</uri></mesh></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="surface_collision"><pose>-4.0276 -9.3717 0.0711 0.0000 0.1484 0.0000</pose><geometry><box><size>1.2327 3.2513 0.0400</size></box></geometry></collision>
     </link></model>
 
@@ -875,62 +875,62 @@
     <!-- Buckets: moved at runtime by obstacle_randomizer_node. -->
     <model name="bucket_0"><static>true</static><pose>2.1586 -3.8653 0 0 0 0</pose>
       <link name="link">
-      <visual name="bucket_visual"><pose>0.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/bucket.stl</uri></mesh></geometry><material><diffuse>0.88 0.88 0.90 1</diffuse></material></visual>
+      <visual name="bucket_visual"><pose>0.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/bucket.stl</uri></mesh></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="body_collision"><pose>0.0000 0.0000 0.1900 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.1450</radius><length>0.3800</length></cylinder></geometry></collision>
       </link>
     </model>
     <model name="bucket_1"><static>true</static><pose>0.2789 -3.8653 0 0 0 0</pose>
       <link name="link">
-      <visual name="bucket_visual"><pose>0.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/bucket.stl</uri></mesh></geometry><material><diffuse>0.88 0.88 0.90 1</diffuse></material></visual>
+      <visual name="bucket_visual"><pose>0.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/bucket.stl</uri></mesh></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="body_collision"><pose>0.0000 0.0000 0.1900 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.1450</radius><length>0.3800</length></cylinder></geometry></collision>
       </link>
     </model>
     <model name="bucket_2"><static>true</static><pose>0.6346 -1.6427 0 0 0 0</pose>
       <link name="link">
-      <visual name="bucket_visual"><pose>0.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/bucket.stl</uri></mesh></geometry><material><diffuse>0.88 0.88 0.90 1</diffuse></material></visual>
+      <visual name="bucket_visual"><pose>0.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/bucket.stl</uri></mesh></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="body_collision"><pose>0.0000 0.0000 0.1900 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.1450</radius><length>0.3800</length></cylinder></geometry></collision>
       </link>
     </model>
     <model name="bucket_3"><static>true</static><pose>2.1626 -1.9353 0 0 0 0</pose>
       <link name="link">
-      <visual name="bucket_visual"><pose>0.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/bucket.stl</uri></mesh></geometry><material><diffuse>0.88 0.88 0.90 1</diffuse></material></visual>
+      <visual name="bucket_visual"><pose>0.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/bucket.stl</uri></mesh></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="body_collision"><pose>0.0000 0.0000 0.1900 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.1450</radius><length>0.3800</length></cylinder></geometry></collision>
       </link>
     </model>
     <model name="bucket_4"><static>true</static><pose>0.1265 -2.4300 0 0 0 0</pose>
       <link name="link">
-      <visual name="bucket_visual"><pose>0.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/bucket.stl</uri></mesh></geometry><material><diffuse>0.88 0.88 0.90 1</diffuse></material></visual>
+      <visual name="bucket_visual"><pose>0.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/bucket.stl</uri></mesh></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="body_collision"><pose>0.0000 0.0000 0.1900 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.1450</radius><length>0.3800</length></cylinder></geometry></collision>
       </link>
     </model>
     <model name="bucket_5"><static>true</static><pose>1.2186 -3.8653 0 0 0 0</pose>
       <link name="link">
-      <visual name="bucket_visual"><pose>0.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/bucket.stl</uri></mesh></geometry><material><diffuse>0.88 0.88 0.90 1</diffuse></material></visual>
+      <visual name="bucket_visual"><pose>0.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/bucket.stl</uri></mesh></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="body_collision"><pose>0.0000 0.0000 0.1900 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.1450</radius><length>0.3800</length></cylinder></geometry></collision>
       </link>
     </model>
     <model name="bucket_6"><static>true</static><pose>-3.7574 3.5371 0 0 0 0</pose>
       <link name="link">
-      <visual name="bucket_visual"><pose>0.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/bucket.stl</uri></mesh></geometry><material><diffuse>0.88 0.88 0.90 1</diffuse></material></visual>
+      <visual name="bucket_visual"><pose>0.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/bucket.stl</uri></mesh></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="body_collision"><pose>0.0000 0.0000 0.1900 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.1450</radius><length>0.3800</length></cylinder></geometry></collision>
       </link>
     </model>
     <model name="bucket_7"><static>true</static><pose>-4.2574 3.5371 0 0 0 0</pose>
       <link name="link">
-      <visual name="bucket_visual"><pose>0.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/bucket.stl</uri></mesh></geometry><material><diffuse>0.88 0.88 0.90 1</diffuse></material></visual>
+      <visual name="bucket_visual"><pose>0.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/bucket.stl</uri></mesh></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="body_collision"><pose>0.0000 0.0000 0.1900 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.1450</radius><length>0.3800</length></cylinder></geometry></collision>
       </link>
     </model>
     <model name="bucket_8"><static>true</static><pose>-4.7574 3.5371 0 0 0 0</pose>
       <link name="link">
-      <visual name="bucket_visual"><pose>0.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/bucket.stl</uri></mesh></geometry><material><diffuse>0.88 0.88 0.90 1</diffuse></material></visual>
+      <visual name="bucket_visual"><pose>0.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/bucket.stl</uri></mesh></geometry><material><diffuse>0.52 0.52 0.51 1</diffuse></material></visual>
       <collision name="body_collision"><pose>0.0000 0.0000 0.1900 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.1450</radius><length>0.3800</length></cylinder></geometry></collision>
       </link>
     </model>
     <!-- Hoops: slide along the dashed lines in the drawing. -->
     <model name="hoop_0"><static>true</static><pose>-3.9405 -1.7118 0 0 0 1.57080</pose>
       <link name="link">
-      <visual name="hoop_visual"><pose>0.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/hoop.stl</uri></mesh></geometry><material><diffuse>0.88 0.88 0.90 1</diffuse></material></visual>
+      <visual name="hoop_visual"><pose>0.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/hoop.stl</uri></mesh></geometry><material><diffuse>1 1 1 1</diffuse></material></visual>
       <collision name="base_collision"><pose>0.0000 0.0000 0.0065 0.0000 0.0000 0.0000</pose><geometry><box><size>0.7090 0.4050 0.0130</size></box></geometry></collision>
       <collision name="upright_-1_collision"><pose>-0.2920 0.0000 0.2600 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.0170</radius><length>0.5200</length></cylinder></geometry></collision>
       <collision name="upright_1_collision"><pose>0.2920 0.0000 0.2600 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.0170</radius><length>0.5200</length></cylinder></geometry></collision>
@@ -938,7 +938,7 @@
     </model>
     <model name="hoop_1"><static>true</static><pose>-6.3703 -2.4049 0 0 0 1.57080</pose>
       <link name="link">
-      <visual name="hoop_visual"><pose>0.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/hoop.stl</uri></mesh></geometry><material><diffuse>0.88 0.88 0.90 1</diffuse></material></visual>
+      <visual name="hoop_visual"><pose>0.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/hoop.stl</uri></mesh></geometry><material><diffuse>1 1 1 1</diffuse></material></visual>
       <collision name="base_collision"><pose>0.0000 0.0000 0.0065 0.0000 0.0000 0.0000</pose><geometry><box><size>0.7090 0.4050 0.0130</size></box></geometry></collision>
       <collision name="upright_-1_collision"><pose>-0.2920 0.0000 0.2600 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.0170</radius><length>0.5200</length></cylinder></geometry></collision>
       <collision name="upright_1_collision"><pose>0.2920 0.0000 0.2600 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.0170</radius><length>0.5200</length></cylinder></geometry></collision>
@@ -946,7 +946,7 @@
     </model>
     <model name="hoop_2"><static>true</static><pose>-8.1350 0.1489 0 0 0 0.00000</pose>
       <link name="link">
-      <visual name="hoop_visual"><pose>0.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/hoop.stl</uri></mesh></geometry><material><diffuse>0.88 0.88 0.90 1</diffuse></material></visual>
+      <visual name="hoop_visual"><pose>0.0000 0.0000 0.0000 0.0000 0.0000 0.0000</pose><geometry><mesh><uri>model://cfr_arduino_bridge/meshes/hoop.stl</uri></mesh></geometry><material><diffuse>1 1 1 1</diffuse></material></visual>
       <collision name="base_collision"><pose>0.0000 0.0000 0.0065 0.0000 0.0000 0.0000</pose><geometry><box><size>0.7090 0.4050 0.0130</size></box></geometry></collision>
       <collision name="upright_-1_collision"><pose>-0.2920 0.0000 0.2600 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.0170</radius><length>0.5200</length></cylinder></geometry></collision>
       <collision name="upright_1_collision"><pose>0.2920 0.0000 0.2600 0.0000 0.0000 0.0000</pose><geometry><cylinder><radius>0.0170</radius><length>0.5200</length></cylinder></geometry></collision>

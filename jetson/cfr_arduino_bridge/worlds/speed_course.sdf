@@ -20,7 +20,7 @@
 
     <model name="ground"><static>true</static><pose>20.5 0 0 0 0 0</pose><link name="link">
       <collision name="collision"><geometry><plane><normal>0 0 1</normal><size>60 45</size></plane></geometry><surface><friction><ode><mu>1.2</mu></ode><bullet><friction>1</friction><rolling_friction>0.001</rolling_friction></bullet></friction></surface></collision>
-      <visual name="visual"><geometry><plane><normal>0 0 1</normal><size>60 45</size></plane></geometry><material><diffuse>0.16 0.25 0.13 1</diffuse></material></visual>
+      <visual name="visual"><geometry><plane><normal>0 0 1</normal><size>60 45</size></plane></geometry><material><diffuse>1 1 1 1</diffuse><pbr><metal><albedo_map>model://cfr_arduino_bridge/materials/asphalt_speed.png</albedo_map><roughness>0.95</roughness><metalness>0</metalness></metal></pbr></material></visual>
     </link></model>
 
     <!-- 135 ft by 47 ft speed course, built from individual 14 x 18 x 36 in straw bales. -->
