@@ -52,35 +52,37 @@ for x, y in trajectory:
 7. **potholes** -- raised bumps on a plywood board
 8. **wide_open_region** -- the open floor around the car wash, before the bucket section
 9. **buckets** -- randomized count and placement
-10. **hoops** -- three, each sliding along its own line
+10. **hoops** -- the walled loop holding the three sliding hoops
 11. **car_wash** -- five ribboned arches
 
-**Two of these -- `narrow_region` and `wide_open_region` -- have no
-dedicated rect constant in `generate_obstacle_course.py`.** They're real,
-named stops in `jetson/README.md`'s tour of the course, but the drawing
-doesn't box them the way it boxes the gravel pit or the bank: they're
-"the lane in between" and "the open area before the buckets," not a poured
-feature with edges. `regions.py` returns `bounds=None` for both rather than
-inventing a box -- if you need a number for one of them anyway, say so
-explicitly rather than presenting a guessed box as if it came from the
-drawing (see `references/regions.md` for what's actually known about each).
+**Three of these -- `hoops`, `narrow_region` and `wide_open_region` -- have
+no rect constant in `generate_obstacle_course.py`.** The drawing doesn't box
+them the way it boxes the gravel pit or the bank. Their outlines are
+derived from the hay bale footprints in the course SDF by
+`scripts/derive_polygons.py`, using the hand-painted `references/region_guides.json`
+only to pick each region and close its open ends. Bale faces define the edges
+wherever a wall exists; the open ends (where a region joins its neighbor) follow
+the guide and are approximate. The result is `references/region_polygons.json`
+(world meters); `regions.py` loads it and tests points with point-in-polygon.
+Re-run `derive_polygons.py` if the bales move, and `render_map.py` for a
+review map.
 
-The other nine are exact: they come straight from the generator's own
+The other eight are exact: they come straight from the generator's own
 constants, in the same world-meter frame the simulation, telemetry, and
-`obstacle_course_layout.yaml` all use. `helical_ramp` and `hoops` aren't
-rectangles at all -- the helix is checked as a true annulus swept through
-270 degrees (excluding its hollow centre and the wedge the tunnel sits in)
-and hoops are checked as distance to each hoop's actual travel line, not a
-shared bounding box. `list`/`show` still print a bounding box for those two
-as a quick-glance number, but `near`/`classify` use the real shape -- don't
-reason from the printed box for those two, ask the script instead.
+`obstacle_course_layout.yaml` all use. `helical_ramp` isn't a rectangle --
+it's checked as a true annulus swept through 270 degrees (excluding its
+hollow centre and the wedge the tunnel sits in). `list`/`show` still print a
+bounding box for it and for the three polygon regions as a quick-glance
+number, but `near`/`classify` use the real shape -- don't reason from the
+printed box, ask the script instead.
 
 ## When a point matches zero or several regions
 
 `classify()`/`near` can return nothing (the point is in the ordinary lane,
-or in one of the two boxless regions) or, rarely, more than one (regions
-this close never overlap in practice, but ramps sit close to the feature
-they lead into). Report what actually came back rather than picking one --
+or in a gap between derived outlines) or, more than one (the derived
+`wide_open_region` and `narrow_region` outlines meet along the east wall and
+can overlap by a few centimeters, and ramps sit close to the feature they
+lead into). Report what actually came back rather than picking one --
 if the caller wanted a single best guess, say which region is closest
 instead of silently choosing.
 

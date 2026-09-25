@@ -14,10 +14,10 @@ jetson/README.md ("tunnel, narrow path, gravel box, potholes, buckets,
 hoops, car wash, and a banked turn...") plus the overpass/helix pair that
 precedes the tunnel and the open area that precedes the buckets.
 
-Two regions -- "narrow_region" and "wide_open_region" -- have no dedicated
-rect constant in the generator; they are the ordinary lane and the widened
-approach to the bucket section, described qualitatively rather than with a
-precise box.  See NOTE on each for what that means in practice.
+Three regions -- "hoops", "narrow_region" and "wide_open_region" -- are not
+boxed by the drawing; their outlines are polygons derived from the hay
+bale footprints (scripts/derive_polygons.py) and kept in
+references/region_polygons.json.
 
 Usage:
     python3 regions.py near 2.1 -9.3       # which region contains this point
@@ -28,6 +28,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import sys
 from dataclasses import dataclass
@@ -65,55 +66,6 @@ def circle_world(
     return (cx - r, cy - r, cx + r, cy + r)
 
 
-def hoop_lines_world() -> list[tuple[tuple[float, float], tuple[float, float]]]:
-    lines = []
-    for fixed, travel_from, travel_to, axis, _nominal in course.HOOPS:
-        if axis == "y":
-            a, b = (
-                course.to_world(fixed, travel_from),
-                course.to_world(fixed, travel_to),
-            )
-        else:
-            a, b = (
-                course.to_world(travel_from, fixed),
-                course.to_world(travel_to, fixed),
-            )
-        lines.append((a, b))
-    return lines
-
-
-def point_segment_distance(
-    p: tuple[float, float], a: tuple[float, float], b: tuple[float, float]
-) -> float:
-    px, py = p
-    ax, ay = a
-    bx, by = b
-    dx, dy = bx - ax, by - ay
-    length_sq = dx * dx + dy * dy
-    if length_sq == 0:
-        return math.dist(p, a)
-    t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / length_sq))
-    return math.dist(p, (ax + t * dx, ay + t * dy))
-
-
-# Two of the three hoops have a FIXED x (their whole line is a single x value),
-# so a shared bounding box puts that entire line exactly on the box's edge --
-# a point on the line can miss the box on float rounding alone, and the box
-# can't tell "near a hoop" from "anywhere in the rectangle between them"
-# either way. Checking distance to the nearest hoop's actual travel line is
-# both more robust and more honest about what "in hoops" means. Half the
-# hoop's own base width, plus a little slack for where a car's centre could
-# sit while straddling it.
-HOOP_LINE_TOLERANCE = course.HOOP_BASE_LENGTH / 2 + 0.1
-
-
-def near_hoop_line(x: float, y: float) -> bool:
-    return any(
-        point_segment_distance((x, y), a, b) <= HOOP_LINE_TOLERANCE
-        for a, b in hoop_lines_world()
-    )
-
-
 # The helix is an annulus (inner/outer radius) swept through 270 degrees, not
 # a filled disc -- its own hollow axis and the 90 degree wedge the sweep
 # skips (where the tunnel sits, per build_helix()'s comment) are both outside
@@ -132,6 +84,38 @@ def in_helix(x: float, y: float) -> bool:
     sweep = math.radians(course.HELIX_SWEEP_DEG)
     angle = (math.atan2(y - cy, x - cx) - start) % (2 * math.pi)
     return angle <= sweep
+
+
+# Bale-derived outlines for the regions the drawing does not box (hoops,
+# narrow_region, wide_open_region). See references/region_polygons.json.
+POLYGONS: dict[str, list[tuple[float, float]]] = {
+    name: [tuple(pt) for pt in pts]
+    for name, pts in json.loads(
+        (
+            Path(__file__).resolve().parents[1] / "references" / "region_polygons.json"
+        ).read_text()
+    ).items()
+    if not name.startswith("_")
+}
+
+
+def polygon_bounds(pts):
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+def in_polygon(pts, x: float, y: float) -> bool:
+    """Ray-casting point-in-polygon."""
+    inside = False
+    j = len(pts) - 1
+    for i in range(len(pts)):
+        xi, yi = pts[i]
+        xj, yj = pts[j]
+        if (yi > y) != (yj > y) and x < (xj - xi) * (y - yi) / (yj - yi) + xi:
+            inside = not inside
+        j = i
+    return inside
 
 
 @dataclass
@@ -159,10 +143,6 @@ class Region:
 
 
 def _build_regions() -> list[Region]:
-    hoop_pts = [pt for line in hoop_lines_world() for pt in line]
-    hoop_xs = [p[0] for p in hoop_pts]
-    hoop_ys = [p[1] for p in hoop_pts]
-
     return [
         Region(
             name="overpass_ramp",
@@ -200,15 +180,14 @@ def _build_regions() -> list[Region]:
             name="narrow_region",
             order=4,
             aliases=["narrow path", "narrow section"],
-            source="no dedicated constant -- see note",
-            bounds=None,
-            note="jetson/README.md lists this between the tunnel and the "
-            "gravel box, but generate_obstacle_course.py has no rect for "
-            "it -- it's the ordinary LANE_WIDTH-wide (32 in) lane connecting "
-            "the two, not a distinct built feature the way the other "
-            "regions are. There's no bounding box to give; treat a point "
-            "here as 'between tunnel and gravel_pit, not in either.'",
+            source="bale-derived outline (references/region_polygons.json)",
+            bounds=polygon_bounds(POLYGONS["narrow_region"]),
+            note="The lane between the tunnel/helix and the gravel box along "
+            "the east side of the course. generate_obstacle_course.py has no "
+            "rect for it, so the outline is derived from the hay bale "
+            "footprints (its open ends follow a hand-painted guide). `near`/`classify` use the polygon.",
             approximate=True,
+            shape_test=lambda x, y: in_polygon(POLYGONS["narrow_region"], x, y),
         ),
         Region(
             name="gravel_pit",
@@ -242,15 +221,16 @@ def _build_regions() -> list[Region]:
             name="wide_open_region",
             order=8,
             aliases=["wide area", "open area", "car wash approach"],
-            source="no dedicated constant -- see note",
-            bounds=None,
-            note="The open floor around the car wash, between the main loop "
-            "and the bucket section's entrance -- the same 'wide area' "
+            source="bale-derived outline (references/region_polygons.json)",
+            bounds=polygon_bounds(POLYGONS["wide_open_region"]),
+            note="The open floor between the main loop and the bucket "
+            "section, bounded by the bale walls (the same 'wide area' "
             "obstacle_randomizer_node's gap-bale wall separates from the "
-            "bucket section (see jetson/README.md's 'bucket section's "
-            "entrance' note). No rect constant defines its edges, so "
-            "there's no bounding box to give here either.",
+            "bucket section). No rect constant defines it, so the outline "
+            "is derived from the hay bale footprints (its open ends follow a "
+            "hand-painted guide). `near`/`classify` use the polygon.",
             approximate=True,
+            shape_test=lambda x, y: in_polygon(POLYGONS["wide_open_region"], x, y),
         ),
         Region(
             name="buckets",
@@ -265,17 +245,14 @@ def _build_regions() -> list[Region]:
             name="hoops",
             order=10,
             aliases=["hoop", "hoops"],
-            source="HOOPS (generate_obstacle_course.py)",
-            bounds=(min(hoop_xs), min(hoop_ys), max(hoop_xs), max(hoop_ys)),
-            note=f"Containment checks distance to the nearest of the three "
-            f"hoops' actual travel lines (within {HOOP_LINE_TOLERANCE:.3f} m), "
-            "not a shared bounding box -- two of the three hoops have a "
-            "fixed x, so their whole line would otherwise sit exactly on "
-            "the box's edge. The displayed bounds are still the box around "
-            "all three lines, for a quick look; `near`/`classify` use the "
-            "per-line distance.",
+            source="bale-derived outline (references/region_polygons.json)",
+            bounds=polygon_bounds(POLYGONS["hoops"]),
+            note="The whole walled loop the three sliding hoops sit in, "
+            "derived from the hay bale footprints (open ends follow a hand-painted guide). "
+            "The hoops' travel lines (HOOPS in generate_obstacle_course.py) "
+            "lie inside it. `near`/`classify` use the polygon.",
             approximate=True,
-            shape_test=near_hoop_line,
+            shape_test=lambda x, y: in_polygon(POLYGONS["hoops"], x, y),
         ),
         Region(
             name="car_wash",
@@ -364,8 +341,7 @@ def main() -> None:
         if not hits:
             print(
                 f"({args.x}, {args.y}) is not inside any region's bounds "
-                "(it may be in one of the two descriptive regions -- "
-                "narrow_region or wide_open_region -- which have none)"
+                "(ordinary lane between named regions)"
             )
             return
         for region in hits:
