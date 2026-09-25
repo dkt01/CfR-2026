@@ -39,15 +39,20 @@ const course = courses[courseName] ?? courses.speed;
 // to be made absolute before it sees them.
 const absolute = (url) => new URL(url, document.baseURI).href;
 
-// The parser matches mesh URIs against this list by filename, so every mesh
-// any world references has to be in it, not just the ones this course uses.
-const assetUrls = Object.values(
-  import.meta.glob("../../../jetson/cfr_arduino_bridge/meshes/*.stl", {
+// The parser matches mesh and albedo-map URIs against this list by filename,
+// so include assets from both worlds even though only one is active at a time.
+const assetUrls = [
+  ...Object.values(import.meta.glob("../../../jetson/cfr_arduino_bridge/meshes/*.stl", {
     eager: true,
     query: "?url",
     import: "default",
-  }),
-).map(absolute);
+  })),
+  ...Object.values(import.meta.glob("../../../jetson/cfr_arduino_bridge/materials/*.png", {
+    eager: true,
+    query: "?url",
+    import: "default",
+  })),
+].map(absolute);
 const worldUrls = import.meta.glob("../../../jetson/cfr_arduino_bridge/worlds/*.sdf", {
   eager: true,
   query: "?url",

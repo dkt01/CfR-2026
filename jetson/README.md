@@ -342,6 +342,9 @@ committed. Both are needed when the drawing or the CAD changes.
 # and only the straw-bale block needs it -- see the note below.
 ./scripts/generate_speed_course.py
 
+# Asphalt parking lot textures sized for both ground planes (no dependencies).
+python3 ./scripts/generate_asphalt_texture.py
+
 # STL visuals, from the assembled obstacle CAD.  Needs Docker; builds its own
 # image, because the OpenCASCADE bindings want a Python neither host has.
 ./scripts/convert_obstacle_meshes.sh "~/Downloads/All Obstacles.step"

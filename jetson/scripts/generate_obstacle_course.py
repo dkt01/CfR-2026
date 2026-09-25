@@ -400,11 +400,10 @@ def static_model(name: str, body: str) -> str:
     )
 
 
-PLYWOOD = "0.62 0.48 0.31 1"
+BATTLESHIP_GRAY = "0.52 0.52 0.51 1"
 STRAW = "0.72 0.48 0.12 1"
-PVC = "0.88 0.88 0.90 1"
-GRAVEL_GREY = "0.44 0.43 0.40 1"
-FOIL = "0.74 0.76 0.78 1"
+WHITE = "1 1 1 1"
+GRAVEL_GRAY = "0.44 0.43 0.40 1"
 
 
 def build_bales(bales) -> str:
@@ -463,10 +462,16 @@ def build_car_wash() -> str:
     """
     x, y = rect_centre(CAR_WASH)
     width, depth = rect_size(CAR_WASH)
-    body = mesh_visual("base", (x, y, 0, 0, 0, 0), f"{MESH_URI}/car_wash_base.stl", PVC)
+    body = mesh_visual(
+        "base", (x, y, 0, 0, 0, 0), f"{MESH_URI}/car_wash_base.stl", BATTLESHIP_GRAY
+    )
     # The base plate is a 13 mm lip the car drives over.
     body += box(
-        "base", (x, y, 0.0065, 0, 0, 0), (width, depth, 0.013), PVC, visual=False
+        "base",
+        (x, y, 0.0065, 0, 0, 0),
+        (width, depth, 0.013),
+        BATTLESHIP_GRAY,
+        visual=False,
     )
 
     arch_span = 1.151
@@ -476,7 +481,7 @@ def build_car_wash() -> str:
             f"arch_{arch}",
             (arch_x, y, 0, 0, 0, 0),
             f"{MESH_URI}/car_wash_arch.stl",
-            PVC,
+            WHITE,
         )
         for side in (-1, 1):
             body += cylinder(
@@ -484,7 +489,7 @@ def build_car_wash() -> str:
                 (arch_x, y + side * arch_span / 2, 0.21, 0, 0, 0),
                 0.017,
                 0.42,
-                PVC,
+                WHITE,
                 visual=False,
             )
         for row in range(8):
@@ -512,23 +517,29 @@ def build_gravel(random) -> str:
     """
     x, y = rect_centre(GRAVEL)
     width, depth = rect_size(GRAVEL)
-    body = mesh_visual("box", (x, y, 0, 0, 0, 0), f"{MESH_URI}/gravel_box.stl", PLYWOOD)
+    body = mesh_visual(
+        "box", (x, y, 0, 0, 0, 0), f"{MESH_URI}/gravel_box.stl", BATTLESHIP_GRAY
+    )
     body += box(
-        "base", (x, y, 0.0065, 0, 0, 0), (width, depth, 0.013), PLYWOOD, visual=False
+        "base",
+        (x, y, 0.0065, 0, 0, 0),
+        (width, depth, 0.013),
+        BATTLESHIP_GRAY,
+        visual=False,
     )
     for side, offset in (("n", depth / 2), ("s", -depth / 2)):
         body += box(
             f"rail_{side}",
             (x, y + offset, 0.032, 0, 0, 0),
             (width, 0.038, 0.038),
-            PLYWOOD,
+            BATTLESHIP_GRAY,
             visual=False,
         )
     body += box(
         "surface",
         (x, y, GRAVEL_SURFACE_Z - 0.019, 0, 0, 0),
         (width - 0.076, depth - 0.076, 0.038),
-        GRAVEL_GREY,
+        GRAVEL_GRAY,
         visual=False,
         friction=GRAVEL_FRICTION,
     )
@@ -541,7 +552,7 @@ def build_gravel(random) -> str:
             f"pebble_{pebble}",
             (px, py, GRAVEL_SURFACE_Z + height / 2, 0, 0, random.uniform(0, math.pi)),
             (size, size * random.uniform(0.6, 1.0), height),
-            GRAVEL_GREY,
+            GRAVEL_GRAY,
             friction=GRAVEL_FRICTION,
         )
     return (
@@ -639,7 +650,7 @@ def merge_cells(cells: list[list[bool]]) -> list[tuple[int, int, int, int]]:
 def build_potholes(circles) -> str:
     x, y = rect_centre(POTHOLE)
     body = mesh_visual(
-        "board", (x, y, 0, 0, 0, 0), f"{MESH_URI}/pothole_board.stl", PLYWOOD
+        "board", (x, y, 0, 0, 0, 0), f"{MESH_URI}/pothole_board.stl", BATTLESHIP_GRAY
     )
     width, depth = rect_size(POTHOLE)
     # The board is 1.5 in of plywood and the bumps another 0.75 in on top of
@@ -655,7 +666,7 @@ def build_potholes(circles) -> str:
         "base",
         (x, y, POTHOLE_RECESS_FLOOR / 2, 0, 0, 0),
         (width, depth, POTHOLE_RECESS_FLOOR),
-        PLYWOOD,
+        BATTLESHIP_GRAY,
         visual=False,
     )
     ply = POTHOLE_BOARD_HEIGHT - POTHOLE_RECESS_FLOOR
@@ -674,7 +685,7 @@ def build_potholes(circles) -> str:
                 0,
             ),
             ((c1 - c0) * cell, (r1 - r0) * cell, ply),
-            PLYWOOD,
+            BATTLESHIP_GRAY,
             visual=False,
         )
     for index, (bump_x, bump_y) in enumerate(circles):
@@ -685,14 +696,14 @@ def build_potholes(circles) -> str:
             f"bump_{index}",
             (bx, by, 0, 0, 0, 0),
             f"{MESH_URI}/pothole_bump.stl",
-            PLYWOOD,
+            BATTLESHIP_GRAY,
         )
         body += cylinder(
             f"bump_{index}_body",
             (bx, by, POTHOLE_BOARD_HEIGHT + POTHOLE_BUMP_HEIGHT / 2, 0, 0, 0),
             0.076,
             POTHOLE_BUMP_HEIGHT,
-            PLYWOOD,
+            BATTLESHIP_GRAY,
             visual=False,
         )
     return (
@@ -727,12 +738,14 @@ def build_ramp(name: str, rect, mesh: str, rise: float, platform) -> str:
     slope = math.atan2(rise, width)
     climb = 1 if rect_centre(platform)[0] > x else -1
     yaw = 0.0 if RAMP_MESH_CLIMB[mesh] == climb else math.pi
-    body = mesh_visual(name, (x, y, 0, 0, 0, yaw), f"{MESH_URI}/{mesh}", PLYWOOD)
+    body = mesh_visual(
+        name, (x, y, 0, 0, 0, yaw), f"{MESH_URI}/{mesh}", BATTLESHIP_GRAY
+    )
     body += box(
         f"{name}_wedge",
         (x, y, rise / 2 - 0.02, 0, -climb * slope, 0),
         (width / math.cos(slope), depth, 0.04),
-        PLYWOOD,
+        BATTLESHIP_GRAY,
         visual=False,
     )
     return static_model(name, body)
@@ -757,7 +770,7 @@ def build_bridge() -> str:
             0,
         ),
         (run / math.cos(slope), LANE_WIDTH, 0.10),
-        PLYWOOD,
+        BATTLESHIP_GRAY,
     )
     for side in (-1, 1):
         body += box(
@@ -772,7 +785,7 @@ def build_bridge() -> str:
                 0,
             ),
             (run / math.cos(slope), 0.05, RAIL_HEIGHT),
-            PLYWOOD,
+            BATTLESHIP_GRAY,
         )
 
     deck_x, deck_y = rect_centre(BRIDGE_DECK)
@@ -784,7 +797,7 @@ def build_bridge() -> str:
         "deck",
         (deck_x, deck_y, DECK_HEIGHT - DECK_THICKNESS / 2, 0, 0, 0),
         (deck_width, LANE_WIDTH, DECK_THICKNESS),
-        PLYWOOD,
+        BATTLESHIP_GRAY,
     )
     for side in (-1, 1):
         body += box(
@@ -798,7 +811,7 @@ def build_bridge() -> str:
                 0,
             ),
             (deck_width, 0.05, RAIL_HEIGHT),
-            PLYWOOD,
+            BATTLESHIP_GRAY,
         )
     return (
         "    <!-- 20% ramp up to a flat bridge deck, 25 in above the floor. -->\n"
@@ -813,7 +826,10 @@ def build_tunnel() -> str:
     # the car free to drive out of the side.
     _, length = rect_size(TUNNEL)
     body = mesh_visual(
-        "tunnel", (x, y, 0, 0, 0, math.pi / 2), f"{MESH_URI}/tunnel.stl", FOIL
+        "tunnel",
+        (x, y, 0, 0, 0, math.pi / 2),
+        f"{MESH_URI}/tunnel.stl",
+        BATTLESHIP_GRAY,
     )
     height = 24.5 * INCH
     for side in (-1, 1):
@@ -821,7 +837,7 @@ def build_tunnel() -> str:
             f"wall_{side}",
             (x + side * (LANE_WIDTH + 0.05) / 2, y, height / 2, 0, 0, 0),
             (0.05, length, height),
-            FOIL,
+            BATTLESHIP_GRAY,
             visual=False,
         )
     return (
@@ -881,7 +897,7 @@ def build_helix() -> str:
             f"deck_{index}",
             (x, y, height - 0.05, 0, slope, yaw),
             (chord, width, 0.10),
-            PLYWOOD,
+            BATTLESHIP_GRAY,
         )
         for name, radius in (("inner", inner - 0.025), ("outer", outer + 0.025)):
             body += box(
@@ -895,7 +911,7 @@ def build_helix() -> str:
                     yaw,
                 ),
                 (chord, 0.05, RAIL_HEIGHT),
-                PLYWOOD,
+                BATTLESHIP_GRAY,
             )
     return (
         "    <!-- Helical ramp down: 4 ft centerline radius, 41.5 in wide, 11% grade. -->\n"
@@ -907,7 +923,7 @@ def build_bank() -> str:
     x, y = rect_centre(BANK)
     width, length = rect_size(BANK)
     body = mesh_visual(
-        "bank", (x, y, 0, 0, 0, math.pi), f"{MESH_URI}/bank.stl", PLYWOOD
+        "bank", (x, y, 0, 0, 0, math.pi), f"{MESH_URI}/bank.stl", BATTLESHIP_GRAY
     )
     # 8.5 degrees, high side outboard of the turn.  Pitched rather than flat:
     # a flat box at the section's average height stood proud of the ground on
@@ -921,7 +937,7 @@ def build_bank() -> str:
         "surface",
         (x, y, rise / 2 - 0.02, 0, tilt, 0),
         (width / math.cos(tilt), length, 0.04),
-        PLYWOOD,
+        BATTLESHIP_GRAY,
         visual=False,
     )
     # The plywood wall round it -- along the high, outboard edge and across
@@ -992,8 +1008,12 @@ def build_buckets() -> str:
             # exist because the rules allow up to nine; a static model cannot
             # be spawned on demand, so they are all here from the start.
             x, y = parking_spot(index)
-        body = mesh_visual("bucket", (0, 0, 0, 0, 0, 0), f"{MESH_URI}/bucket.stl", PVC)
-        body += cylinder("body", (0, 0, 0.19, 0, 0, 0), 0.145, 0.38, PVC, visual=False)
+        body = mesh_visual(
+            "bucket", (0, 0, 0, 0, 0, 0), f"{MESH_URI}/bucket.stl", BATTLESHIP_GRAY
+        )
+        body += cylinder(
+            "body", (0, 0, 0.19, 0, 0, 0), 0.145, 0.38, BATTLESHIP_GRAY, visual=False
+        )
         out += (
             f'    <model name="bucket_{index}"><static>true</static>'
             f"<pose>{x:.4f} {y:.4f} 0 0 0 0</pose>\n"
@@ -1012,9 +1032,9 @@ def build_hoops() -> str:
         else:
             x, y = to_world(nominal, fixed)
             yaw = 0.0
-        body = mesh_visual("hoop", (0, 0, 0, 0, 0, 0), f"{MESH_URI}/hoop.stl", PVC)
+        body = mesh_visual("hoop", (0, 0, 0, 0, 0, 0), f"{MESH_URI}/hoop.stl", WHITE)
         body += box(
-            "base", (0, 0, 0.0065, 0, 0, 0), (0.709, 0.405, 0.013), PVC, visual=False
+            "base", (0, 0, 0.0065, 0, 0, 0), (0.709, 0.405, 0.013), WHITE, visual=False
         )
         for side in (-1, 1):
             body += cylinder(
@@ -1022,7 +1042,7 @@ def build_hoops() -> str:
                 (side * 0.292, 0, 0.26, 0, 0, 0),
                 0.017,
                 0.52,
-                PVC,
+                WHITE,
                 visual=False,
             )
         out += (
@@ -1134,7 +1154,7 @@ def build_world(dxf_file: Path) -> str:
         "\n"
         f'    <model name="ground"><static>true</static><pose>{ground_x:.3f} {ground_y:.3f} 0 0 0 0</pose><link name="link">\n'
         '      <collision name="collision"><geometry><plane><normal>0 0 1</normal><size>30 24</size></plane></geometry><surface><friction><ode><mu>50</mu></ode><bullet><friction>1</friction><rolling_friction>0.001</rolling_friction></bullet></friction></surface></collision>\n'
-        '      <visual name="visual"><geometry><plane><normal>0 0 1</normal><size>30 24</size></plane></geometry><material><diffuse>0.16 0.25 0.13 1</diffuse></material></visual>\n'
+        '      <visual name="visual"><geometry><plane><normal>0 0 1</normal><size>30 24</size></plane></geometry><material><diffuse>1 1 1 1</diffuse><pbr><metal><albedo_map>model://cfr_arduino_bridge/materials/asphalt_obstacle.png</albedo_map><roughness>0.95</roughness><metalness>0</metalness></metal></pbr></material></visual>\n'
         "    </link></model>\n"
         "\n"
         + build_bales(bales)
