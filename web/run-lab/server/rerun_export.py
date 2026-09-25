@@ -317,8 +317,12 @@ class RunRecording:
         first = np.flatnonzero(ok)[0]
         self.rec.log(
             "pose2d/start",
-            rr.Points3D([[x[first], y[first], 0.0]], colors=[STATUS["good"]], radii=0.12,
-                        labels=["start"]),
+            rr.Points3D(
+                [[x[first], y[first], 0.0]],
+                colors=[STATUS["good"]],
+                radii=0.12,
+                labels=["start"],
+            ),
             static=True,
         )
         # The car at the playhead: a marker and its heading, moved over time.
