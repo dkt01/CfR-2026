@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # Sync the Jetson ROS 2 packages from a development host to the Orin, and with
-# them the formulaOne driver and the one policy it races with.
+# them the two RL drivers -- formulaOne and formulaTwo -- each with the one
+# policy it races with.
 #
 # Source only: the host is x86_64 and the Orin is aarch64, so build artifacts
 # are never transferred.  Use --build to compile on the Orin after syncing.
@@ -11,24 +12,28 @@
 #   ~/software/                 jetson/ (the ROS packages and scripts)
 #   ~/software/formulaOne/      rl/formulaOne/ code, plus the chosen policy's
 #                               policy.npz and config.yaml at its top level
-#   ~/jetson -> ~/software      formulaOne finds the course files and
+#   ~/software/formulaTwo/      rl/formulaTwo/ code, the same way
+#   ~/jetson -> ~/software      both drivers find the course files and
 #                               record_run.py under <two dirs up>/jetson/,
-#                               as it does in the repo
+#                               as they do in the repo
 
 set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly SOURCE_DIR="$(dirname "${SCRIPT_DIR}")"
 readonly F1_DIR="$(dirname "${SOURCE_DIR}")/rl/formulaOne"
+readonly F2_DIR="$(dirname "${SOURCE_DIR}")/rl/formulaTwo"
 
 REMOTE_HOST="${ORIN_HOST:-tejam@192.168.55.1}"
 REMOTE_DIR="${ORIN_DIR:-~/software}"
 REMOTE_WS="${ORIN_WS:-~/ros2_ws}"
 ROS_DISTRO_NAME="${ORIN_ROS_DISTRO:-jazzy}"
-# The policy that races.  Taken from rl/formulaOne/bestModel/<run>/, which is
-# committed, or failing that from rl/formulaOne/runs/<run>/.
+# The policy each driver races with.  Taken from rl/<driver>/bestModel/<run>/,
+# which is committed, or failing that from rl/<driver>/runs/<run>/.
 F1_RUN="${F1_RUN:-v12}"
+F2_RUN="${F2_RUN:-f2_v2_40M}"
 SYNC_F1=true
+SYNC_F2=true
 
 DRY_RUN=false
 DELETE=false
@@ -77,7 +82,10 @@ Options:
   -d, --dir DIR     Destination directory    (env ORIN_DIR, default: ~/software)
   -w, --ws DIR      colcon workspace on Orin (env ORIN_WS, default: ~/ros2_ws)
   -p, --policy RUN  formulaOne policy to deploy (env F1_RUN, default: v12)
-      --no-f1       Sync jetson/ only, not formulaOne or its policy
+      --f2-policy RUN
+                    formulaTwo policy to deploy (env F2_RUN, default: f2_v2_40M)
+      --no-f1       Do not sync formulaOne or its policy
+      --no-f2       Do not sync formulaTwo or its policy
   -n, --dry-run    Show what would transfer without changing anything
       --delete      Remove files on the Orin that no longer exist locally
   -b, --build       Run colcon build on the Orin after syncing
@@ -109,8 +117,16 @@ while [[ $# -gt 0 ]]; do
       F1_RUN="$2"
       shift 2
       ;;
+    --f2-policy)
+      F2_RUN="$2"
+      shift 2
+      ;;
     --no-f1)
       SYNC_F1=false
+      shift
+      ;;
+    --no-f2)
+      SYNC_F2=false
       shift
       ;;
     -n | --dry-run)
@@ -218,22 +234,32 @@ if [[ ! -d "${SOURCE_DIR}/cfr_arduino_bridge" ]]; then
   exit 1
 fi
 
-# Resolve the policy before anything is transferred, so a typo in --policy
+# Resolve the policies before anything is transferred, so a typo in --policy
 # fails here rather than after the ROS packages have already gone across.
-if [[ "${SYNC_F1}" == true ]]; then
-  F1_POLICY_DIR=""
-  for candidate in "${F1_DIR}/bestModel/${F1_RUN}" "${F1_DIR}/runs/${F1_RUN}"; do
+resolve_policy() {
+  local driver_dir="$1" run="$2" candidate
+  for candidate in "${driver_dir}/bestModel/${run}" "${driver_dir}/runs/${run}"; do
     if [[ -f "${candidate}/policy.npz" && -f "${candidate}/config.yaml" ]]; then
-      F1_POLICY_DIR="${candidate}"
-      break
+      echo "${candidate}"
+      return
     fi
   done
-  if [[ -z "${F1_POLICY_DIR}" ]]; then
-    echo "error: no policy.npz + config.yaml for '${F1_RUN}' under" >&2
-    echo "       ${F1_DIR}/bestModel/ or ${F1_DIR}/runs/" >&2
+  echo "error: no policy.npz + config.yaml for '${run}' under" >&2
+  echo "       ${driver_dir}/bestModel/ or ${driver_dir}/runs/" >&2
+  exit 1
+}
+REPO_ROOT="$(dirname "${SOURCE_DIR}")"
+if [[ "${SYNC_F1}" == true ]]; then
+  F1_POLICY_DIR="$(resolve_policy "${F1_DIR}" "${F1_RUN}")"
+  echo "formulaOne policy: ${F1_POLICY_DIR#"${REPO_ROOT}"/}"
+fi
+if [[ "${SYNC_F2}" == true ]]; then
+  if [[ ! -d "${F2_DIR}" ]]; then
+    echo "error: ${F2_DIR} does not exist (use --no-f2)" >&2
     exit 1
   fi
-  echo "formulaOne policy: ${F1_POLICY_DIR#"$(dirname "$(dirname "${F1_DIR}")")"/}"
+  F2_POLICY_DIR="$(resolve_policy "${F2_DIR}" "${F2_RUN}")"
+  echo "formulaTwo policy: ${F2_POLICY_DIR#"${REPO_ROOT}"/}"
 fi
 
 # What gets synced is exactly one NUL-delimited list of paths relative to
@@ -315,33 +341,52 @@ fi
 list_files "${SOURCE_DIR}" >"${FILE_LIST}"
 sync_tree "${SOURCE_DIR}" "${REMOTE_DIR}"
 
-if [[ "${SYNC_F1}" == true ]]; then
-  F1_REMOTE="${REMOTE_DIR}/formulaOne"
+# One RL driver: its code, the chosen policy at its top level, and the track
+# cache.  Shared by formulaOne and formulaTwo, which deploy identically.
+deploy_driver() {
+  local name="$1" driver_dir="$2" run="$3" policy_dir="$4"
+  local remote="${REMOTE_DIR}/${name}"
   # The driver's code, less what does not belong on the car: the top-level
   # config.yaml (the policy's own config replaces it just below -- a policy
   # must drive with the config it was trained under) and the other saved
   # models in bestModel/.
-  list_files "${F1_DIR}" | grep -z -v -E '^(config\.yaml|bestModel/.*)$' >"${FILE_LIST}"
-  sync_tree "${F1_DIR}" "${F1_REMOTE}"
+  list_files "${driver_dir}" | grep -z -v -E '^(config\.yaml|bestModel/.*)$' >"${FILE_LIST}"
+  sync_tree "${driver_dir}" "${remote}"
 
-  echo "policy ${F1_RUN} -> ${REMOTE_HOST}:${F1_REMOTE}/"
-  copy_file "${F1_POLICY_DIR}/policy.npz" "${F1_REMOTE}/policy.npz"
-  copy_file "${F1_POLICY_DIR}/config.yaml" "${F1_REMOTE}/config.yaml"
+  echo "${name} policy ${run} -> ${REMOTE_HOST}:${remote}/"
+  copy_file "${policy_dir}/policy.npz" "${remote}/policy.npz"
+  copy_file "${policy_dir}/config.yaml" "${remote}/config.yaml"
+  # Which run this is, for launchFormulaOne.sh / launchFormulaTwo.sh to label
+  # recordings with (the policy file itself does not say).
+  local run_file
+  run_file="$(mktemp)"
+  echo "${run}" >"${run_file}"
+  copy_file "${run_file}" "${remote}/POLICY_RUN"
+  rm -f "${run_file}"
 
   # The track cache saves the Orin building a distance field over every bale
   # on first use.  Keyed by a hash of the world and track settings, so a stale
   # entry is ignored rather than used.  rsync only: it is ~40 MB.
-  if [[ -d "${F1_DIR}/.cache" && "${HAS_RSYNC}" == true ]]; then
-    echo "track cache -> ${REMOTE_HOST}:${F1_REMOTE}/.cache/"
-    cache_args=(--archive --compress --human-readable -e "${RSYNC_RSH}")
+  if [[ -d "${driver_dir}/.cache" && "${HAS_RSYNC}" == true ]]; then
+    echo "track cache -> ${REMOTE_HOST}:${remote}/.cache/"
+    local cache_args=(--archive --compress --human-readable -e "${RSYNC_RSH}")
     [[ "${DRY_RUN}" == true ]] && cache_args+=(--dry-run)
-    rsync "${cache_args[@]}" "${F1_DIR}/.cache/" "${REMOTE_HOST}:${F1_REMOTE}/.cache/"
+    rsync "${cache_args[@]}" "${driver_dir}/.cache/" "${REMOTE_HOST}:${remote}/.cache/"
   fi
+}
 
-  # formulaOne resolves the course files and record_run.py as
-  # <two dirs above itself>/jetson/..., which is the repo's layout.  Here that
-  # is ~/jetson, so point it at the synced jetson/ tree.  Never replaces a
-  # real directory of that name.
+if [[ "${SYNC_F1}" == true ]]; then
+  deploy_driver formulaOne "${F1_DIR}" "${F1_RUN}" "${F1_POLICY_DIR}"
+fi
+if [[ "${SYNC_F2}" == true ]]; then
+  deploy_driver formulaTwo "${F2_DIR}" "${F2_RUN}" "${F2_POLICY_DIR}"
+fi
+
+if [[ "${SYNC_F1}" == true || "${SYNC_F2}" == true ]]; then
+  # Both drivers resolve the course files and record_run.py as
+  # <two dirs above themselves>/jetson/..., which is the repo's layout.  Here
+  # that is ~/jetson, so point it at the synced jetson/ tree.  Never replaces
+  # a real directory of that name.
   link_parent="$(dirname "${REMOTE_DIR}")"
   if [[ "${DRY_RUN}" == true ]]; then
     echo "would link ${link_parent}/jetson -> ${REMOTE_DIR}"
@@ -349,7 +394,7 @@ if [[ "${SYNC_F1}" == true ]]; then
     "${SSH_CMD[@]}" "${REMOTE_HOST}" "
       link=${link_parent}/jetson
       if [ -e \"\$link\" ] && [ ! -L \"\$link\" ]; then
-        echo \"warning: \$link exists and is not a symlink; formulaOne will not find the course\" >&2
+        echo \"warning: \$link exists and is not a symlink; the drivers will not find the course\" >&2
       else
         ln -sfn ${REMOTE_DIR} \"\$link\" && echo \"linked \$link -> ${REMOTE_DIR}\"
       fi
@@ -406,3 +451,10 @@ echo
 echo "on the Orin:"
 echo "  source ${REMOTE_WS}/install/setup.bash"
 echo "  ros2 launch cfr_arduino_bridge arduino_bridge.launch.py"
+if [[ "${SYNC_F1}" == true ]]; then
+  echo "  formulaOne: ${REMOTE_DIR}/scripts/launchFormulaOne.sh      (${F1_RUN}, speed_scale 0.3 by default)"
+fi
+if [[ "${SYNC_F2}" == true ]]; then
+  echo "  formulaTwo: ${REMOTE_DIR}/scripts/launchFormulaTwo.sh      (${F2_RUN}, speed_scale 0.3 by default)"
+fi
+echo "  (one driver at a time -- both publish /drive_cmd)"
