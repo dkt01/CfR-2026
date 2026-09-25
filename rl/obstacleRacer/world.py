@@ -23,7 +23,7 @@ bale's top is as flat as the bridge deck -- and `parse` refuses a world with
 an element it cannot place, so a new obstacle in the generator is a loud
 failure here instead of a silent hole in the model.
 
-The movable models (buckets, hoops, gap bales) are split out as DYNAMIC and
+The movable models (buckets, hoops, gap bales, Wide Section bales) are split out as DYNAMIC and
 re-posed per layout by `apply_layout`; everything else is STATIC.
 """
 
@@ -69,6 +69,7 @@ COLLISION_ROLES = [
     (r"car_wash", r"upright_\d+_-?1_collision", "obstacle"),
     (r"course_bales", r"bale_\d+_collision", "obstacle"),
     (r"gap_bale_\d+", r"bale_collision", "obstacle"),
+    (r"wide_bale_\d+", r"bale_collision", "obstacle"),
     (r"bucket_\d+", r"body_collision", "obstacle"),
     (r"tunnel", r"wall_-?1_collision", "obstacle"),
     (r"start_signal_frame", r"post_collision", "obstacle"),
@@ -85,7 +86,7 @@ VISUAL_CLASSES = [
     (r"car_wash", r"strip_\d+_\d+_visual", "carwash"),
 ]
 
-DYNAMIC = re.compile(r"(bucket_\d+|hoop_\d+|gap_bale_\d+)$")
+DYNAMIC = re.compile(r"(bucket_\d+|hoop_\d+|gap_bale_\d+|wide_bale_\d+)$")
 SKIPPED_MODELS = re.compile(r"slash$")
 
 
@@ -248,6 +249,11 @@ def apply_layout(world: World, layout: dict, spec: dict) -> World:
                 continue
             x, y = buckets[index]
             pose = pose_matrix((x, y, 0.0, 0, 0, 0))
+        elif model.startswith("wide_bale_"):
+            # Layouts exported before the Wide Section moved keep the drawing.
+            poses = layout.get("wide_bales") or {}
+            x, y, yaw = poses.get(model) or spec["wide_bales"][model]["nominal"]
+            pose = pose_matrix((x, y, 0.0, 0, 0, yaw))
         elif model.startswith("hoop_"):
             x, y = hoops[model]
             yaw = float(spec["hoops"][model]["yaw"])

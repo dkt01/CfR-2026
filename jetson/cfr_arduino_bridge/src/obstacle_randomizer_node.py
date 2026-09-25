@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Re-lay the obstacle course's variable elements, and work the start signal.
 
-Three things about the Obstacle Course change between runs: where the buckets
-stand, where the hoops sit along their lines, and whether the start signal is
-showing red or green.  All three are moved here rather than baked into the
+Four things about the Obstacle Course change between runs: where the buckets
+stand, where the hoops sit along their lines, where the Wide Section's bales
+stand, and whether the start signal is showing red or green.  All three are moved here rather than baked into the
 world, so a layout can be re-drawn without restarting Gazebo.
 
-The buckets and hoops are separate static models, moved through Gazebo's
-``set_pose``, which is why they are separate models at all.
+The buckets, hoops and Wide Section bales are separate static models, moved
+through Gazebo's ``set_pose``, which is why they are separate models at all.
 
 The signal is not, because it has to *turn*: 90 degrees a second, like the one
 on the course, so a detector gets the part-way-round arm it will have to cope
@@ -142,6 +142,8 @@ class ObstacleRandomizer(Node):
         movable = f"{len(self.hoop_names())} hoops, up to {self.bucket_limit()} buckets"
         if self.has_gap_bales():
             movable += f", 1 of {len(self.gap_bale_names())} wall bales parked"
+        if self.has_wide_bales():
+            movable += f", {len(self.wide_bale_names())} Wide Section bales"
         if (
             not self.hoop_names()
             and not self.has_buckets()
@@ -197,6 +199,15 @@ class ObstacleRandomizer(Node):
 
     def gap_bale_param(self, bale: str, name: str):
         return self.get_parameter(f"gap_bales.{bale}.{name}").value
+
+    def has_wide_bales(self) -> bool:
+        """Whether this course has Wide Section bales to move (the Obstacle Course)."""
+        return self.has_parameter("wide_bales.names")
+
+    def wide_bale_names(self) -> list[str]:
+        if not self.has_wide_bales():
+            return []
+        return list(self.get_parameter("wide_bales.names").value)
 
     # ------------------------------------------------------------ gz set_pose
 
@@ -263,7 +274,7 @@ class ObstacleRandomizer(Node):
         without ROS; this rebuilds that mapping from the declared parameters.
         """
         spec: dict = {}
-        for group in ("buckets", "hoops", "gap_bales"):
+        for group in ("buckets", "hoops", "gap_bales", "wide_bales"):
             for name, parameter in self.get_parameters_by_prefix(group).items():
                 node = spec.setdefault(group, {})
                 parts = name.split(".")
@@ -306,6 +317,19 @@ class ObstacleRandomizer(Node):
             else:
                 x, y = self.gap_bale_param(bale, "position")
                 yaw = float(self.gap_bale_param(bale, "yaw"))
+            self.set_pose(bale, x, y, 0.0, yaw=yaw)
+
+    def draw_wide_bales(self, gap_bale) -> dict[str, tuple[float, float, float]]:
+        """Wide Section bale poses; see obstacle_layout_draw.draw_wide_bales."""
+        try:
+            return obstacle_layout_draw.draw_wide_bales(
+                self.layout_spec(), self.random, gap_bale
+            )
+        except obstacle_layout_draw.LayoutError as error:
+            raise GazeboError(str(error)) from error
+
+    def apply_wide_bales(self, poses) -> None:
+        for bale, (x, y, yaw) in poses.items():
             self.set_pose(bale, x, y, 0.0, yaw=yaw)
 
     def apply(self, buckets, hoops) -> None:
@@ -364,13 +388,17 @@ class ObstacleRandomizer(Node):
             buckets = self.draw_buckets()
             hoops = self.draw_hoops()
             gap_bale = self.draw_gap_bale() if self.has_gap_bales() else None
+            # Drawn last, as obstacle_layout_draw.draw does, so the same seed
+            # gives the trainer's layout.
+            wide = self.draw_wide_bales(gap_bale) if self.has_wide_bales() else {}
             self.apply(buckets, hoops)
             if gap_bale is not None:
                 self.apply_gap_bale(gap_bale)
+            self.apply_wide_bales(wide)
         except Exception as error:  # noqa: BLE001 - a service has to answer
             return self.failed(response, error)
         response.success = True
-        if not buckets and not hoops and gap_bale is None:
+        if not buckets and not hoops and gap_bale is None and not wide:
             response.message = "this course varies nothing but the start signal"
         else:
             parts = []
@@ -389,6 +417,8 @@ class ObstacleRandomizer(Node):
                 parts.append(f"{len(hoops)} hoops repositioned")
             if gap_bale is not None:
                 parts.append(f"wall gap at {gap_bale}")
+            if wide:
+                parts.append(f"{len(wide)} Wide Section bales moved")
             response.message = f"seed {seed}: " + "; ".join(parts)
         self.get_logger().info(response.message)
         return response
@@ -408,6 +438,10 @@ class ObstacleRandomizer(Node):
             self.apply(nominal, hoops)
             if self.has_gap_bales():
                 self.apply_gap_bale(self.get_parameter("gap_bales.default_gap").value)
+            if self.has_wide_bales():
+                self.apply_wide_bales(
+                    obstacle_layout_draw.nominal(self.layout_spec())["wide_bales"]
+                )
             self.show_signal(False)
         except Exception as error:  # noqa: BLE001 - a service has to answer
             return self.failed(response, error)

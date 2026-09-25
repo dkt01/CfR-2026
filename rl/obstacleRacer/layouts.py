@@ -2,7 +2,8 @@
 """The Obstacle Course layouts the racer trains and is judged on.
 
 Each layout is what obstacle_randomizer_node puts in Gazebo for one seed --
-bucket positions, hoop positions and which wall bale is parked -- drawn by
+bucket positions, hoop positions, which wall bale is parked and where the
+Wide Section's bales stand -- drawn by
 the node's own ROS-free draw module, so "seed 104" means the same course in
 the numpy trainer, in Gazebo validation and in the node's log line.
 
@@ -57,6 +58,7 @@ def draw(seed: int) -> dict:
         "buckets": [list(p) for p in layout["buckets"]],
         "hoops": {k: list(v) for k, v in layout["hoops"].items()},
         "gap_bale": layout["gap_bale"],
+        "wide_bales": {k: list(v) for k, v in layout["wide_bales"].items()},
     }
 
 

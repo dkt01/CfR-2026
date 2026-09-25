@@ -78,6 +78,7 @@ VISUAL_PARTS = [
     ("ground", None, PART_FLOOR),
     ("course_bales", None, PART_BALE),
     ("gap_bale_", None, PART_BALE),
+    ("wide_bale_", None, PART_BALE),
     ("bucket_", None, PART_BUCKET),
     ("hoop_", None, PART_HOOP),
     ("car_wash", "strip_", PART_CARWASH_RIBBON),

@@ -29,8 +29,8 @@ Two geometry sources, because Gazebo has two (see world.py):
 
 The movable models change per layout, so the grid is baked twice: once for
 everything static over the whole course, and once per layout over a WINDOW
-covering the bucket section, the hoop corridor and the gap-bale wall, with
-the layout's buckets, hoops and bale in it.  Queries read the window when the
+covering the bucket section, the hoop corridor, the gap-bale wall and the
+Wide Section, with the layout's buckets, hoops and bales in it.  Queries read the window when the
 point is inside it.
 
     python3 course_model.py --check    # centerline checks, and PNGs in .cache/
@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import math
 import sys
 from dataclasses import dataclass
@@ -74,8 +75,9 @@ LAYER_MERGE = 0.08
 
 # Everything the randomizer can move lies inside this, with room for the
 # models' own extent (layout yaml bounds, plus the 0.709 m hoop base and a
-# bale's length).
-WINDOW = (-10.2, -5.4, 3.8, 1.0)  # x0, y0, x1, y1
+# bale's length).  East and south far enough for the Wide Section's bales
+# (wide_bales.bounds reaches x 6.6, y -9.25).
+WINDOW = (-10.2, -9.8, 7.1, 1.0)  # x0, y0, x1, y1
 
 VIS_NONE, VIS_SOLID, VIS_CARWASH = 0, 1, 2
 
@@ -543,7 +545,14 @@ class CourseModel:
             np.savez_compressed(path, **self.static)
         windows = []
         for seed, layout in zip(self.seeds, self.layouts):
-            wpath = CACHE / f"window_{key}_{seed}.npz"
+            # Keyed on the layout itself, not just its seed: the same seed
+            # means a different course whenever the draw gains an element
+            # (the Wide Section bales did), and a stale window is a silently
+            # wrong course.
+            content = hashlib.sha1(
+                json.dumps(layout, sort_keys=True).encode()
+            ).hexdigest()[:8]
+            wpath = CACHE / f"window_{key}_{seed}_{content}.npz"
             if wpath.exists() and not rebuild:
                 windows.append(dict(np.load(wpath)))
                 continue

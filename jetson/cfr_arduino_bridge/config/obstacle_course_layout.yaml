@@ -54,6 +54,70 @@ obstacle_randomizer:
       gap_bale_3:
         position: [3.2374, -4.0812]
         yaw: 4.71239
+    wide_bales:
+      # The Wide Section, drawn as "approx 11' x 26' open area with
+      # changeable boundaries": these bales stand anywhere inside `bounds`
+      # at any yaw, never overlapping `walls`, `keep_out` or each other,
+      # and always leaving a path min_track_width wide (the course's 20 in
+      # guarantee) from `entry`, where the potholes lane opens into the
+      # section, to whichever gap_bales slot is open.  `exit` is the path's
+      # end when there are no gap bales.  `walls` are the fixed bales
+      # around the section as flat (x, y, yaw, length, width) groups;
+      # `keep_out` is the potholes lane's mouth.  `nominal` is the
+      # drawing's pose, restored by ~/reset.
+      names: [wide_bale_107, wide_bale_112, wide_bale_113, wide_bale_114, wide_bale_115, wide_bale_116, wide_bale_117]
+      size: [0.9144, 0.4572]
+      bounds: [3.4700, -9.2500, 6.6000, -0.8700]
+      keep_out: [3.4500, -8.2000, 0.0000, 0.9000, 2.2000]
+      path_bounds: [3.0000, -9.3000, 6.9000, -0.6000]
+      entry: [3.3500, -8.2500]
+      exit: [3.2373, -1.3839]
+      min_track_width: 0.5080
+      grid: 0.0400
+      walls: [
+        2.2506, -0.6423, 6.2832, 0.9144, 0.4572,
+        3.1349, -0.6423, 6.2832, 0.9144, 0.4572,
+        4.0192, -0.6423, 6.2832, 0.9144, 0.4572,
+        4.9035, -0.6423, 6.2832, 0.9144, 0.4572,
+        5.7878, -0.6423, 6.2832, 0.9144, 0.4572,
+        6.5353, -5.2418, 1.7453, 0.9144, 0.4572,
+        6.4574, -4.3763, 1.5708, 0.9144, 0.4572,
+        6.4574, -3.4920, 1.5708, 0.9144, 0.4572,
+        6.4574, -2.6077, 1.5708, 0.9144, 0.4572,
+        6.4574, -1.7234, 1.5708, 0.9144, 0.4572,
+        6.4574, -0.8391, 1.5708, 0.9144, 0.4572,
+        6.2859, -8.6786, 1.0315, 0.9144, 0.4572,
+        6.5526, -7.8425, 1.4318, 0.9144, 0.4572,
+        5.6700, -9.1918, 0.3509, 0.9144, 0.4572,
+        4.8384, -9.2976, 6.2256, 0.9144, 0.4572,
+        6.6149, -6.9768, 1.5708, 0.9144, 0.4572,
+        6.6149, -6.1132, 1.5708, 0.9144, 0.4572,
+        3.9745, -9.2717, 6.2832, 0.9144, 0.4572,
+        3.1095, -9.0682, 6.2832, 0.9144, 0.4572,
+        2.2294, -9.0672, 6.2832, 0.9144, 0.4572,
+        2.2812, -7.3832, 6.2832, 0.9144, 0.4572,
+        3.1744, -7.3832, 6.2832, 0.9144, 0.4572,
+        7.1792, -9.5174, 0.9250, 0.9144, 0.4572,
+        2.5775, -4.8559, 6.2832, 0.9144, 0.4572,
+        3.0763, -5.5274, 0.7854, 0.9144, 0.4572,
+        3.3954, -4.9178, 5.4978, 0.9144, 0.4572,
+        3.4030, -6.1402, 5.4978, 0.9144, 0.4572,
+        3.0821, -6.7511, 0.7854, 0.9144, 0.4572
+      ]
+      wide_bale_107:
+        nominal: [6.0319, -7.9883, 4.46625]
+      wide_bale_112:
+        nominal: [6.1526, -6.5450, 4.71239]
+      wide_bale_113:
+        nominal: [5.9945, -4.8310, 4.77382]
+      wide_bale_114:
+        nominal: [5.9896, -3.9669, 4.71239]
+      wide_bale_115:
+        nominal: [5.4901, -6.5407, 6.28319]
+      wide_bale_116:
+        nominal: [5.1067, -1.3100, 4.18879]
+      wide_bale_117:
+        nominal: [4.3608, -1.3055, 5.23599]
     hoops:
       names: [hoop_0, hoop_1, hoop_2]
       hoop_0:

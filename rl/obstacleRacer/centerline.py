@@ -24,6 +24,7 @@ credited with a stretch of course it went round rather than along.
 
 from __future__ import annotations
 
+import functools
 import math
 import sys
 
@@ -334,6 +335,33 @@ def _in_bucket_section(x, y) -> bool:
     return -0.66 <= x <= 3.01 and -4.63 <= y <= -0.88
 
 
+@functools.lru_cache(maxsize=1)
+def _wide_bale_size():
+    return tuple(float(v) for v in layouts.layout_spec()["wide_bales"]["size"])
+
+
+def near_wide_bale(layout, x, y, margin=0.0) -> bool:
+    """Whether (x, y) is within `margin` of one of the layout's Wide Section bales.
+
+    Those stand anywhere in the section, like the buckets in theirs, so the
+    line through it is a progress coordinate, not a path round them.
+    """
+    poses = (layout or {}).get("wide_bales") or {}
+    if not poses:
+        return False
+    length, width = _wide_bale_size()
+    for bx, by, yaw in poses.values():
+        c, s = math.cos(yaw), math.sin(yaw)
+        lx = c * (x - bx) + s * (y - by)
+        ly = -s * (x - bx) + c * (y - by)
+        if (
+            math.hypot(max(abs(lx) - length / 2, 0.0), max(abs(ly) - width / 2, 0.0))
+            <= margin
+        ):
+            return True
+    return False
+
+
 def main() -> int:
     """Check every layout's line clears the walls and runs monotone."""
     import course_model
@@ -348,12 +376,15 @@ def main() -> int:
         for x, y, z in line.points:
             zs, _ = course_model.support_below(SUP, lay, x, y, z + 0.08)
             # A wall at car-body height within 0.10 m of the line fails it.
-            # Buckets are excused: they stand anywhere in their section and
-            # the line there is a progress coordinate, not a path round them.
+            # Buckets and Wide Section bales are excused: they stand anywhere
+            # in their sections and the line there is a progress coordinate,
+            # not a path round them.
             for r in (0.10, 0.20):
                 for a in np.linspace(0, 2 * math.pi, 16, endpoint=False):
                     px, py = x + r * math.cos(a), y + r * math.sin(a)
-                    if _in_bucket_section(px, py):
+                    if _in_bucket_section(px, py) or near_wide_bale(
+                        model.layouts[lay], px, py, 0.05
+                    ):
                         continue
                     if course_model.obstacle_overlap(
                         OBS, lay, px, py, zs + 0.05, zs + 0.15

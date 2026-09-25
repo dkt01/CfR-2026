@@ -233,8 +233,6 @@
       <visual name="bale_105_visual"><pose>2.5775 -4.8559 0.1778 0.0000 0.0000 6.2832</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
       <collision name="bale_106_collision"><pose>-0.8938 -4.8559 0.1778 0.0000 0.0000 6.2832</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><surface><friction><ode><mu>50</mu><mu2>50</mu2></ode><bullet><friction>50</friction><friction2>50</friction2></bullet></friction></surface></collision>
       <visual name="bale_106_visual"><pose>-0.8938 -4.8559 0.1778 0.0000 0.0000 6.2832</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
-      <collision name="bale_107_collision"><pose>6.0319 -7.9883 0.1778 0.0000 0.0000 4.4662</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><surface><friction><ode><mu>50</mu><mu2>50</mu2></ode><bullet><friction>50</friction><friction2>50</friction2></bullet></friction></surface></collision>
-      <visual name="bale_107_visual"><pose>6.0319 -7.9883 0.1778 0.0000 0.0000 4.4662</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
       <collision name="bale_108_collision"><pose>3.0763 -5.5274 0.1778 0.0000 0.0000 0.7854</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><surface><friction><ode><mu>50</mu><mu2>50</mu2></ode><bullet><friction>50</friction><friction2>50</friction2></bullet></friction></surface></collision>
       <visual name="bale_108_visual"><pose>3.0763 -5.5274 0.1778 0.0000 0.0000 0.7854</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
       <collision name="bale_109_collision"><pose>3.3954 -4.9178 0.1778 0.0000 0.0000 5.4978</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><surface><friction><ode><mu>50</mu><mu2>50</mu2></ode><bullet><friction>50</friction><friction2>50</friction2></bullet></friction></surface></collision>
@@ -243,18 +241,6 @@
       <visual name="bale_110_visual"><pose>3.4030 -6.1402 0.1778 0.0000 0.0000 5.4978</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
       <collision name="bale_111_collision"><pose>3.0821 -6.7511 0.1778 0.0000 0.0000 0.7854</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><surface><friction><ode><mu>50</mu><mu2>50</mu2></ode><bullet><friction>50</friction><friction2>50</friction2></bullet></friction></surface></collision>
       <visual name="bale_111_visual"><pose>3.0821 -6.7511 0.1778 0.0000 0.0000 0.7854</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
-      <collision name="bale_112_collision"><pose>6.1526 -6.5450 0.1778 0.0000 0.0000 4.7124</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><surface><friction><ode><mu>50</mu><mu2>50</mu2></ode><bullet><friction>50</friction><friction2>50</friction2></bullet></friction></surface></collision>
-      <visual name="bale_112_visual"><pose>6.1526 -6.5450 0.1778 0.0000 0.0000 4.7124</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
-      <collision name="bale_113_collision"><pose>5.9945 -4.8310 0.1778 0.0000 0.0000 4.7738</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><surface><friction><ode><mu>50</mu><mu2>50</mu2></ode><bullet><friction>50</friction><friction2>50</friction2></bullet></friction></surface></collision>
-      <visual name="bale_113_visual"><pose>5.9945 -4.8310 0.1778 0.0000 0.0000 4.7738</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
-      <collision name="bale_114_collision"><pose>5.9896 -3.9669 0.1778 0.0000 0.0000 4.7124</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><surface><friction><ode><mu>50</mu><mu2>50</mu2></ode><bullet><friction>50</friction><friction2>50</friction2></bullet></friction></surface></collision>
-      <visual name="bale_114_visual"><pose>5.9896 -3.9669 0.1778 0.0000 0.0000 4.7124</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
-      <collision name="bale_115_collision"><pose>5.4901 -6.5407 0.1778 0.0000 0.0000 6.2832</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><surface><friction><ode><mu>50</mu><mu2>50</mu2></ode><bullet><friction>50</friction><friction2>50</friction2></bullet></friction></surface></collision>
-      <visual name="bale_115_visual"><pose>5.4901 -6.5407 0.1778 0.0000 0.0000 6.2832</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
-      <collision name="bale_116_collision"><pose>5.1067 -1.3100 0.1778 0.0000 0.0000 4.1888</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><surface><friction><ode><mu>50</mu><mu2>50</mu2></ode><bullet><friction>50</friction><friction2>50</friction2></bullet></friction></surface></collision>
-      <visual name="bale_116_visual"><pose>5.1067 -1.3100 0.1778 0.0000 0.0000 4.1888</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
-      <collision name="bale_117_collision"><pose>4.3608 -1.3055 0.1778 0.0000 0.0000 5.2360</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><surface><friction><ode><mu>50</mu><mu2>50</mu2></ode><bullet><friction>50</friction><friction2>50</friction2></bullet></friction></surface></collision>
-      <visual name="bale_117_visual"><pose>4.3608 -1.3055 0.1778 0.0000 0.0000 5.2360</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
       <collision name="bale_121_collision"><pose>-1.0842 -2.6714 0.1778 0.0000 0.0000 0.0000</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><surface><friction><ode><mu>50</mu><mu2>50</mu2></ode><bullet><friction>50</friction><friction2>50</friction2></bullet></friction></surface></collision>
       <visual name="bale_121_visual"><pose>-1.0842 -2.6714 0.1778 0.0000 0.0000 0.0000</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
       <collision name="bale_122_collision"><pose>-0.8812 -3.3316 0.1778 0.0000 0.0000 4.7124</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><surface><friction><ode><mu>50</mu><mu2>50</mu2></ode><bullet><friction>50</friction><friction2>50</friction2></bullet></friction></surface></collision>
@@ -869,6 +855,52 @@
       </link>
     </model>
     <model name="gap_bale_3"><static>true</static><pose>3.2374 -4.0812 0 0 0 4.71239</pose>
+      <link name="link">
+      <collision name="bale_collision"><pose>0.0000 0.0000 0.1778 0.0000 0.0000 0.0000</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><surface><friction><ode><mu>50</mu><mu2>50</mu2></ode><bullet><friction>50</friction><friction2>50</friction2></bullet></friction></surface></collision>
+      <visual name="bale_visual"><pose>0.0000 0.0000 0.1778 0.0000 0.0000 0.0000</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
+      </link>
+    </model>
+    <!-- Wide Section bales: the drawing calls the section an open area
+         with changeable boundaries, so obstacle_randomizer_node moves
+         these (wide_bales in obstacle_course_layout.yaml).  Placed here
+         where the drawing puts them. -->
+    <model name="wide_bale_107"><static>true</static><pose>6.0319 -7.9883 0 0 0 4.46625</pose>
+      <link name="link">
+      <collision name="bale_collision"><pose>0.0000 0.0000 0.1778 0.0000 0.0000 0.0000</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><surface><friction><ode><mu>50</mu><mu2>50</mu2></ode><bullet><friction>50</friction><friction2>50</friction2></bullet></friction></surface></collision>
+      <visual name="bale_visual"><pose>0.0000 0.0000 0.1778 0.0000 0.0000 0.0000</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
+      </link>
+    </model>
+    <model name="wide_bale_112"><static>true</static><pose>6.1526 -6.5450 0 0 0 4.71239</pose>
+      <link name="link">
+      <collision name="bale_collision"><pose>0.0000 0.0000 0.1778 0.0000 0.0000 0.0000</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><surface><friction><ode><mu>50</mu><mu2>50</mu2></ode><bullet><friction>50</friction><friction2>50</friction2></bullet></friction></surface></collision>
+      <visual name="bale_visual"><pose>0.0000 0.0000 0.1778 0.0000 0.0000 0.0000</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
+      </link>
+    </model>
+    <model name="wide_bale_113"><static>true</static><pose>5.9945 -4.8310 0 0 0 4.77382</pose>
+      <link name="link">
+      <collision name="bale_collision"><pose>0.0000 0.0000 0.1778 0.0000 0.0000 0.0000</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><surface><friction><ode><mu>50</mu><mu2>50</mu2></ode><bullet><friction>50</friction><friction2>50</friction2></bullet></friction></surface></collision>
+      <visual name="bale_visual"><pose>0.0000 0.0000 0.1778 0.0000 0.0000 0.0000</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
+      </link>
+    </model>
+    <model name="wide_bale_114"><static>true</static><pose>5.9896 -3.9669 0 0 0 4.71239</pose>
+      <link name="link">
+      <collision name="bale_collision"><pose>0.0000 0.0000 0.1778 0.0000 0.0000 0.0000</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><surface><friction><ode><mu>50</mu><mu2>50</mu2></ode><bullet><friction>50</friction><friction2>50</friction2></bullet></friction></surface></collision>
+      <visual name="bale_visual"><pose>0.0000 0.0000 0.1778 0.0000 0.0000 0.0000</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
+      </link>
+    </model>
+    <model name="wide_bale_115"><static>true</static><pose>5.4901 -6.5407 0 0 0 6.28319</pose>
+      <link name="link">
+      <collision name="bale_collision"><pose>0.0000 0.0000 0.1778 0.0000 0.0000 0.0000</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><surface><friction><ode><mu>50</mu><mu2>50</mu2></ode><bullet><friction>50</friction><friction2>50</friction2></bullet></friction></surface></collision>
+      <visual name="bale_visual"><pose>0.0000 0.0000 0.1778 0.0000 0.0000 0.0000</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
+      </link>
+    </model>
+    <model name="wide_bale_116"><static>true</static><pose>5.1067 -1.3100 0 0 0 4.18879</pose>
+      <link name="link">
+      <collision name="bale_collision"><pose>0.0000 0.0000 0.1778 0.0000 0.0000 0.0000</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><surface><friction><ode><mu>50</mu><mu2>50</mu2></ode><bullet><friction>50</friction><friction2>50</friction2></bullet></friction></surface></collision>
+      <visual name="bale_visual"><pose>0.0000 0.0000 0.1778 0.0000 0.0000 0.0000</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>
+      </link>
+    </model>
+    <model name="wide_bale_117"><static>true</static><pose>4.3608 -1.3055 0 0 0 5.23599</pose>
       <link name="link">
       <collision name="bale_collision"><pose>0.0000 0.0000 0.1778 0.0000 0.0000 0.0000</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><surface><friction><ode><mu>50</mu><mu2>50</mu2></ode><bullet><friction>50</friction><friction2>50</friction2></bullet></friction></surface></collision>
       <visual name="bale_visual"><pose>0.0000 0.0000 0.1778 0.0000 0.0000 0.0000</pose><geometry><box><size>0.9144 0.4572 0.3556</size></box></geometry><material><diffuse>0.72 0.48 0.12 1</diffuse></material></visual>

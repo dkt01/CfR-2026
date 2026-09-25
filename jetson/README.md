@@ -69,8 +69,9 @@ find. Both wheel slip and an uneven surface, which is what the section tests.
 
 ### Variable elements
 
-Three things change between runs on the real course, and
-`obstacle_randomizer_node` moves all three in a running simulation, so a
+Several things change between runs on the real course -- buckets, hoops,
+the bucket-section entrance, the Wide Section's bales and the start signal --
+and `obstacle_randomizer_node` moves all of them in a running simulation, so a
 layout can be re-drawn without restarting Gazebo.
 
 The node runs on **both** courses, because both start the same way: on the
@@ -80,7 +81,7 @@ than pretending to shuffle something.
 
 | Service | Type | Effect |
 | ------- | ---- | ------ |
-| `/obstacle_randomizer/randomize` | `std_srvs/Trigger` | draw a new bucket and hoop layout |
+| `/obstacle_randomizer/randomize` | `std_srvs/Trigger` | draw a new bucket, hoop, wall-gap and Wide Section layout |
 | `/obstacle_randomizer/reset` | `std_srvs/Trigger` | restore the layout the drawing shows, and red |
 | `/obstacle_randomizer/start_signal` | `std_srvs/SetBool` | `true` shows green, `false` red |
 
@@ -112,6 +113,17 @@ ros2 param set /obstacle_randomizer seed 12345
 **Hoops.** Three, each sliding laterally along the dashed line the drawing
 puts it on, clamped by half a base length so a hoop cannot end up half
 outside the bales.
+
+**Wide Section bales.** The drawing calls the Wide Section an "approx 11' x 26'
+open area with changeable boundaries", so its seven bales (`wide_bale_107`,
+`112` to `117`, numbered as on the course maps) are movable models. A draw
+stands each anywhere in the section at any yaw, overlapping no wall and no
+other bale, and keeps a track at least 20 in wide (the course's guarantee)
+from the potholes lane into the open bucket-section entrance. The track check
+is a grid of cell centers at least 10 in (plus half a cell) from every wall
+and bale, searched from one end to the other; a draw that fails it is thrown
+away and drawn again. `reset` stands them where the drawing does. The rules
+are in `wide_bales` in `config/obstacle_course_layout.yaml`.
 
 **Start signal, on both courses.** Red and green arms 90 degrees apart on a
 common pivot 32 in up; whichever is horizontal stands out past the oasis blue
