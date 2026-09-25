@@ -98,7 +98,7 @@ def summarize(records):
     if not records:
         return {}
     finished = [r for r in records if r["outcome"] == "finish"]
-    frac = [(r["s_end"] - r["s_start"]) / r["lap_length"] for r in records]
+    frac = [r["dist"] / r["goal"] for r in records]
     by_seed = {}
     for r in records:
         by_seed.setdefault(r["seed"], []).append(r["outcome"] == "finish")
@@ -115,7 +115,7 @@ def summarize(records):
         n=len(records),
         finish=len(finished) / len(records),
         progress=float(np.mean(frac)),
-        progress_m=float(np.mean([r["s_end"] - r["s_start"] for r in records])),
+        progress_m=float(np.mean([r["dist"] for r in records])),
         lap_time=float(np.mean([r["time"] for r in finished])) if finished else None,
         best_lap=float(np.min([r["time"] for r in finished])) if finished else None,
         hoops=float(np.mean([r["hoops"] for r in records])),

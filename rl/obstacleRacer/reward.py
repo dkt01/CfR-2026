@@ -68,14 +68,11 @@ def step_reward(
     clearance,
     dsteer,
     ddsteer,
-    covered_frac=1.0,
 ):
     """Per-car reward for one control step, and the per-term breakdown.
 
-    `covered_frac` is the share of the lap driven since THIS episode's start
-    point.  Most training episodes are dealt part way round, and the finish
-    bonus is paid in proportion, so reaching the line from 8 m out is not
-    paid like a whole lap.
+    `finished` is true only once the car has driven a full lap from this
+    episode's own start point and threaded all three hoops on the way.
     """
     r = cfg["reward"]
     band = float(r["graze_band"])
@@ -87,8 +84,7 @@ def step_reward(
         "hoop": float(r["hoop"]) * hoops_now,
         "finish": np.where(
             finished,
-            (float(r["finish"]) + float(r["finish_pace"]) * pace)
-            * np.clip(covered_frac, 0.0, 1.0),
+            float(r["finish"]) + float(r["finish_pace"]) * pace,
             0.0,
         ),
         "crash": np.where(crashed, float(r["crash"]), 0.0),
@@ -131,10 +127,9 @@ def episode_return(cfg, speed, meters, outcome, hoops, lap_length=74.0, grazing=
     if outcome == "finish":
         # Pace is judged on the lap time the episode's speed extrapolates to.
         lap_s = lap_length / speed if speed > 0 else 1e9
-        total += (
-            float(r["finish"])
-            + float(r["finish_pace"]) * max(0.0, float(r["target_lap_s"]) - lap_s)
-        ) * min(1.0, meters / lap_length)
+        total += float(r["finish"]) + float(r["finish_pace"]) * max(
+            0.0, float(r["target_lap_s"]) - lap_s
+        )
     elif outcome in ("crash", "hoop_miss", "stall", "off_course"):
         total += float(r[outcome])
     del dt
@@ -152,9 +147,6 @@ def assert_episode_incentives(cfg, lap=74.0):
     stand = E(0.0, 0.0, "stall", 0)
     crash_early = E(2.0, 2.0, "crash", 0)
     try_10m = E(2.0, 10.0, "crash", 0)
-    # Dealt half way round: finishing has to beat crashing just short of it.
-    half_finish = E(2.0, lap / 2, "finish", 1, lap_length=lap)
-    half_crash = E(2.0, lap / 2 - 3, "crash", 1, lap_length=lap)
     checks = {
         "fast lap > slow lap": fast > slow,
         "slow lap > crash near the end": slow > crash_late,
@@ -163,8 +155,6 @@ def assert_episode_incentives(cfg, lap=74.0):
         "driving 10 m then crashing > standing still": try_10m > stand,
         "driving 10 m then crashing > crashing at once": try_10m > crash_early,
         "standing still < 0": stand < 0,
-        "dealt half way: finishing > crashing short of the line": half_finish
-        > half_crash,
     }
     failed = [k for k, ok in checks.items() if not ok]
     if failed:

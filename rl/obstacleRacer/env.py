@@ -16,7 +16,10 @@ Per control step (20 Hz):
 
 Episodes start in the start box ((-0.7, 0), yaw 0, +/-0.1 m in x and y,
 +/-5 deg, from rest) or, for training coverage, dealt part way round with the
-same noise.  Hoops already behind a dealt start count as threaded.
+same noise.  Every episode is one full lap from wherever it started: progress
+wraps round the loop at the timing line, all three hoops have to be threaded
+during the episode, and the finish counts only once the car is back past its
+own start point (and, from the start box, over the timing line).
 """
 
 from __future__ import annotations
@@ -118,6 +121,7 @@ class ObstacleEnv:
         for k, labels in enumerate(zl):
             self.zone_of[k, : len(labels)] = labels
             self.zone_of[k, len(labels) :] = labels[-1]
+        self._loop_geometry()
         self._hoop_geometry()
         self._deal_table()
         self.stack = O.Stack(n, int(e["frame_stack"]))
@@ -127,6 +131,9 @@ class ObstacleEnv:
         self.t = z.copy()
         self.s = z.copy()
         self.s_start = z.copy()
+        self.dist = z.copy()  # arc length driven this episode, across the wrap
+        self.goal = z.copy()  # dist at which the lap is complete
+        self.hoop_d = np.zeros((n, 3))  # dist at which each hoop is due
         self.idx = np.zeros(n, np.int64)
         self.hoop_state = np.zeros((n, 3), np.int64)
         self.hoop_u = np.zeros((n, 3))
@@ -145,6 +152,22 @@ class ObstacleEnv:
         self.attitude = np.zeros((n, len(self.zone_names), 2))
 
     # ------------------------------------------------------------ geometry
+
+    def _loop_geometry(self):
+        """Per layout: the arc length where the line's end rejoins its start.
+
+        The line starts at the start box, 0.7 m before the timing line, and
+        ends on the timing line.  Driving on from its end is driving on from
+        the point of its first pass over the timing line, `wrap_s`; the loop
+        round the course is `lap_length - wrap_s` long.
+        """
+        L = len(self.lines.lines)
+        self.wrap_s = np.zeros(L)
+        for k, line in enumerate(self.lines.lines):
+            head = line.points[:40]
+            j = int(np.argmin(np.linalg.norm(head - line.points[-1], axis=1)))
+            self.wrap_s[k] = line.arc[j]
+        self.loop = self.lines.lap_length - self.wrap_s
 
     def _hoop_geometry(self):
         """Per layout: hoop centers, span axes, travel normals, and arc lengths."""
@@ -174,7 +197,7 @@ class ObstacleEnv:
     def _deal_table(self):
         """Per layout: arc lengths a car can be dealt in at, part way round.
 
-        Clear of the run-in to the finish, not on top of a bucket or a hoop.
+        Anywhere round the loop, not on top of a bucket or a hoop.
         The helix is dealt too (place() sets the car on its segments): it is
         where v1 crashed, and a policy that only meets it at the end of a
         ramp climb practices it a few times per million steps.
@@ -184,9 +207,7 @@ class ObstacleEnv:
         for k, (line, layout) in enumerate(zip(self.lines.lines, self.model.layouts)):
             buckets = np.asarray(layout["buckets"]).reshape(-1, 2)
             ok = []
-            for s in np.arange(
-                0.5, line.lap_length - float(e["dealt_finish_margin_m"]), 0.25
-            ):
+            for s in np.arange(0.5, line.lap_length - 0.5, 0.25):
                 if not e.get("deal_on_helix", True) and (
                     line.helix_start_s - 0.8 <= s <= line.helix_end_s + 0.3
                 ):
@@ -267,10 +288,18 @@ class ObstacleEnv:
             lay, self.idx[idx], st[:, P.S_X], st[:, P.S_Y], st[:, P.S_Z]
         )
         self.s_start[idx] = self.s[idx]
+        self.dist[idx] = 0.0
+        loop = self.loop[lay]
+        # A full loop back to the start point; from the start box (before the
+        # timing line) that is also over the timing line.
+        self.goal[idx] = np.maximum(loop, self.lines.lap_length[lay] - self.s[idx])
+        # Every hoop is ahead: one just behind a dealt start is due at the
+        # end of the lap.
+        self.hoop_d[idx] = np.mod(self.hoop_s[lay] - self.s[idx, None], loop[:, None])
         self.t[idx] = 0.0
         self.stall_t[idx] = 0.0
-        self.progress_mark[idx] = np.c_[np.zeros(len(idx)), self.s[idx]]
-        self.hoop_state[idx] = np.where(self.hoop_s[lay] < self.s[idx, None], 1, 0)
+        self.progress_mark[idx] = 0.0
+        self.hoop_state[idx] = 0
         self.hoop_u[idx] = self._hoop_u(idx)
         self.prev_action[idx] = 0.0
         self.prev_steer[idx] = 0.0
@@ -322,20 +351,27 @@ class ObstacleEnv:
             scan, gate, speed, yaw_rate, self.prev_action[idx], prior, self.cfg
         )
 
-    def step(self, action):
-        cfg, e = self.cfg, self.cfg["env"]
-        action = np.clip(np.asarray(action, np.float64), -1.0, 1.0)
-        steer, speed = O.action_to_command(action, self.prior, cfg)
-        steer, speed = self.plant.push_command(steer, speed)
-        crashed, rolled = self.plant.step(steer, speed, self.substeps)
-        st = self.plant.state
-        lay = self.plant.lay
-        self.t += self.dt
+    def _track(self, st, lay):
+        """Privileged bookkeeping for a step: arc length round the loop, hoops.
+
+        Returns (ds, distance off the line, hoops threaded this step, a hoop
+        missed this step).
+        """
         s_prev = self.s.copy()
         self.idx, self.s, off = self.lines.project(
             lay, self.idx, st[:, P.S_X], st[:, P.S_Y], st[:, P.S_Z]
         )
         ds = self.s - s_prev
+        self.dist += ds
+        # Past the end of the line is round the loop again: carry on from
+        # the same place on the line's first pass.
+        wrap = np.flatnonzero(self.s >= self.lines.lap_length[lay] - 0.3)
+        if len(wrap):
+            lw = lay[wrap]
+            self.idx[wrap] = self.lines.index_at(lw, self.s[wrap] - self.loop[lw])
+            self.idx[wrap], self.s[wrap], _ = self.lines.project(
+                lw, self.idx[wrap], st[wrap, P.S_X], st[wrap, P.S_Y], st[wrap, P.S_Z]
+            )
 
         # Hoops: crossings of each hoop's plane, forward, near the hoop.
         all_idx = np.arange(self.n)
@@ -345,13 +381,25 @@ class ObstacleEnv:
         crossed = (self.hoop_u < 0) & (u >= 0) & (self.hoop_state == 0)
         passed = crossed & (w <= HOOP_PASS_HALF)
         missed = (crossed & (w > HOOP_PASS_HALF) & (w <= HOOP_ATTEMPT_HALF)) | (
-            (self.hoop_state == 0) & (self.s[:, None] > self.hoop_s[lay] + HOOP_LATE_M)
+            (self.hoop_state == 0) & (self.dist[:, None] > self.hoop_d + HOOP_LATE_M)
         )
         self.hoop_state[passed] = 1
         self.hoop_state[missed & ~passed] = 2
         self.hoop_u = u
         hoops_now = passed.sum(1)
         hoop_missed = (missed & ~passed).any(1)
+        return ds, off, hoops_now, hoop_missed
+
+    def step(self, action):
+        cfg, e = self.cfg, self.cfg["env"]
+        action = np.clip(np.asarray(action, np.float64), -1.0, 1.0)
+        steer, speed = O.action_to_command(action, self.prior, cfg)
+        steer, speed = self.plant.push_command(steer, speed)
+        crashed, rolled = self.plant.step(steer, speed, self.substeps)
+        st = self.plant.state
+        lay = self.plant.lay
+        self.t += self.dt
+        ds, off, hoops_now, hoop_missed = self._track(st, lay)
 
         # Terminations.
         v = st[:, P.S_V]
@@ -359,16 +407,15 @@ class ObstacleEnv:
             v < float(e["stall_speed"]), self.stall_t + self.dt, 0.0
         )
         stalled = self.stall_t >= float(e["stall_s"])
+        all_idx = np.arange(self.n)
         off_course = off > float(e["off_course_m"])
-        finished = (self.s >= self.lines.lap_length[lay] - 0.3) & (
-            self.hoop_state == 1
-        ).all(1)
+        finished = (self.dist >= self.goal) & (self.hoop_state == 1).all(1)
         window = float(e["progress_window_s"])
         due = self.t - self.progress_mark[:, 0] >= window
         no_progress = due & (
-            self.s - self.progress_mark[:, 1] < float(e["progress_window_m"])
+            self.dist - self.progress_mark[:, 1] < float(e["progress_window_m"])
         )
-        self.progress_mark[due] = np.c_[self.t[due], self.s[due]]
+        self.progress_mark[due] = np.c_[self.t[due], self.dist[due]]
         timeout = self.t >= float(e["episode_s"])
         crash = crashed | rolled
 
@@ -377,8 +424,7 @@ class ObstacleEnv:
         self.min_clear = np.minimum(self.min_clear, clearance)
         dsteer = steer - self.prev_steer
         ddsteer = dsteer - self.prev_dsteer
-        covered = np.maximum(self.s - self.s_start, 1e-3)
-        lap_time = self.t * self.lines.lap_length[lay] / covered
+        lap_time = self.t * self.goal / np.maximum(self.dist, 1e-3)
         total, terms = R.step_reward(
             cfg,
             ds,
@@ -393,7 +439,6 @@ class ObstacleEnv:
             clearance,
             dsteer,
             ddsteer,
-            covered / self.lines.lap_length[lay],
         )
         self.prev_dsteer = dsteer
         self.prev_steer = steer
@@ -474,6 +519,8 @@ class ObstacleEnv:
             "start": "box" if self.start_kind[i] == 0 else "dealt",
             "s_start": float(self.s_start[i]),
             "s_end": float(self.s[i]),
+            "dist": float(self.dist[i]),
+            "goal": float(self.goal[i]),
             "lap_length": float(self.lines.lap_length[lay]),
             "time": float(self.t[i]),
             "hoops": int((self.hoop_state[i] == 1).sum()),

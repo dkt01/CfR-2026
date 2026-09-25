@@ -196,6 +196,73 @@ def sensor_on_slopes(cfg, model):
     )
 
 
+def lap_bookkeeping(cfg, model):
+    """A car carried round the loop from a dealt start finishes only there.
+
+    The car is moved along its layout's line (threading each hoop) past the
+    timing line and on round to where it started.  Progress has to wrap at
+    the timing line without a jump, every hoop has to count, and the lap
+    has to complete back at the start point -- not at the timing line.
+    """
+    import env as env_module
+
+    env = env_module.ObstacleEnv(cfg, model, 3, [0], seed=0, randomize=False)
+    env.reset()
+    line = env.lines.lines[0]
+    loop = float(env.loop[0])
+    failures = 0
+    for k, s0 in enumerate((0.0, 30.0, loop * 0.9)):
+        x, y, z, yaw = line.pose_at(s0)
+        i = np.array([k])
+        env.plant.reset(
+            i,
+            np.array([0]),
+            np.array([x]),
+            np.array([y]),
+            np.array([z]),
+            np.array([yaw]),
+            np.zeros(1),
+        )
+        env.idx[k] = line.index_at(s0)
+        env.idx[i], env.s[i], _ = env.lines.project(
+            np.array([0]), env.idx[i], np.array([x]), np.array([y]), np.array([z])
+        )
+        env.s_start[k] = env.s[k]
+        env.dist[k] = 0.0
+        env.goal[k] = max(loop, line.lap_length - env.s[k])
+        env.hoop_d[k] = np.mod(env.hoop_s[0] - env.s[k], loop)
+        env.hoop_state[k] = 0
+        env.hoop_u[k] = env._hoop_u(i)[0]
+        step, s, largest, done_at = 0.08, float(env.s[k]), 0.0, None
+        for _ in range(int((loop + 2.0) / step)):
+            s_next = s + step
+            if s_next >= line.lap_length:
+                s_next -= loop
+            x, y, z, yaw = line.pose_at(s_next)
+            st = env.plant.state.copy()
+            st[k, P.S_X], st[k, P.S_Y], st[k, P.S_Z], st[k, P.S_YAW] = x, y, z, yaw
+            env.plant.state[k] = st[k]
+            ds, _, _, missed = env._track(env.plant.state, env.plant.lay)
+            largest = max(largest, abs(ds[k]))
+            if missed[k]:
+                break
+            s = s_next
+            if (
+                done_at is None
+                and env.dist[k] >= env.goal[k]
+                and (env.hoop_state[k] == 1).all()
+            ):
+                done_at = float(env.dist[k])
+        ok = done_at is not None and largest < 0.5 and abs(done_at - env.goal[k]) < 0.2
+        failures += check(
+            f"a lap from s={s0:.1f} m wraps, threads all hoops, ends back at the start",
+            ok,
+            f"finished at {done_at} m of {env.goal[k]:.1f}, largest step {largest:.2f} m, "
+            f"hoops {env.hoop_state[k].tolist()}",
+        )
+    return failures
+
+
 def rollout(cfg, model, cars, seconds, start_box_only=True):
     import env as env_module
 
@@ -251,13 +318,15 @@ def main() -> int:
     print("sensor")
     failures += gate_parity(cfg, model)
     failures += sensor_on_slopes(cfg, model)
+    print("lap bookkeeping")
+    failures += lap_bookkeeping(cfg, model)
 
     print("env")
     env, infos, rate = rollout(cfg, model, 64, 4.0 if args.quick else 60.0)
     failures += check("env steps", rate > 0, f"{rate:.0f} car-steps/s")
     if infos:
         outcomes = Counter(i["outcome"] for i in infos)
-        reach = np.array([i["s_end"] for i in infos])
+        reach = np.array([i["dist"] for i in infos])
         print(
             f"  prior alone, start box: {len(infos)} episodes, outcomes {dict(outcomes)}"
         )

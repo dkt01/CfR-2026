@@ -26,13 +26,12 @@ env:
   # Sight-limited, not power-limited: with no brakes the car has to be able to
   # shed speed for what it can see, and the segmenter sees 6 m.
   v_cap: 3.5                # m/s
-  episode_s: 90.0
+  episode_s: 120.0          # one full lap from any start point
   # Where episodes start.  Eval always starts in the start box.
   start_box_prob: 0.30
   start_xy_noise: 0.10      # m, uniform +/- in x and in y
   start_yaw_noise_deg: 5.0  # uniform +/-
   dealt_speed: [0.0, 2.0]   # m/s for starts dealt part way round
-  dealt_finish_margin_m: 6.0
   deal_on_helix: true
   # Half the dealt starts go a few meters before a spot where a recent
   # training episode failed, so the hard obstacles get practiced.

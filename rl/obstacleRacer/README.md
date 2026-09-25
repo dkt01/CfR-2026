@@ -66,8 +66,12 @@ Episodes start either:
   rest. Evaluation always starts here.
 - dealt part way round, with the same noise, the helix included. Half of
   these start 0.5-6 m before a spot where a recent training episode failed,
-  so the obstacles the policy cannot yet do get practiced. Progress and the
-  finish bonus count from the episode's own start point.
+  so the obstacles the policy cannot yet do get practiced.
+
+Every episode is one full lap from its own start point. Progress wraps round
+the loop at the timing line, all three hoops must be threaded during the
+episode, and the lap bonus is paid only when the car gets back past the
+point it started from (from the start box, that is over the timing line).
 
 ## Running
 
