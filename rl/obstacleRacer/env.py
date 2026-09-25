@@ -53,12 +53,21 @@ HOOP_ATTEMPT_HALF = 1.5
 # was driven round, which is a miss however it was done.
 HOOP_LATE_M = 1.0
 
-FAILURES = ("crash", "rollover", "hoop_miss", "stall", "off_course", "no_progress")
+FAILURES = (
+    "crash",
+    "rollover",
+    "hoop_miss",
+    "pinned",
+    "stall",
+    "off_course",
+    "no_progress",
+)
 OUTCOMES = (
     "finish",
     "crash",
     "rollover",
     "hoop_miss",
+    "pinned",
     "stall",
     "off_course",
     "no_progress",
@@ -143,6 +152,7 @@ class ObstacleEnv:
         self.hoop_state = np.zeros((n, 3), np.int64)
         self.hoop_u = np.zeros((n, 3))
         self.stall_t = z.copy()
+        self.touch_age = z.copy()  # s since the car last touched anything
         self.hoop_phi = z.copy()  # hoop-alignment potential, reward.py
         self.progress_mark = np.zeros((n, 2))  # (time, s) of the window start
         self.prev_action = np.zeros((n, 2))
@@ -355,6 +365,7 @@ class ObstacleEnv:
         self.hoop_d[idx] = np.mod(self.hoop_s[lay] - self.s[idx, None], loop[:, None])
         self.t[idx] = 0.0
         self.stall_t[idx] = 0.0
+        self.touch_age[idx] = np.inf
         self.progress_mark[idx] = 0.0
         self.hoop_state[idx] = 0
         self.hoop_u[idx] = self._hoop_u(idx)
@@ -515,6 +526,14 @@ class ObstacleEnv:
         stopped = stalled | no_progress
         timeout = self.t >= float(e["episode_s"])
         crash = crashed | rolled
+        # Stopped against what it just hit: charged as the crash it is, not
+        # as the (dearer) stall.  Otherwise a head-on touch at walking pace,
+        # which leaves the car stuck pushing on the wall, costs more than
+        # hitting the wall hard enough to crash -- v3/v4-smoke: every stall
+        # at step 0 came within 3 s of a contact, and the policy learned to
+        # crawl.  Parking in the open stays the worst ending.
+        self.touch_age = np.where(touched, 0.0, self.touch_age + self.dt)
+        pinned = stopped & (self.touch_age <= float(e["pinned_window_s"]))
 
         # Reward.
         clearance = P.body_clearance(self.plant.OBS, lay, st, CLEARANCE_RINGS)
@@ -536,9 +555,9 @@ class ObstacleEnv:
             hoops_now,
             finished,
             lap_time,
-            crash,
+            crash | pinned,
             hoop_missed,
-            stopped,
+            stopped & ~pinned,
             off_course,
             clearance,
             dsteer,
@@ -581,6 +600,7 @@ class ObstacleEnv:
                     rolled,
                     crashed,
                     hoop_missed,
+                    pinned,
                     stalled,
                     off_course,
                     no_progress,
@@ -590,6 +610,7 @@ class ObstacleEnv:
                     "rollover",
                     "crash",
                     "hoop_miss",
+                    "pinned",
                     "stall",
                     "off_course",
                     "no_progress",

@@ -22,9 +22,11 @@ It gives a `DriveCommand`:
   sight distance.
 
 The policy (`ppo_policy.py`) keeps its Gaussian's mean inside the action range
-(tanh) and its spread inside `train.log_std_range`. In v2 the unbounded mean
-ran to -6 at the bank, so every sample clipped to a full stop and the slow
-crawl round it was never tried.
+(tanh) and its spread inside `train.log_std_range` (a sigmoid, so the spread
+can always move). In v2 the unbounded mean ran to -6 at the bank, so every
+sample clipped to a full stop and the slow crawl round it was never tried.
+PPO sees rewards times `train.reward_scale` (0.1): unscaled, v3's value net
+saturated in its first 2M steps and never learned.
 
 The reward is privileged, computed in simulation only (`reward.py`):
 - progress along a hand-placed centerline, per layout
@@ -34,8 +36,13 @@ The reward is privileged, computed in simulation only (`reward.py`):
   what it gave as the car crosses, so only threading pays)
 - a cost for speed lost to contact; touching is not the end of a run
 - terminal penalties for hard crashes (over 1.5 m/s lost in one step), hoop
-  misses, leaving the course and, worst of all, stopping or circling
-- costs for grazing obstacles, steering chatter and speed-command chatter
+  misses, leaving the course and, worst of all, stopping or circling. A stop
+  within 3 s of touching something is "pinned" and costs a crash, so a gentle
+  touch never costs more than a hard hit
+- costs for grazing obstacles, steering chatter and speed-command chatter.
+  These are charged on the sampled action, exploration noise included, so
+  `reward.py` checks that noise at the starting std costs under half the time
+  cost; at v3's weights it cost ~20/s and the policy held full lock to escape
 
 A run that never reaches the hoops is neither paid nor charged for them: the
 miss penalty needs the car at or past a hoop.

@@ -69,6 +69,8 @@ env:
   crash_speed: 1.5          # m/s
   stall_speed: 0.25         # m/s, either direction
   stall_s: 2.5
+  pinned_window_s: 3.0      # a stop this soon after a touch is "pinned",
+                            # charged the crash penalty, not the stall one
   progress_window_s: 6.0    # end the run as a stall if it advanced less than...
   progress_window_m: 0.5    # ...this over the window (going round, not along)
   off_course_m: 2.2         # m from the centerline: left the lane (the bucket
@@ -126,9 +128,13 @@ reward:
   off_course: -60.0
   graze: 8.0                # per s, times bite^2
   graze_band: 0.12          # m
-  steer_rate: 0.04          # * dcmd^2 / dt
-  steer_jerk: 0.05          # * ddcmd^2 / dt (0.15 swamped every other term
-                            # while the policy's exploration noise was high)
+  steer_rate: 0.01          # * dcmd^2 / dt
+  steer_jerk: 0.005         # * ddcmd^2 / dt.  Both are charged on the sampled
+                            # action, so they also tax exploration noise: at
+                            # 0.04 / 0.05 that tax was ~20/s against a 3/s
+                            # time cost, and the policy escaped it by holding
+                            # the steering at full lock (v4 smoke).  Sawing
+                            # +/-1 every step still costs ~48/s.
   speed_rate: 0.002         # * (d speed cmd, m/s)^2 / dt: 0.5 a step for
                             # flipping stop <-> full, nothing for a 4 m/s^2 ramp
   lateral: 0.0              # off by default: randomized buckets need a free line
@@ -159,7 +165,7 @@ randomize:
   speed_noise: [0.0, 0.05]      # m/s, 1 sigma, above the tach floor
 
 train:
-  total_steps: 300000000   # ~18 h at v2's rate
+  total_steps: 150000000   # ~8 h at 5.5k steps/s
   n_envs: 256
   n_steps: 64
   batch_size: 4096
@@ -167,13 +173,16 @@ train:
   gamma: 0.995
   gae_lambda: 0.95
   clip_range: 0.2
-  ent_coef: 0.0             # the std is held in log_std_range instead; v2's
-                            # bonus grew the clipped speed std to 1.48
+  ent_coef: 0.001           # small: the std is bounded by log_std_range now;
+                            # v2's 0.005 grew an unbounded speed std to 1.48
+  reward_scale: 0.1         # rewards as PPO sees them; keeps value targets
+                            # of order 1 (train.py sb3_adapter)
   learning_rate: 3.0e-4
   lr_final_fraction: 0.05
   net_arch: [128, 128]
-  log_std_init: -1.0
-  log_std_range: [-2.5, -0.5]   # std 0.08..0.61 (ppo_policy.py)
+  log_std_init: -1.5            # std 0.22: exploration noise must stay cheap
+                                # next to the time cost (reward.py check)
+  log_std_range: [-2.5, -0.5]   # std 0.08..0.61, sigmoid-bounded (ppo_policy.py)
   eval_every_steps: 2000000
   eval_episodes_per_layout: 12
   # Per obstacle, on the held-out layouts: dealt just before it, does the

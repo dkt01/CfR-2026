@@ -38,8 +38,17 @@ from ppo_policy import SquashedMeanPolicy
 HERE = Path(__file__).resolve().parent
 
 
-def sb3_adapter(env):
-    """ObstacleEnv as the VecEnv stable-baselines3 expects."""
+def sb3_adapter(env, reward_scale=1.0):
+    """ObstacleEnv as the VecEnv stable-baselines3 expects.
+
+    Rewards reach PPO multiplied by `reward_scale`, so the value net's
+    targets are of order 1.  Unscaled, v3's returns sat at -70..-140; Adam
+    moves the output bias only ~lr a step, so the value net made -63 by
+    driving all its tanh units to +/-1 instead, and never predicted anything
+    again (explained variance ~0 for 20M steps).  A constant factor changes
+    no episode's rank, and the episode returns logged come from the env's
+    own info, unscaled.
+    """
     import gymnasium as gym
     from stable_baselines3.common.vec_env import VecEnv
 
@@ -60,6 +69,7 @@ def sb3_adapter(env):
 
         def step_wait(self):
             obs, rew, terminated, truncated, info = self.inner.step(self._actions)
+            rew = rew * reward_scale
             for i in np.flatnonzero(truncated):
                 # PPO bootstraps a cut episode instead of treating it as over.
                 info[i]["TimeLimit.truncated"] = True
@@ -239,7 +249,10 @@ def main():
     train_ids = np.arange(len(layouts.TRAIN_SEEDS))
     held_ids = np.arange(len(layouts.TRAIN_SEEDS), len(seeds))
     n_envs = int(tcfg["n_envs"])
-    train_env = sb3_adapter(ObstacleEnv(cfg, model_, n_envs, train_ids, seed=args.seed))
+    train_env = sb3_adapter(
+        ObstacleEnv(cfg, model_, n_envs, train_ids, seed=args.seed),
+        float(tcfg["reward_scale"]),
+    )
     per = int(tcfg["eval_episodes_per_layout"])
     eval_train = EvalEnv(
         cfg, model_, per * len(train_ids), train_ids, seed=10_001, start_box_only=True

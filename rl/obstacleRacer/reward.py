@@ -21,7 +21,8 @@ numpy-trained policy round the Speed Course:
                 run -- the plant slides the car along what it touched -- but
                 it costs in proportion to how hard
     crash       terminal; an impact that took more than crash_speed off the
-                car in one step, or a rollover
+                car in one step, or a rollover -- or "pinned": stopped within
+                pinned_window_s of touching something, stuck against it
     hoop miss   terminal; passing a hoop outside its posts fails the run
     stall       terminal; stopped for stall_s, or less than
                 progress_window_m of progress in progress_window_s (circling)
@@ -48,6 +49,8 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+
+import math
 
 import numpy as np
 import yaml
@@ -165,6 +168,8 @@ def episode_return(
         total += float(r["finish"]) + float(r["finish_pace"]) * max(
             0.0, float(r["target_lap_s"]) - lap_s
         )
+    elif outcome == "pinned":
+        total += float(r["crash"])
     elif outcome in ("crash", "hoop_miss", "stall", "off_course"):
         total += float(r[outcome])
     del dt
@@ -186,6 +191,9 @@ def assert_episode_incentives(cfg, lap=74.0):
     stand = E(0.0, 0.0, "stall", 0)
     crash_early = E(2.0, 2.0, "crash", 0)
     try_10m = E(2.0, 10.0, "crash", 0)
+    # 10 m, then into a wall: gently (stuck against it) or hard (a crash).
+    wall_soft = E(2.0, 10.0, "pinned", 0, bumps=[0.8])
+    wall_hard = E(2.0, 10.0, "crash", 0, bumps=[float(cfg["env"]["crash_speed"])])
     # At a hoop: thread it, graze a post threading it, go round it (a miss,
     # the run ends), or stop short of it.  Each continuation is the same
     # 10 m more of lap, so only the hoop's own terms separate them.
@@ -205,6 +213,10 @@ def assert_episode_incentives(cfg, lap=74.0):
         "the hardest bump the car survives costs less than a crash": worst_bump
         < -float(r["crash"]),
         "driving 10 m then crashing > standing still": try_10m > stand,
+        "stuck against a wall after a gentle touch > hitting it hard": wall_soft
+        > wall_hard,
+        "stuck against a wall > parked in the open": wall_soft
+        > E(2.0, 10.0, "stall", 0),
         "driving 10 m then crashing > crashing at once": try_10m > crash_early,
         "standing still < 0": stand < 0,
         "threading a hoop > going round it": thread > go_round,
@@ -214,6 +226,23 @@ def assert_episode_incentives(cfg, lap=74.0):
         "hoop alignment is smaller than the hoop itself": float(r["hoop_align"])
         < float(r["hoop"]),
     }
+    # The smoothness terms are charged on the sampled action, so the policy
+    # pays them on its own exploration noise too.  Independent per-step noise
+    # of std s gives E[d^2] = 2 s^2 and E[dd^2] = 6 s^2; at the starting std
+    # that must cost well under the time cost, or driving at all loses and
+    # the cheapest escape is steering pinned at full lock, past the noise.
+    s = math.exp(float(cfg["train"]["log_std_init"]))
+    dt = 1.0 / float(cfg["env"]["control_hz"])
+    s_steer = s * float(cfg["prior"]["residual_scale"])
+    s_speed = s * (float(cfg["env"]["v_cap"]) + float(cfg["env"]["v_reverse"])) / 2
+    noise_tax = (
+        float(r["steer_rate"]) * 2 * s_steer**2
+        + float(r["steer_jerk"]) * 6 * s_steer**2
+        + float(r["speed_rate"]) * 2 * s_speed**2
+    ) / dt**2
+    checks["exploration noise costs under half the time cost"] = (
+        noise_tax < 0.5 * float(r["time"])
+    )
     failed = [k for k, ok in checks.items() if not ok]
     if failed:
         raise AssertionError("reward incentives inverted: " + "; ".join(failed))
