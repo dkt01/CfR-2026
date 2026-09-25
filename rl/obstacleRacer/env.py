@@ -198,6 +198,7 @@ class ObstacleEnv:
         # (the per-obstacle eval); None deals as usual.
         self.forced_lay = None
         self.forced_s = None
+        self.forced_floor = None  # with forced_s: never dealt behind these
         self.dither = z.copy()  # the wander on a slow speed target, m/s
         self.dither_scale = np.ones(n)
         self.prev_speed_cmd = z.copy()
@@ -381,17 +382,18 @@ class ObstacleEnv:
                 pick = self.rng.random()
                 p_fail = float(e.get("fail_start_prob", 0.0)) if n_fail else 0.0
                 p_sec = float(e.get("section_start_prob", 0.0))
-                target = None
+                target, floor = None, -np.inf
                 if pick < p_fail:
                     back = self.rng.uniform(*e["fail_backoff_m"])
                     target = self.fail_s[lay[i], self.rng.integers(n_fail)] - back
                 elif pick < p_fail + p_sec:
-                    target = self.section_target(lay[i])
+                    target, floor = self.section_target(lay[i])
                 if self.forced_s is not None:
                     target = self.forced_s[idx[i]]
+                    if self.forced_floor is not None:
+                        floor = self.forced_floor[idx[i]]
                 if target is not None:
-                    j = np.searchsorted(table, target, side="right") - 1
-                    s0[i] = table[max(j, 0)]
+                    s0[i] = self.snap(lay[i], target, floor)
                 x[i], y[i], z[i], yaw[i] = self.lines.lines[lay[i]].pose_at(s0[i])
                 speed[i] = self.rng.uniform(*e["dealt_speed"])
         # A stuck start goes exactly where the car stopped: noise could put
@@ -488,18 +490,51 @@ class ObstacleEnv:
         p = (1.0 - mix) * rate / rate.sum() + mix / len(cands)
         return cands, p
 
-    def section_target(self, lay, zone=None):
-        """An arc length a few meters before an obstacle on layout `lay`.
+    def snap(self, lay, target, floor=-np.inf):
+        """The dealable arc length at or before `target` on layout `lay`,
+        unless that is behind `floor`: then the first one past the floor."""
+        table = self.deal[lay]
+        j = np.searchsorted(table, target, side="right") - 1
+        if j < 0 or table[j] < floor:
+            j = min(np.searchsorted(table, floor), len(table) - 1)
+        return table[max(j, 0)]
+
+    def section_floor(self, lay, zone):
+        """Where the obstacle before `zone` ends on layout `lay` (-inf if none).
+
+        A section start must not be dealt behind this: the lanes between
+        obstacles are short (0.2-0.7 m before the buckets and the hoops), so
+        a start a few meters back lands inside the obstacle before.  v5 dealt
+        397 of 400 bucket starts inside the Wide Section and most hoop starts
+        inside the buckets, so the buckets and hoops were practiced only by
+        the few cars that got through what came first.
+        """
+        entry = self.section_s[lay][zone][0]
+        ends = [
+            b for z, (a, b) in self.section_s[lay].items() if z != zone and b <= entry
+        ]
+        return max(ends, default=-np.inf)
+
+    def section_target(self, lay, zone=None, back=None, any_hoop=True):
+        """(arc length, floor): a few meters before an obstacle on layout `lay`.
 
         The obstacle is `zone`, or one picked by section_weights from those
-        the line passes through.
+        the line passes through.  The start is never behind the end of the
+        obstacle before it (section_floor).  For the hoops, it goes before
+        one of the three hoops at random (any_hoop), so the second and third
+        are practiced without first threading the one before.
         """
         spans = self.section_s[lay]
         if zone is None:
             cands, p = self.section_weights(lay)
             zone = cands[self.rng.choice(len(cands), p=p)]
-        back = self.rng.uniform(*self.cfg["env"]["section_backoff_m"])
-        return spans[zone][0] - back
+        if back is None:
+            back = self.rng.uniform(*self.cfg["env"]["section_backoff_m"])
+        entry = spans[zone][0]
+        if any_hoop and self.zone_names[zone] == "hoops":
+            entry = max(entry, float(self.rng.choice(self.hoop_s[lay])))
+        floor = self.section_floor(lay, zone)
+        return max(entry - back, floor), floor
 
     # ---------------------------------------------------------------- step
 

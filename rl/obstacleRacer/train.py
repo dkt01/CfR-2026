@@ -118,6 +118,10 @@ SECTION_TIME_S = 30.0
 def section_eval(env, predict, per_layout):
     """Per obstacle: dealt SECTION_BACKOFF_M before it, does the car get past?
 
+    Never dealt behind the end of the obstacle before (env.section_floor), so
+    each rate is that obstacle alone; before v5 at 22M, the buckets' and the
+    hoops' rates also charged the Wide Section's and the buckets' failures.
+
     One car per (layout, obstacle, repeat).  A car clears the obstacle once it
     has driven SECTION_PAST_M beyond the obstacle's end; an episode ending
     first, or SECTION_TIME_S running out, is a fail.  Returns
@@ -133,9 +137,11 @@ def section_eval(env, predict, per_layout):
     lays = np.array([p[0] for p in plan])
     zones = np.array([p[1] for p in plan])
     env.forced_lay = lays
-    env.forced_s = np.array(
-        [env.section_s[lay][z][0] - SECTION_BACKOFF_M for lay, z in plan]
-    )
+    starts = [
+        env.section_target(lay, z, SECTION_BACKOFF_M, any_hoop=False) for lay, z in plan
+    ]
+    env.forced_s = np.array([s for s, _ in starts])
+    env.forced_floor = np.array([f for _, f in starts])
     obs = env.reset()
     ends = np.array([env.section_s[lay][z][1] for lay, z in plan])
     need = np.mod(ends - env.s_start, env.loop[lays]) + SECTION_PAST_M

@@ -579,6 +579,36 @@ def coverage_checks(cfg, model):
     )
     env.practice_met[:] = 0.0
     env.practice_fail[:] = 0.0
+    # A section start for an obstacle is not inside another one: v5 dealt
+    # its bucket starts inside the Wide Section and its hoop starts inside
+    # the buckets, so neither got practiced until what came before was.
+    # Both the training deal (any hoop) and the eval deal (2 m back).
+    strays, hoops_seen = Counter(), set()
+    hoops = env.zone_names.index("hoops")
+    for k in range(len(env.section_s)):
+        for z in env.section_s[k]:
+            for trial in range(40):
+                any_hoop = trial % 2 == 0
+                back = None if any_hoop else 2.0
+                target, floor = env.section_target(k, z, back, any_hoop=any_hoop)
+                s0 = env.snap(k, target, floor)
+                i = env.lines.index_at(np.array([k]), np.array([s0]))[0]
+                at = int(env.zone_of[k, i])
+                if at in env.section_s[k] and at != z:
+                    strays[f"{env.zone_names[z]} in {env.zone_names[at]}"] += 1
+                if z == hoops and any_hoop:
+                    ahead = env.hoop_s[k] - s0
+                    hoops_seen.add(int(np.argmin(np.where(ahead >= 0, ahead, np.inf))))
+    failures += check(
+        "section starts land outside every other obstacle",
+        not strays,
+        str(dict(strays)),
+    )
+    failures += check(
+        "hoop section starts go before each of the three hoops",
+        len(hoops_seen) == 3,
+        f"nearest hoops {sorted(hoops_seen)}",
+    )
     # An obstacle is where the car drives through it, not every point inside
     # its 2D outline: each is one unbroken stretch of the line, and where the
     # deck crosses over the tunnel the label follows the line's height.
