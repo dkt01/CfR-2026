@@ -876,6 +876,9 @@ def receiveData(
 ):
     oldCB = xbee._callback
     oldTC = xbee._thread_continue
+    # S1 firmware sends an empty IS success response, followed by a separate
+    # local 0x83 I/O sample.  Only accept that sample after our IS response.
+    pendingLocalSampleUntil = 0.0
     xbee._callback = True
     # XBee tests this attribute directly rather than calling it.  A lambda is
     # always truthy, so it prevents wait_read_frame() from seeing shutdown.
@@ -895,10 +898,35 @@ def receiveData(
                         robotState.tx_ack = robotState.tx_status == 0
                     cycleMonitor.record("comm-tx-ack")
                 elif data["id"] == "at_response":
-                    if data["frame_id"] == AT_FRAME_ID and apply_gpio_sample(
-                        data["parameter"], inputState, inputStateMutex, gpioTime
+                    if data["frame_id"] == AT_FRAME_ID and data.get("command") == b"IS":
+                        pendingLocalSampleUntil = 0.0
+                        if data.get("status") == b"\x00":
+                            if "parameter" in data:
+                                if apply_gpio_sample(
+                                    data["parameter"],
+                                    inputState,
+                                    inputStateMutex,
+                                    gpioTime,
+                                ):
+                                    cycleMonitor.record("comm-gpio")
+                            else:
+                                pendingLocalSampleUntil = (
+                                    time.monotonic() + TIMEOUT_XBEE_GPIO
+                                )
+                elif data["id"] == "rx_io_data":
+                    # Local forced samples have a zero source, RSSI and options.
+                    # An unrelated RF I/O sample must never clear the E-Stop.
+                    if (
+                        time.monotonic() < pendingLocalSampleUntil
+                        and data.get("source_addr") == b"\x00\x00"
+                        and data.get("rssi") == b"\x00"
+                        and data.get("options") == b"\x00"
                     ):
-                        cycleMonitor.record("comm-gpio")
+                        pendingLocalSampleUntil = 0.0
+                        if apply_gpio_sample(
+                            data.get("samples"), inputState, inputStateMutex, gpioTime
+                        ):
+                            cycleMonitor.record("comm-gpio")
                 elif deserializeState(
                     data["rf_data"], robotState, robotStateMutex, recvTime
                 ):
