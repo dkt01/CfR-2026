@@ -330,8 +330,12 @@ class RunRecording:
         ok &= np.isfinite(yaw)
         self.rec.log(
             "pose2d/car",
-            rr.Arrows3D(origins=[[0, 0, 0.02]], vectors=[[0.6, 0, 0]],
-                        colors=[SERIES[7]], radii=0.04),
+            rr.Arrows3D(
+                origins=[[0, 0, 0.02]],
+                vectors=[[0.6, 0, 0]],
+                colors=[SERIES[7]],
+                radii=0.04,
+            ),
             static=True,
         )
         half = yaw[ok] / 2
