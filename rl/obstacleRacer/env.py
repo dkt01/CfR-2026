@@ -3,20 +3,24 @@
 Per control step (20 Hz):
 
   1. the policy's action becomes a DriveCommand (observation.action_to_command:
-     steering = prior + residual, speed in [0, v_cap]) and enters the plant's
-     dead-time history;
+     steering = prior + residual, speed in [-v_reverse, v_cap]) and enters
+     the plant's dead-time history, with the throttle dither a slow target
+     gets on the car;
   2. the plant runs 10 substeps -- wheels on the collision surface, springs,
-     body pitch and roll, traction from load -- checking the chassis against
-     obstacles every other substep;
+     body pitch and roll, traction from load, reverse as the Arduino does it
+     -- checking the chassis against obstacles every other substep and
+     sliding a car that touched one back out along it;
   3. privileged bookkeeping: arc length along the layout's centerline, hoop
-     crossings (hoop_monitor.py's gate test), clearance, terminations;
+     crossings (hoop_monitor.py's gate test), clearance, terminations (an
+     impact over crash_speed is a crash; a touch is only a cost);
   4. the sensor model reads the course from where the body put the camera,
      and the next observation frame is built exactly as the car's node builds
      it.
 
 Episodes start in the start box ((-0.7, 0), yaw 0, +/-0.1 m in x and y,
 +/-5 deg, from rest) or, for training coverage, dealt part way round with the
-same noise.  Every episode is one full lap from wherever it started: progress
+same noise: before a recent failure, before an obstacle picked uniformly from
+all of them, or anywhere.  Every episode is one full lap from wherever it started: progress
 wraps round the loop at the timing line, all three hoops have to be threaded
 during the episode, and the finish counts only once the car is back past its
 own start point (and, from the start box, over the timing line).
@@ -124,6 +128,7 @@ class ObstacleEnv:
         self._loop_geometry()
         self._hoop_geometry()
         self._deal_table()
+        self._section_geometry()
         self.stack = O.Stack(n, int(e["frame_stack"]))
         self.obs_dim = O.FRAME_DIM * int(e["frame_stack"])
         self.act_dim = 2
@@ -138,6 +143,7 @@ class ObstacleEnv:
         self.hoop_state = np.zeros((n, 3), np.int64)
         self.hoop_u = np.zeros((n, 3))
         self.stall_t = z.copy()
+        self.hoop_phi = z.copy()  # hoop-alignment potential, reward.py
         self.progress_mark = np.zeros((n, 2))  # (time, s) of the window start
         self.prev_action = np.zeros((n, 2))
         self.prev_steer = z.copy()
@@ -150,6 +156,20 @@ class ObstacleEnv:
         self.speed_noise = z.copy()
         self.start_kind = np.zeros(n, np.int64)
         self.attitude = np.zeros((n, len(self.zone_names), 2))
+        # Per car, a layout and arc length to start at instead of dealing
+        # (the per-obstacle eval); None deals as usual.
+        self.forced_lay = None
+        self.forced_s = None
+        self.dither = z.copy()  # the wander on a slow speed target, m/s
+        self.dither_scale = np.ones(n)
+        self.prev_speed_cmd = z.copy()
+        self.touches = np.zeros(n, np.int64)
+        self.v_lost = z.copy()
+        # Obstacles met this episode, and, over training, how often each was
+        # met and failed at (read and cleared by train.py per eval).
+        self.visited = np.zeros((n, len(self.zone_names)), bool)
+        self.zone_attempts = np.zeros(len(self.zone_names), np.int64)
+        self.zone_fails = np.zeros(len(self.zone_names), np.int64)
 
     # ------------------------------------------------------------ geometry
 
@@ -168,6 +188,28 @@ class ObstacleEnv:
             j = int(np.argmin(np.linalg.norm(head - line.points[-1], axis=1)))
             self.wrap_s[k] = line.arc[j]
         self.loop = self.lines.lap_length - self.wrap_s
+
+    def _section_geometry(self):
+        """Per layout: where each named obstacle's stretch of line starts and ends.
+
+        `section_s[k][z]` is (s_in, s_out) for zone z on layout k, or absent
+        where the line never enters it.  The lanes between obstacles
+        ('after_*') and the start are not sections.
+        """
+        self.sections = [
+            z
+            for z, name in enumerate(self.zone_names)
+            if name != "start" and not name.startswith("after_")
+        ]
+        self.section_s = []
+        for k, line in enumerate(self.lines.lines):
+            zones = self.zone_of[k, : len(line.points)]
+            spans = {}
+            for z in self.sections:
+                hit = np.flatnonzero(zones == z)
+                if len(hit):
+                    spans[z] = (float(line.arc[hit[0]]), float(line.arc[hit[-1]]))
+            self.section_s.append(spans)
 
     def _hoop_geometry(self):
         """Per layout: hoop centers, span axes, travel normals, and arc lengths."""
@@ -241,8 +283,14 @@ class ObstacleEnv:
         e = self.cfg["env"]
         k = len(idx)
         if lay is None:
-            lay = self._pick_layouts(k)
+            lay = (
+                self._pick_layouts(k)
+                if self.forced_lay is None
+                else self.forced_lay[idx]
+            )
         box = self.start_box_only | (self.rng.random(k) < float(e["start_box_prob"]))
+        if self.forced_s is not None:
+            box[:] = False
         xy = float(e["start_xy_noise"])
         yawn = math.radians(float(e["start_yaw_noise_deg"]))
         x = np.empty(k)
@@ -259,9 +307,18 @@ class ObstacleEnv:
                 table = self.deal[lay[i]]
                 s0[i] = table[self.rng.integers(len(table))]
                 n_fail = min(self.fail_n[lay[i]], self.fail_s.shape[1])
-                if n_fail and self.rng.random() < float(e.get("fail_start_prob", 0.0)):
+                pick = self.rng.random()
+                p_fail = float(e.get("fail_start_prob", 0.0)) if n_fail else 0.0
+                p_sec = float(e.get("section_start_prob", 0.0))
+                target = None
+                if pick < p_fail:
                     back = self.rng.uniform(*e["fail_backoff_m"])
                     target = self.fail_s[lay[i], self.rng.integers(n_fail)] - back
+                elif pick < p_fail + p_sec:
+                    target = self.section_target(lay[i])
+                if self.forced_s is not None:
+                    target = self.forced_s[idx[i]]
+                if target is not None:
                     j = np.searchsorted(table, target, side="right") - 1
                     s0[i] = table[max(j, 0)]
                 x[i], y[i], z[i], yaw[i] = self.lines.lines[lay[i]].pose_at(s0[i])
@@ -301,6 +358,7 @@ class ObstacleEnv:
         self.progress_mark[idx] = 0.0
         self.hoop_state[idx] = 0
         self.hoop_u[idx] = self._hoop_u(idx)
+        self.hoop_phi[idx] = 0.0
         self.prev_action[idx] = 0.0
         self.prev_steer[idx] = 0.0
         self.prev_dsteer[idx] = 0.0
@@ -309,14 +367,21 @@ class ObstacleEnv:
         for v in self.terms.values():
             v[idx] = 0.0
         self.attitude[idx] = 0.0
+        self.dither[idx] = 0.0
+        self.prev_speed_cmd[idx] = self.plant.state[idx, P.S_V]
+        self.touches[idx] = 0
+        self.v_lost[idx] = 0.0
+        self.visited[idx] = False
         self.start_kind[idx] = np.where(box, 0, 1)
         r = self.cfg["randomize"]
         if r["enabled"]:
             self.yaw_noise[idx] = self.rng.uniform(*r["yaw_rate_noise"], len(idx))
             self.speed_noise[idx] = self.rng.uniform(*r["speed_noise"], len(idx))
+            self.dither_scale[idx] = self.rng.uniform(*r["dither_scale"], len(idx))
         else:
             self.yaw_noise[idx] = 0.0
             self.speed_noise[idx] = 0.0
+            self.dither_scale[idx] = 1.0
 
         scan, gate = self.sensor.read(self.plant.lay, self.plant.state, idx)
         fresh = np.zeros(self.n, bool)
@@ -325,6 +390,19 @@ class ObstacleEnv:
 
     def _pick_layouts(self, k):
         return self.layout_ids[self.rng.integers(len(self.layout_ids), size=k)]
+
+    def section_target(self, lay, zone=None):
+        """An arc length a few meters before an obstacle on layout `lay`.
+
+        The obstacle is `zone`, or one picked uniformly from those the line
+        passes through, so each is practiced equally however far into the
+        lap it sits.
+        """
+        spans = self.section_s[lay]
+        if zone is None:
+            zone = list(spans)[self.rng.integers(len(spans))]
+        back = self.rng.uniform(*self.cfg["env"]["section_backoff_m"])
+        return spans[zone][0] - back
 
     # ---------------------------------------------------------------- step
 
@@ -340,7 +418,10 @@ class ObstacleEnv:
             idx = np.arange(self.n)
         st = self.plant.state[idx]
         k = len(idx)
-        speed = O.tach(st[:, P.S_V] + self.rng.normal(0, 1, k) * self.speed_noise[idx])
+        # The Arduino reports the tachometer's magnitude with its own
+        # direction estimate for the sign.
+        signed = np.abs(st[:, P.S_V]) * np.where(st[:, P.S_DIR] < 0, -1.0, 1.0)
+        speed = O.tach(signed + self.rng.normal(0, 1, k) * self.speed_noise[idx])
         yaw_rate = st[:, P.S_R] + self.rng.normal(0, 1, k) * self.yaw_noise[idx]
         raw = O.prior_steer(scan, gate, yaw_rate, self.cfg)
         prior = O.smooth_prior(
@@ -355,7 +436,7 @@ class ObstacleEnv:
         """Privileged bookkeeping for a step: arc length round the loop, hoops.
 
         Returns (ds, distance off the line, hoops threaded this step, a hoop
-        missed this step).
+        missed this step, the hoop-alignment potential now).
         """
         s_prev = self.s.copy()
         self.idx, self.s, off = self.lines.project(
@@ -388,21 +469,34 @@ class ObstacleEnv:
         self.hoop_u = u
         hoops_now = passed.sum(1)
         hoop_missed = (missed & ~passed).any(1)
-        return ds, off, hoops_now, hoop_missed
+        # Alignment potential: in the last `window` before a hoop not yet
+        # threaded, higher the nearer the car is to its center line.
+        r = self.cfg["reward"]
+        window = float(r["hoop_align_window_m"])
+        cap = float(r["hoop_align_cap_m"])
+        near = (
+            (self.hoop_state == 0) & (u < 0) & (u >= -window) & (w <= HOOP_ATTEMPT_HALF)
+        )
+        phi = (near * (1.0 - np.minimum(w, cap) / cap)).sum(1) * float(r["hoop_align"])
+        return ds, off, hoops_now, hoop_missed, phi
 
     def step(self, action):
         cfg, e = self.cfg, self.cfg["env"]
         action = np.clip(np.asarray(action, np.float64), -1.0, 1.0)
-        steer, speed = O.action_to_command(action, self.prior, cfg)
-        steer, speed = self.plant.push_command(steer, speed)
-        crashed, rolled = self.plant.step(steer, speed, self.substeps)
+        steer, speed_cmd = O.action_to_command(action, self.prior, cfg)
+        steer, speed_cmd = self.plant.push_command(steer, speed_cmd)
+        speed = speed_cmd + self._dither(speed_cmd)
+        touched, lost, rolled = self.plant.step(steer, speed, self.substeps)
+        crashed = lost > float(e["crash_speed"])
+        self.touches += touched
+        self.v_lost += lost
         st = self.plant.state
         lay = self.plant.lay
         self.t += self.dt
-        ds, off, hoops_now, hoop_missed = self._track(st, lay)
+        ds, off, hoops_now, hoop_missed, phi = self._track(st, lay)
 
         # Terminations.
-        v = st[:, P.S_V]
+        v = np.abs(st[:, P.S_V])
         self.stall_t = np.where(
             v < float(e["stall_speed"]), self.stall_t + self.dt, 0.0
         )
@@ -416,6 +510,9 @@ class ObstacleEnv:
             self.dist - self.progress_mark[:, 1] < float(e["progress_window_m"])
         )
         self.progress_mark[due] = np.c_[self.t[due], self.dist[due]]
+        # Circling or edging about without getting anywhere is stopping by
+        # another name: it ends the run the same way.
+        stopped = stalled | no_progress
         timeout = self.t >= float(e["episode_s"])
         crash = crashed | rolled
 
@@ -425,6 +522,13 @@ class ObstacleEnv:
         dsteer = steer - self.prev_steer
         ddsteer = dsteer - self.prev_dsteer
         lap_time = self.t * self.goal / np.maximum(self.dist, 1e-3)
+        # Potential-based shaping, gamma * phi' - phi, with phi' = 0 once the
+        # run is over, so it can steer the car to the hoop's center without
+        # changing which way of driving pays best.
+        over = finished | crash | hoop_missed | stopped | off_course
+        gamma = float(cfg["train"]["gamma"])
+        align = np.where(over, 0.0, gamma * phi) - self.hoop_phi
+        self.hoop_phi = phi
         total, terms = R.step_reward(
             cfg,
             ds,
@@ -434,12 +538,16 @@ class ObstacleEnv:
             lap_time,
             crash,
             hoop_missed,
-            stalled,
+            stopped,
             off_course,
             clearance,
             dsteer,
             ddsteer,
+            lost,
+            speed_cmd - self.prev_speed_cmd,
+            align,
         )
+        self.prev_speed_cmd = speed_cmd
         self.prev_dsteer = dsteer
         self.prev_steer = steer
         self.prev_action = action
@@ -449,6 +557,7 @@ class ObstacleEnv:
 
         # Attitude per zone, for the check that the car is not flat.
         zone = self.zone_of[lay, self.idx]
+        self.visited[all_idx, zone] = True
         ap = np.abs(st[:, P.S_PITCH])
         ar = np.abs(st[:, P.S_ROLL])
         self.attitude[all_idx, zone, 0] = np.maximum(
@@ -458,8 +567,8 @@ class ObstacleEnv:
             self.attitude[all_idx, zone, 1], ar
         )
 
-        terminated = finished | crash | hoop_missed | stalled | off_course
-        truncated = ~terminated & (no_progress | timeout)
+        terminated = finished | crash | hoop_missed | stopped | off_course
+        truncated = ~terminated & timeout
         scan, gate = self.sensor.read(lay, st)
         obs = self.stack.push(self._frame(scan, gate)).copy()
 
@@ -489,6 +598,10 @@ class ObstacleEnv:
             )
             for i in done:
                 infos[i] = self._episode_info(i, causes[i])
+                met = self.visited[i]
+                self.zone_attempts[met] += 1
+                if causes[i] in FAILURES:
+                    self.zone_fails[self.zone_of[lay[i], self.idx[i]]] += 1
                 if not self.start_box_only and causes[i] in FAILURES:
                     L = int(lay[i])
                     self.fail_s[L, self.fail_n[L] % self.fail_s.shape[1]] = self.s[i]
@@ -497,6 +610,22 @@ class ObstacleEnv:
             self._reset_idx(done)
             obs[done] = self.stack.obs[done]
         return obs, total.astype(np.float32), terminated, truncated, infos
+
+    def _dither(self, speed_cmd):
+        """The wander on a slow target: first-order noise, faded out with speed."""
+        e = self.cfg["env"]
+        a = self.dt / (float(e["dither_tau_s"]) + self.dt)
+        # Scaled so the stationary sd is dither_sd whatever the time constant.
+        kick = math.sqrt((2 - a) / a)
+        self.dither += a * (
+            self.rng.normal(0.0, float(e["dither_sd"]) * kick, self.n) - self.dither
+        )
+        lo, hi = float(e["dither_full_below"]), float(e["dither_gone_above"])
+        mag = np.abs(speed_cmd)
+        fade = np.clip((hi - mag) / (hi - lo), 0.0, 1.0)
+        # A zero target is a neutral pulse: nothing to dither.
+        fade = np.where(mag < 0.05, 0.0, fade)
+        return self.dither * fade * self.dither_scale
 
     def _episode_info(self, i, cause):
         lay = int(self.plant.lay[i])
@@ -532,6 +661,8 @@ class ObstacleEnv:
                 ]
             ],
             "min_clearance": float(self.min_clear[i]),
+            "touches": int(self.touches[i]),
+            "v_lost": float(self.v_lost[i]),
             "terms": {k: float(v[i]) for k, v in self.terms.items()},
             "attitude": att,
         }
@@ -541,5 +672,5 @@ class ObstacleEnv:
     def scripted_action(self):
         """The prior alone: zero residual, a fixed cruising throttle."""
         a = np.zeros((self.n, 2))
-        a[:, 1] = 2 * 1.5 / float(self.cfg["env"]["v_cap"]) - 1
+        a[:, 1] = O.speed_to_action(1.5, self.cfg)
         return a

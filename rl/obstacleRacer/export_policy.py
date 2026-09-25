@@ -50,7 +50,13 @@ def main():
     # `in_features` -- indexing it like an array raised TypeError and took a
     # 39-minute training run's export with it.
     obs_dim = int(layers[0].in_features)
-    blob = {"n_layers": len(layers), "obs_dim": obs_dim, "activation": "tanh"}
+    squashed = bool(getattr(model.policy, "squashes_mean", False))
+    blob = {
+        "n_layers": len(layers),
+        "obs_dim": obs_dim,
+        "activation": "tanh",
+        "output": "tanh" if squashed else "clip",
+    }
     for i, layer in enumerate(layers):
         # Transposed once, here, so the runtime is a plain `obs @ w + b`.
         blob[f"w{i}"] = layer.weight.detach().cpu().numpy().T.astype(np.float64)

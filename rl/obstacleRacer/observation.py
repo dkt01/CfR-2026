@@ -17,7 +17,8 @@ Per frame (FRAME_DIM = 49):
     hoop       4  valid, bearing / half-FOV, range / max_range,
                   gate normal relative to heading / (pi/2)
     car wash   4  the same, for the nearest visible arch
-    speed      1  tachometer speed / v_cap (reads 0 below 0.3 m/s)
+    speed      1  ArduinoStatus.speed / v_cap: tachometer magnitude (0 below
+                  0.3 m/s), signed by the speed controller's direction
     yaw rate   1  rad/s / 3
     action     2  previous raw action
     prior      1  the prior's steering command
@@ -51,7 +52,12 @@ def angle_to_command(angle):
 
 
 def tach(speed):
-    """What the hall-sensor tachometer reports for a true ground speed."""
+    """What ArduinoStatus.speed reports for a signed speed.
+
+    The sensor gives the magnitude; the sign is the controller's direction
+    estimate, so the caller passes |v| times that estimate, not the true
+    signed velocity.
+    """
     speed = np.asarray(speed, dtype=np.float64)
     return np.where(np.abs(speed) < TACH_FLOOR, 0.0, speed)
 
@@ -194,12 +200,26 @@ def frame(scan, gate, speed_meas, yaw_rate_meas, prev_action, prior, cfg):
 
 
 def action_to_command(action, prior, cfg):
-    """Raw policy action (B, 2) -> (steering command, target speed m/s)."""
+    """Raw policy action (B, 2) -> (steering command, target speed m/s).
+
+    Speed runs linearly from -v_reverse at -1 to v_cap at +1.  A reverse
+    target while rolling forward is the Arduino's cue to coast to a stop
+    (it drives backwards only once the wheels read stopped).
+    """
     action = np.clip(np.asarray(action, dtype=np.float64), -1.0, 1.0)
     scale = float(cfg["prior"]["residual_scale"])
     steer = np.clip(prior + scale * action[:, 0], -1.0, 1.0)
-    speed = float(cfg["env"]["v_cap"]) * 0.5 * (action[:, 1] + 1.0)
+    lo = -float(cfg["env"].get("v_reverse", 0.0))
+    hi = float(cfg["env"]["v_cap"])
+    speed = lo + (hi - lo) * 0.5 * (action[:, 1] + 1.0)
     return steer, speed
+
+
+def speed_to_action(speed, cfg):
+    """Inverse of action_to_command's speed mapping: m/s -> action[1]."""
+    lo = -float(cfg["env"].get("v_reverse", 0.0))
+    hi = float(cfg["env"]["v_cap"])
+    return 2.0 * (np.asarray(speed, dtype=np.float64) - lo) / (hi - lo) - 1.0
 
 
 class Stack:

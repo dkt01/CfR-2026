@@ -7,6 +7,24 @@ asymmetric steering, servo lag, chassis yaw lag, understeer and tire scrub,
 per-episode domain randomization -- because that chain is what made a policy
 trained in numpy drive Gazebo's Speed Course.
 
+Reverse follows the Arduino's SpeedController (README, Speed Control) and
+the 2026-09 characterization (docs/characterization-results.md): the
+tachometer cannot see direction, so a reverse target while rolling forward
+is tracked as zero and the car COASTS -- there is no braking (every Brake
+Limit tried stopped the car slower than coasting, section 3).  The
+direction changes once the wheels read stopped: the tachometer times out
+0.4 s after the car drops under its 0.3 m/s floor, and the controller waits
+0.1 s more (`reverse_wait`, 0.5 s from the floor).  Coast drag and the
+feedforward are the same both ways (3% apart, sections 1-2), so reverse
+drives on the forward curves.  The same holds going from reverse to forward.
+
+Touching an obstacle does not end the car.  The chassis is checked every
+other substep; a car that has moved into something is put back where it was
+clear and slides along whichever axis of its motion stays clear, keeping the
+share of its speed that motion carries (a glancing touch on the course's
+axis-aligned walls costs little, a head-on one stops it).  The speed lost is
+reported, and the env decides what counts as a crash.
+
 What this adds is the third dimension, because the obstacle course is not
 flat and the car does not stay level on it:
 
@@ -107,7 +125,9 @@ S_W = 18  # 4 wheel-center heights last substep
 S_LOAD = 22  # 4 normal loads
 S_GROUND_PITCH, S_GROUND_ROLL = 26, 27
 S_SCRAPE = 28  # chassis-on-road contact this step (bottoming out)
-N_STATE = 29
+S_DIR = 29  # +1 driving forward, -1 in reverse (the controller's belief)
+S_STOP_T = 30  # time the wheels have read stopped
+N_STATE = 31
 
 # Parameter layout: one float64 row per car, drawn per episode.
 P_DEAD, P_F0, P_F1, P_ACCEL, P_SLEW, P_UNDER, P_SCRUB = 0, 1, 2, 3, 4, 5, 6
@@ -121,7 +141,11 @@ P_GAIN, P_ASYM, P_OFFSET, P_LIMIT, P_DROPOUT, P_YAW_TAU, P_STEER_TAU = (
     13,
 )
 P_MU_SCALE, P_SPRING_SCALE, P_DAMP_SCALE = 14, 15, 16
-N_PARAM = 17
+P_REV_WAIT = 17
+N_PARAM = 18
+# The tachometer's floor: below it no revolution arrives inside the 400 ms
+# timeout, and reverse_wait counts from here.
+STOPPED_V = 0.30
 
 
 @nb.njit(cache=True)
@@ -210,8 +234,8 @@ def _car_substep(SUP, L, s, q, steer_cmd, speed_cmd, dt, max_speed, steer_slew):
         forces[i] = f
         # How steeply this tire's center is being lifted per meter of
         # travel: the slope it is climbing, including lips and bumps.
-        if load > 0.0 and v > 0.05:
-            slope = (w - s[S_W + i]) / (v * dt)
+        if load > 0.0 and abs(v) > 0.05:
+            slope = (w - s[S_W + i]) / (abs(v) * dt)
             slope = min(max(slope, -3.0), 3.0)
             grade_force += load * slope
         s[S_W + i] = w
@@ -230,24 +254,39 @@ def _car_substep(SUP, L, s, q, steer_cmd, speed_cmd, dt, max_speed, steer_slew):
     s[S_GROUND_ROLL] = math.atan2(w_left - w_right, 2 * HALF_TRACK)
 
     # ---- longitudinal: bridge slew, closed-loop speed, no brakes ----
-    want = min(max(speed_cmd, 0.0), max_speed)
+    want = min(max(speed_cmd, -max_speed), max_speed)
     step = q[P_SLEW] * dt
     s[S_TARGET] += min(max(want - s[S_TARGET], -step), step)
+    # Direction: the controller keeps the direction it last drove, and a
+    # target the other way is a zero target until the wheels read stopped.
+    if abs(v) < STOPPED_V:
+        s[S_STOP_T] += dt
+    else:
+        s[S_STOP_T] = 0.0
+    d = s[S_DIR]
+    against = s[S_TARGET] * d < 0.0
+    if against and s[S_STOP_T] >= q[P_REV_WAIT]:
+        d = -d
+        s[S_DIR] = d
+        against = False
+    # Speed in the driving direction, u >= 0.
+    u = max(v * d, 0.0)
+    target_u = 0.0 if against else s[S_TARGET] * d
     # The motor pushes only through loaded tires.
     traction = mu_load / TOTAL_MASS
     accel_limit = min(q[P_ACCEL], traction)
-    coast = q[P_F0] + q[P_F1] * v
-    delta = s[S_TARGET] - v
+    coast = q[P_F0] + q[P_F1] * u
+    delta = target_u - u
     if total_load <= 0.0:
-        dv = -coast * dt  # airborne: nothing to push on
+        du = -coast * dt  # airborne: nothing to push on
     elif delta > 0:
-        dv = min(delta, accel_limit * dt)
+        du = min(delta, accel_limit * dt)
     else:
-        dv = max(delta, -coast * dt)
+        du = max(delta, -coast * dt)
     # Climbing (or descending) resistance, from the loaded tires.
-    a_grade = -grade_force / TOTAL_MASS
-    dv += a_grade * dt
-    v_new = min(max(v + dv, 0.0), max_speed)
+    du -= grade_force / TOTAL_MASS * dt
+    u_new = min(max(u + du, 0.0), max_speed)
+    v_new = u_new * d
     a_x_body = (v_new - v) / dt
     v = v_new
     s[S_V] = v
@@ -267,8 +306,8 @@ def _car_substep(SUP, L, s, q, steer_cmd, speed_cmd, dt, max_speed, steer_slew):
         beta = dt / (q[P_YAW_TAU] + dt)
         s[S_R] += beta * (kin - s[S_R])
         # The tires cannot hold more than mu * load of cornering.
-        if v > 0.1:
-            lim = cap / v
+        if abs(v) > 0.1:
+            lim = cap / abs(v)
             s[S_R] = min(max(s[S_R], -lim), lim)
     # Gravity across the car on a rolled surface (the bank).
     a_g = -G * math.sin(s[S_GROUND_ROLL])
@@ -340,15 +379,20 @@ def control_period(
 
     The command enters each car's history now and reaches its wheels
     `dead_time` later; the chassis is checked against obstacles every
-    `check_every` substeps.  Returns (crashed, rolled).
+    `check_every` substeps, and a car found inside something is put back
+    (`_resolve_contact`).  Returns (touched, speed lost to contact, rolled).
     """
     n = st.shape[0]
     hlen = hist.shape[1]
-    crashed = np.zeros(n, np.bool_)
+    touched = np.zeros(n, np.bool_)
+    lost = np.zeros(n)
     rolled = np.zeros(n, np.bool_)
     for k in nb.prange(n):
         delay = min(max(int(p[k, P_DEAD] / dt), 0), hlen - 1)
         h = head
+        clear_x = st[k, S_X]
+        clear_y = st[k, S_Y]
+        clear_yaw = st[k, S_YAW]
         for i in range(substeps):
             hist[k, h, 0] = steer[k]
             hist[k, h, 1] = speed[k]
@@ -366,11 +410,56 @@ def control_period(
             )
             h = (h + 1) % hlen
             if (i + 1) % check_every == 0 or i == substeps - 1:
-                if not crashed[k] and _outline_hits(OBS, lay[k], st[k], 0.0, 0.03):
-                    crashed[k] = True
+                if _outline_hits(OBS, lay[k], st[k], 0.0, 0.03):
+                    touched[k] = True
+                    lost[k] += _resolve_contact(
+                        OBS, lay[k], st[k], clear_x, clear_y, clear_yaw
+                    )
+                clear_x = st[k, S_X]
+                clear_y = st[k, S_Y]
+                clear_yaw = st[k, S_YAW]
         if abs(st[k, S_PITCH]) > ROLLOVER_RAD or abs(st[k, S_ROLL]) > ROLLOVER_RAD:
             rolled[k] = True
-    return crashed, rolled
+    return touched, lost, rolled
+
+
+@nb.njit(cache=True)
+def _resolve_contact(OBS, L, s, x0, y0, yaw0):
+    """Put a car that has moved into an obstacle back, sliding if it can.
+
+    (x0, y0, yaw0) is where it last checked clear.  Its motion since is tried
+    along x alone and along y alone, the longer first, from the clear pose's
+    heading; the first that stays clear is kept, with the share of the speed
+    that component carries.  If neither does, it goes back to the clear pose
+    and stops.  Either way the tires' sideways slip and the yaw rate die in
+    the impact.  Returns the speed lost.
+    """
+    dx = s[S_X] - x0
+    dy = s[S_Y] - y0
+    d = math.hypot(dx, dy)
+    v0 = abs(s[S_V])
+    keep = 0.0
+    fx = x0
+    fy = y0
+    for trial in range(2):
+        along_x = (trial == 0) == (abs(dx) >= abs(dy))
+        tx = x0 + dx if along_x else x0
+        ty = y0 if along_x else y0 + dy
+        s[S_X] = tx
+        s[S_Y] = ty
+        s[S_YAW] = yaw0
+        if d > 1e-9 and not _outline_hits(OBS, L, s, 0.0, 0.03):
+            keep = abs(dx if along_x else dy) / d
+            fx = tx
+            fy = ty
+            break
+    s[S_X] = fx
+    s[S_Y] = fy
+    s[S_YAW] = yaw0
+    s[S_V] *= keep
+    s[S_VY] = 0.0
+    s[S_R] = 0.0
+    return v0 - abs(s[S_V])
 
 
 @nb.njit(cache=True)
@@ -511,6 +600,7 @@ class Plant:
             P_MU_SCALE: 1.0,
             P_SPRING_SCALE: 1.0,
             P_DAMP_SCALE: 1.0,
+            P_REV_WAIT: p["reverse_wait"],
         }
 
     def sample_parameters(self, idx):
@@ -540,6 +630,7 @@ class Plant:
         pr[idx, P_MU_SCALE] = u(*r["mu_scale"], k)
         pr[idx, P_SPRING_SCALE] = u(*r["spring_scale"], k)
         pr[idx, P_DAMP_SCALE] = u(*r["damping_scale"], k)
+        pr[idx, P_REV_WAIT] = u(*r["reverse_wait"], k)
 
     def reset(self, idx, lay, x, y, z, yaw, speed):
         """Place cars `idx`, drop them onto the course, and settle them."""
@@ -557,6 +648,7 @@ class Plant:
         settle(self.SUP, self.lay[idx], st, self.params[idx], self.dt, 120)
         st[:, S_V] = speed
         st[:, S_TARGET] = speed
+        st[:, S_DIR] = 1.0
         self.state[idx] = st
         self.history[idx] = 0.0
         self.history[idx, :, 1] = (
@@ -574,8 +666,8 @@ class Plant:
         return steer, speed
 
     def step(self, steer, speed, substeps: int):
-        """One control period; returns (crashed, rolled) per car."""
-        crashed, rolled = control_period(
+        """One control period; returns (touched, speed lost, rolled) per car."""
+        touched, lost, rolled = control_period(
             self.SUP,
             self.OBS,
             self.lay,
@@ -592,4 +684,4 @@ class Plant:
             2,
         )
         self.head = (self.head + substeps) % self.hist_len
-        return crashed, rolled
+        return touched, lost, rolled

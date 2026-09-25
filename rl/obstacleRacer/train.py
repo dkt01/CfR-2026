@@ -7,10 +7,14 @@
 
 Every evaluation drives deterministic episodes from the start box (+/-0.1 m,
 +/-5 deg, from rest) on the ten TRAINING layouts and on the four HELD-OUT
-ones, and appends a record to <dir>/history.json -- the file the rl-train
-skill's tui.py watches.  The best model is the one that finishes the most
-held-out runs, then goes furthest on them, then laps quickest: a policy that
-only knows its ten courses is not the one to take to the event.
+ones, plus a per-obstacle check on the held-out layouts (dealt 2 m before
+each obstacle: does the car get through it?), and appends a record to
+<dir>/history.json -- the file the rl-train skill's tui.py watches.  The
+record also carries, from the training rollouts, how often each obstacle was
+met and failed at.  The best model is the one that finishes the most
+held-out runs, then scores best on held-out progress and obstacles cleared,
+then laps quickest: a policy that only knows its ten courses is not the one
+to take to the event.
 """
 
 from __future__ import annotations
@@ -29,6 +33,7 @@ import course_model
 import layouts
 import reward
 from env import ObstacleEnv
+from ppo_policy import SquashedMeanPolicy
 
 HERE = Path(__file__).resolve().parent
 
@@ -94,6 +99,54 @@ def evaluate(env, predict, per_layout):
     return out[:want]
 
 
+SECTION_BACKOFF_M = 2.0
+SECTION_PAST_M = 1.5  # past the obstacle's end: a hoop missed is due by 1 m
+SECTION_TIME_S = 30.0
+
+
+def section_eval(env, predict, per_layout):
+    """Per obstacle: dealt SECTION_BACKOFF_M before it, does the car get past?
+
+    One car per (layout, obstacle, repeat).  A car clears the obstacle once it
+    has driven SECTION_PAST_M beyond the obstacle's end; an episode ending
+    first, or SECTION_TIME_S running out, is a fail.  Returns
+    {obstacle: share cleared}.
+    """
+    plan = [
+        (lay, z)
+        for lay in env.layout_ids
+        for z in env.section_s[lay]
+        for _ in range(per_layout)
+    ]
+    assert len(plan) == env.n, (len(plan), env.n)
+    lays = np.array([p[0] for p in plan])
+    zones = np.array([p[1] for p in plan])
+    env.forced_lay = lays
+    env.forced_s = np.array(
+        [env.section_s[lay][z][0] - SECTION_BACKOFF_M for lay, z in plan]
+    )
+    obs = env.reset()
+    ends = np.array([env.section_s[lay][z][1] for lay, z in plan])
+    need = np.mod(ends - env.s_start, env.loop[lays]) + SECTION_PAST_M
+    cleared = np.full(env.n, np.nan)
+    for _ in range(int(SECTION_TIME_S * float(env.cfg["env"]["control_hz"]))):
+        obs, _, _, _, info = env.step(predict(obs))
+        open_ = np.isnan(cleared)
+        cleared[open_ & (env.dist >= need)] = 1.0
+        for i in np.flatnonzero(open_):
+            if info[i] and np.isnan(cleared[i]):
+                cleared[i] = 1.0 if info[i]["outcome"] == "finish" else 0.0
+        if not np.isnan(cleared).any():
+            break
+    cleared = np.nan_to_num(cleared, nan=0.0)
+    return {
+        env.zone_names[z]: float(cleared[zones == z].mean())
+        for z in sorted(
+            set(zones.tolist()), key=lambda z: env.section_s[lays[0]].get(z, (0,))[0]
+        )
+    }
+
+
 def summarize(records):
     if not records:
         return {}
@@ -121,6 +174,7 @@ def summarize(records):
         hoops=float(np.mean([r["hoops"] for r in records])),
         ret=float(np.mean([r["episode"]["r"] for r in records])),
         min_clearance=float(np.min([r["min_clearance"] for r in records])),
+        touches=float(np.mean([r["touches"] for r in records])),
         outcomes=dict(Counter(r["outcome"] for r in records)),
         ends=dict(ends.most_common(12)),
         finish_by_seed={str(k): float(np.mean(v)) for k, v in sorted(by_seed.items())},
@@ -193,6 +247,11 @@ def main():
     eval_held = EvalEnv(
         cfg, model_, per * len(held_ids), held_ids, seed=10_002, start_box_only=True
     )
+    sec_per = int(tcfg["section_eval_per_layout"])
+    probe = ObstacleEnv(cfg, model_, 1, held_ids, seed=0)
+    n_sec = sec_per * sum(len(probe.section_s[k]) for k in held_ids)
+    eval_sections = ObstacleEnv(cfg, model_, n_sec, held_ids, seed=10_003)
+    del probe
 
     kwargs = dict(
         n_steps=int(tcfg["n_steps"]),
@@ -207,7 +266,9 @@ def main():
         seed=args.seed,
         device="cpu",
         policy_kwargs=dict(
-            net_arch=list(tcfg["net_arch"]), log_std_init=float(tcfg["log_std_init"])
+            net_arch=list(tcfg["net_arch"]),
+            log_std_init=float(tcfg["log_std_init"]),
+            log_std_range=tuple(tcfg["log_std_range"]),
         ),
     )
     if args.resume:
@@ -230,7 +291,7 @@ def main():
         model.lr_schedule = sched if callable(sched) else (lambda _: sched)
         print(f"resumed from {args.resume} at {model.num_timesteps:,} steps")
     else:
-        model = PPO("MlpPolicy", train_env, **kwargs)
+        model = PPO(SquashedMeanPolicy, train_env, **kwargs)
 
     history_path = args.dir / "history.json"
     history = (
@@ -249,6 +310,17 @@ def main():
 
         tr = summarize(evaluate(eval_train, predict, per))
         he = summarize(evaluate(eval_held, predict, per))
+        he["sections"] = section_eval(eval_sections, predict, sec_per)
+        inner = train_env.inner
+        met = {
+            inner.zone_names[z]: [
+                int(inner.zone_attempts[z]),
+                int(inner.zone_fails[z]),
+            ]
+            for z in np.flatnonzero(inner.zone_attempts)
+        }
+        inner.zone_attempts[:] = 0
+        inner.zone_fails[:] = 0
         record = dict(
             steps=int(model.num_timesteps),
             target=int(target),
@@ -261,6 +333,7 @@ def main():
                 if rollout_stats["ep_rew"]
                 else None,
                 outcomes=dict(rollout_stats["outcomes"]),
+                zones=met,
             ),
         )
         rollout_stats["ep_rew"].clear()
@@ -274,11 +347,17 @@ def main():
         print(
             f"  [{label}] train {100 * tr['finish']:3.0f}% {lap(tr['lap_time'])} "
             f"{100 * tr['progress']:3.0f}% of lap | held-out {100 * he['finish']:3.0f}% "
-            f"{lap(he['lap_time'])} {100 * he['progress']:3.0f}% of lap, hoops {he['hoops']:.1f} | "
+            f"{lap(he['lap_time'])} {100 * he['progress']:3.0f}% of lap, hoops {he['hoops']:.1f}, "
+            f"obstacles {100 * float(np.mean(list(he['sections'].values()))):3.0f}% | "
             f"ends {dict(list(he['ends'].items())[:3])}",
             flush=True,
         )
-        key = (he["finish"], he["progress"], -(he["lap_time"] or 1e9))
+        sections = float(np.mean(list(he["sections"].values())))
+        key = (
+            he["finish"],
+            0.5 * he["progress"] + 0.5 * sections,
+            -(he["lap_time"] or 1e9),
+        )
         if key > best[0]:
             best[0] = key
             model.save(args.dir / "best_model")

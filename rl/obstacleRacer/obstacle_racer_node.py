@@ -282,9 +282,17 @@ class ObstacleRacer(Node):
         if self.policy is not None:
             action = self.policy.act(obs)
         else:
-            v_cap = float(self.cfg["env"]["v_cap"])
             action = np.array(
-                [[0.0, 2.0 * float(self.param("prior_speed")) / v_cap - 1.0]]
+                [
+                    [
+                        0.0,
+                        float(
+                            O.speed_to_action(
+                                float(self.param("prior_speed")), self.cfg
+                            )
+                        ),
+                    ]
+                ]
             )
         steer, velocity = O.action_to_command(action, self.prior, self.cfg)
         self.prev_action = action

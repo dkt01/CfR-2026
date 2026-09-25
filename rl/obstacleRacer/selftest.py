@@ -242,7 +242,7 @@ def lap_bookkeeping(cfg, model):
             st = env.plant.state.copy()
             st[k, P.S_X], st[k, P.S_Y], st[k, P.S_Z], st[k, P.S_YAW] = x, y, z, yaw
             env.plant.state[k] = st[k]
-            ds, _, _, missed = env._track(env.plant.state, env.plant.lay)
+            ds, _, _, missed, _ = env._track(env.plant.state, env.plant.lay)
             largest = max(largest, abs(ds[k]))
             if missed[k]:
                 break
@@ -260,6 +260,257 @@ def lap_bookkeeping(cfg, model):
             f"finished at {done_at} m of {env.goal[k]:.1f}, largest step {largest:.2f} m, "
             f"hoops {env.hoop_state[k].tolist()}",
         )
+    return failures
+
+
+def _plant_at(cfg, model, poses, seed=0):
+    """A plant with nominal parameters, cars at (x, y, yaw, speed) on layout 0."""
+    cfg = dict(cfg, randomize=dict(cfg["randomize"], enabled=False))
+    pl = P.Plant(cfg, model, len(poses), np.random.default_rng(seed))
+    p = np.array(poses, dtype=np.float64)
+    pl.reset(np.arange(len(p)), 0, p[:, 0], p[:, 1], np.zeros(len(p)), p[:, 2], p[:, 3])
+    return pl
+
+
+def reverse_checks(cfg, model):
+    """Reverse as last week's characterization found it: coast, wait, drive back.
+
+    docs/characterization-results.md: no braking (a reverse target while
+    rolling forward coasts); the direction changes 0.4 s (tach timeout) +
+    0.1 s after the car drops under the 0.3 m/s tach floor; drag and
+    feedforward are the same both ways.
+    """
+    failures = 0
+    # Open floor: the lane east of the start box, heading east, at 2 m/s.
+    pl = _plant_at(cfg, model, [(0.3, 0.0, 0.0, 2.0), (0.3, 0.0, 0.0, 2.0)])
+    dt = 1.0 / float(cfg["env"]["control_hz"])
+    v = []
+    flip_t = None
+    below_t = None
+    for i in range(int(4.0 / dt)):
+        pl.step(np.zeros(2), np.array([-1.0, 0.0]), 10)
+        v.append(pl.state[:, P.S_V].copy())
+        if below_t is None and abs(pl.state[0, P.S_V]) < P.STOPPED_V:
+            below_t = (i + 1) * dt
+        if flip_t is None and pl.state[0, P.S_DIR] < 0:
+            flip_t = (i + 1) * dt
+    v = np.array(v)
+    coasting = v[:, 1] > 0.35
+    failures += check(
+        "a reverse command while rolling forward only coasts (no braking)",
+        np.abs(v[coasting, 0] - v[coasting, 1]).max() < 1e-9,
+        f"largest difference from coasting {np.abs(v[coasting, 0] - v[coasting, 1]).max():.3f} m/s",
+    )
+    # Past the 0.19 s dead time, over half a second.
+    decel = (v[5, 1] - v[15, 1]) / (10 * dt)
+    mid = 0.5 * (v[5, 1] + v[15, 1])
+    failures += check(
+        "coast decel matches the fit, 0.606 + 0.130 v",
+        abs(decel - (0.606 + 0.130 * mid)) < 0.05,
+        f"{decel:.2f} m/s^2 at {mid:.2f} m/s, fit {0.606 + 0.130 * mid:.2f}",
+    )
+    wait = float(cfg["plant"]["reverse_wait"])
+    ok = (
+        flip_t is not None
+        and below_t is not None
+        and abs(flip_t - below_t - wait) < 2.5 * dt
+    )
+    failures += check(
+        "the direction changes reverse_wait after the car drops under 0.3 m/s",
+        ok,
+        f"under the floor at {below_t} s, reversed at {flip_t} s (wait {wait} s)",
+    )
+    failures += check(
+        "then it drives backwards at the commanded speed",
+        abs(v[-1, 0] + 1.0) < 0.05 and v[-1, 1] == 0.0,
+        f"{v[-1, 0]:+.2f} m/s (coasting car {v[-1, 1]:+.2f})",
+    )
+    return failures
+
+
+def contact_checks(cfg, model):
+    """Touching slides the car along what it touched, or stops it; never inside.
+
+    On the straight lane south of the overpass (x ~7.1, where the car has
+    0.2 m to spare turned across it): driven head-on into the lane's side,
+    and at a glancing 12 degrees along it.  The lane pinches in 2.5 m on
+    (y ~ -4.5), where the glancing car jams, so its slide is judged over the
+    0.75 s after it first touches.
+    """
+    failures = 0
+    import centerline as centerline_module
+
+    line = centerline_module.Centerlines(model.layouts).lines[0]
+    x, y, _, yaw = line.pose_at(18.0)
+    head_on = (x, y, yaw + math.pi / 2, 1.0)
+    glance = (x, y, yaw + math.radians(12), 2.0)
+    pl = _plant_at(cfg, model, [head_on, glance])
+    dt = 1.0 / float(cfg["env"]["control_hz"])
+    first = [None, None]
+    lost = np.zeros(2)
+    inside = 0
+    speed_after = []
+    for i in range(int(3.0 / dt)):
+        touched, v_lost, _ = pl.step(np.zeros(2), np.array([1.0, 2.0]), 10)
+        lost += v_lost
+        for k in range(2):
+            if touched[k] and first[k] is None:
+                first[k] = i
+        inside += int(P.body_contact(pl.OBS, pl.lay, pl.state, 0.03).sum())
+        if first[1] is not None:
+            speed_after.append(pl.state[1, P.S_V])
+    failures += check(
+        "both cars reach the lane's side",
+        None not in first,
+        f"first touch steps {first}",
+    )
+    failures += check(
+        "no car is ever left inside an obstacle",
+        inside == 0,
+        f"{inside} car-steps inside",
+    )
+    failures += check(
+        "head-on, the car stops against it and loses its speed",
+        abs(pl.state[0, P.S_V]) < 0.3 and lost[0] > 0.8,
+        f"speed now {pl.state[0, P.S_V]:.2f} m/s, lost {lost[0]:.2f} m/s in all",
+    )
+    held = float(np.mean(speed_after[:15])) if speed_after else 0.0
+    failures += check(
+        "at a glancing angle it slides along, keeping most of its speed",
+        held > 1.2,
+        f"{held:.2f} m/s over the 0.75 s after touching",
+    )
+    return failures
+
+
+def coverage_checks(cfg, model):
+    """Every obstacle on every layout is a section the env deals starts before."""
+    import env as env_module
+
+    env = env_module.ObstacleEnv(cfg, model, 4, np.arange(len(model.layouts)), seed=2)
+    want = {
+        "overpass_ramp",
+        "helical_ramp",
+        "tunnel",
+        "gravel_pit",
+        "banked_turn",
+        "potholes",
+        "buckets",
+        "hoops",
+        "car_wash",
+    }
+    missing = {}
+    for k, spans in enumerate(env.section_s):
+        names = {env.zone_names[z] for z in spans}
+        if want - names:
+            missing[int(model.seeds[k])] = sorted(want - names)
+    failures = check(
+        "every obstacle is a practice section on every layout",
+        not missing,
+        str(missing),
+    )
+    # Dealt section starts land before each of them, in proportion.
+    env.cfg = dict(
+        cfg,
+        env=dict(
+            cfg["env"], start_box_prob=0.0, fail_start_prob=0.0, section_start_prob=1.0
+        ),
+    )
+    seen = Counter()
+    for _ in range(60):
+        env.reset()
+        z = env.zone_of[env.plant.lay, env.idx]
+        for i in range(env.n):
+            nxt = [
+                zz
+                for zz, (s_in, _) in env.section_s[env.plant.lay[i]].items()
+                if 0.0 <= s_in - env.s[i] <= 4.5
+            ]
+            seen.update(env.zone_names[zz] for zz in nxt)
+        del z
+    failures += check(
+        "section starts are dealt before every obstacle",
+        want <= set(seen),
+        f"{dict(seen)}",
+    )
+    return failures
+
+
+def hoop_incentives(cfg, model):
+    """At the first hoop: through the middle, round the outside, stopped short.
+
+    Cars are carried kinematically along the hoop's travel normal, starting
+    4 m before its plane, at lateral offsets 0 (threads), 0.9 m (round it,
+    inside the attempt gate) and 0 again but halted 1 m short.  Threading
+    pays the hoop and the alignment shaping hands back what it gave;
+    going round is a miss; stopping short is neither.
+    """
+    import env as env_module
+
+    env = env_module.ObstacleEnv(cfg, model, 3, [0], seed=0, randomize=False)
+    env.reset()
+    c, a, nrm = env.hoop_c[0, 0], env.hoop_a[0, 0], env.hoop_n[0, 0]
+    yaw = math.atan2(nrm[1], nrm[0])
+    lateral = np.array([0.0, 0.9, 0.0])
+    stop_at = np.array([np.inf, np.inf, -1.0])
+    gamma = float(cfg["train"]["gamma"])
+    shaped = np.zeros(3)
+    phi_prev = np.zeros(3)
+    threaded = np.zeros(3, np.int64)
+    missed = np.zeros(3, bool)
+    discount = 1.0
+
+    def place(u):
+        for k in range(3):
+            xy = c + nrm * min(u, stop_at[k]) + a * lateral[k]
+            env.plant.state[k, P.S_X], env.plant.state[k, P.S_Y] = xy
+            env.plant.state[k, P.S_YAW] = yaw
+
+    place(-4.0)
+    env.idx[:] = env.lines.index_at(
+        np.zeros(3, np.int64), np.full(3, env.hoop_s[0, 0] - 4.0)
+    )
+    env._track(env.plant.state, env.plant.lay)
+    env.hoop_state[:] = 0
+    env.hoop_u[:] = env._hoop_u(np.arange(3))
+    env.dist[:] = 0.0
+    env.hoop_d[:] = env.hoop_s[0][None, :] - (env.hoop_s[0, 0] - 4.0)
+    for u in np.arange(-3.9, 2.0, 0.05):
+        place(u)
+        _, _, now, miss, phi = env._track(env.plant.state, env.plant.lay)
+        threaded += now
+        missed |= miss
+        live = ~missed | miss
+        # Discounted, as PPO values it: gamma*phi' - phi telescopes to zero.
+        shaped += discount * np.where(
+            live, np.where(miss, 0.0, gamma * phi) - phi_prev, 0.0
+        )
+        discount *= gamma
+        phi_prev = np.where(miss, 0.0, phi)
+    failures = check(
+        "through the middle threads the hoop, no miss",
+        threaded[0] == 1 and not missed[0],
+        f"threaded {threaded[0]}, missed {missed[0]}",
+    )
+    failures += check(
+        "the alignment shaping nets out (discounted) over a threaded approach",
+        # Less whatever it now holds for the next hoop, whose window the
+        # straight path has entered.
+        abs(shaped[0] - discount * phi_prev[0]) < 0.05,
+        f"net {shaped[0] - discount * phi_prev[0]:+.3f} beyond the "
+        f"{discount * phi_prev[0]:.2f} held for the next hoop "
+        f"(the hoop pays {cfg['reward']['hoop']})",
+    )
+    failures += check(
+        "round the outside is a miss",
+        missed[1] and threaded[1] == 0,
+        f"missed {missed[1]}",
+    )
+    failures += check(
+        "stopped short: neither threaded nor missed (stall does the charging)",
+        not missed[2] and threaded[2] == 0,
+        f"missed {missed[2]}",
+    )
     return failures
 
 
@@ -320,6 +571,13 @@ def main() -> int:
     failures += sensor_on_slopes(cfg, model)
     print("lap bookkeeping")
     failures += lap_bookkeeping(cfg, model)
+    print("reverse and contact")
+    failures += reverse_checks(cfg, model)
+    failures += contact_checks(cfg, model)
+    print("hoops")
+    failures += hoop_incentives(cfg, model)
+    print("coverage")
+    failures += coverage_checks(cfg, model)
 
     print("env")
     env, infos, rate = rollout(cfg, model, 64, 4.0 if args.quick else 60.0)

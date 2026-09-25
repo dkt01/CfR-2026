@@ -1,5 +1,5 @@
 # Obstacle Racer -- one lap of the Obstacle Course, through all three hoops,
-# as fast as the car can do it without touching anything.
+# as fast as the car can do it.  Touching something costs; stopping ends it.
 #
 # `plant` is the real car, copied from rl/formulaOne/config.yaml, which took it
 # from jetson/cfr_arduino_bridge/config/vehicle.yaml and arduino_bridge.yaml.
@@ -19,6 +19,14 @@ plant:
   yaw_response_tau: 0.34    # s, fitted to Gazebo step-steer (formulaOne)
   steering_tau: 0.05        # s
   steering_slew: 6.16       # rad/s road wheel
+  # Reverse, as the Arduino's SpeedController does it: a reverse target while
+  # rolling forward is a zero target, so the car COASTS -- reversing does not
+  # slow it faster, and there is no braking (docs/characterization-results.md
+  # section 3: every Brake Limit stopped the car slower than coasting).  Once
+  # the car is under the tach's 0.3 m/s floor for reverse_wait (0.4 s tach
+  # timeout + 0.1 s), it drives backwards, on the same drag and feedforward
+  # curves (fwd/rev 3% apart, sections 1-2).
+  reverse_wait: 0.5         # s under 0.3 m/s before the direction changes
 
 env:
   control_hz: 20.0
@@ -26,22 +34,42 @@ env:
   # Sight-limited, not power-limited: with no brakes the car has to be able to
   # shed speed for what it can see, and the segmenter sees 6 m.
   v_cap: 3.5                # m/s
-  episode_s: 120.0          # one full lap from any start point
+  v_reverse: 1.0            # m/s; the speed action runs -v_reverse..v_cap
+  # One full lap from any start point.  A lap at 1 m/s average (with time to
+  # back off a wall or two) fits; v2's runs averaged 1.6 m/s.
+  episode_s: 150.0
   # Where episodes start.  Eval always starts in the start box.
-  start_box_prob: 0.30
+  start_box_prob: 0.20
   start_xy_noise: 0.10      # m, uniform +/- in x and in y
   start_yaw_noise_deg: 5.0  # uniform +/-
   dealt_speed: [0.0, 2.0]   # m/s for starts dealt part way round
   deal_on_helix: true
-  # Half the dealt starts go a few meters before a spot where a recent
-  # training episode failed, so the hard obstacles get practiced.
-  fail_start_prob: 0.5
+  # Dealt starts: some a few meters before a spot where a recent training
+  # episode failed, some a few meters before an obstacle picked uniformly
+  # from all of them (so every obstacle is practiced, however rarely the
+  # policy reaches it from the start box), the rest anywhere.
+  fail_start_prob: 0.35
   fail_backoff_m: [0.5, 6.0]
   fail_memory: 400          # failures remembered per layout
-  # Terminations.
-  stall_speed: 0.25         # m/s
+  section_start_prob: 0.45
+  section_backoff_m: [0.5, 4.0]
+  # Throttle dither: below ~1 m/s the Arduino drives the ESC in bursts (bench:
+  # 200-350 spur RPM sd around 150-500 RPM targets, README), the tachometer
+  # reads zero half the time under 0.6 m/s and nothing under 0.3 m/s
+  # (characterization section 0), so a slow target is only held on average.  The target the car actually chases wanders by this much
+  # (m/s, 1 sigma, correlation time dither_tau_s), fading out between the
+  # two speeds.
+  dither_sd: 0.30
+  dither_full_below: 1.0
+  dither_gone_above: 1.5
+  dither_tau_s: 0.3
+  # Terminations.  Touching an obstacle is not one: the plant slides the car
+  # along it.  An impact that takes more than crash_speed off the car in one
+  # step is.
+  crash_speed: 1.5          # m/s
+  stall_speed: 0.25         # m/s, either direction
   stall_s: 2.5
-  progress_window_s: 6.0    # truncate if s advanced less than...
+  progress_window_s: 6.0    # end the run as a stall if it advanced less than...
   progress_window_m: 0.5    # ...this over the window (going round, not along)
   off_course_m: 2.2         # m from the centerline: left the lane (the bucket
                             # section and east corridor are ~3 m wide)
@@ -85,18 +113,24 @@ reward:
   progress: 6.0             # per meter of centerline
   time: 3.0                 # per second; break-even 0.5 m/s
   hoop: 20.0                # per hoop threaded
+  hoop_align: 8.0           # potential at dead center, in the last...
+  hoop_align_window_m: 2.5  # ...this far before an unthreaded hoop, falling
+  hoop_align_cap_m: 0.6     # to 0 this far off its center line
   finish: 150.0             # must beat a fast run that crashes near the end
-  finish_pace: 2.0          # per second under target_lap_s
-  target_lap_s: 60.0
-  crash: -40.0
-  hoop_miss: -40.0
-  stall: -20.0
-  off_course: -40.0
-  graze: 15.0               # per s, times bite^2
+  finish_pace: 4.0          # per second under target_lap_s: every second counts
+  target_lap_s: 90.0
+  bump: 6.0                 # times (m/s lost to contact)^2
+  crash: -60.0
+  hoop_miss: -60.0
+  stall: -70.0              # stopping is the worst way to end a run
+  off_course: -60.0
+  graze: 8.0                # per s, times bite^2
   graze_band: 0.12          # m
   steer_rate: 0.04          # * dcmd^2 / dt
   steer_jerk: 0.05          # * ddcmd^2 / dt (0.15 swamped every other term
                             # while the policy's exploration noise was high)
+  speed_rate: 0.002         # * (d speed cmd, m/s)^2 / dt: 0.5 a step for
+                            # flipping stop <-> full, nothing for a 4 m/s^2 ramp
   lateral: 0.0              # off by default: randomized buckets need a free line
 
 randomize:
@@ -119,11 +153,13 @@ randomize:
   mu_scale: [0.80, 1.10]
   spring_scale: [0.85, 1.15]
   damping_scale: [0.75, 1.30]
+  reverse_wait: [0.45, 0.70]    # s; bench: +1200 -> -1200 RPM began 1.15 s after
+  dither_scale: [0.5, 1.5]
   yaw_rate_noise: [0.0, 0.03]   # rad/s, 1 sigma
   speed_noise: [0.0, 0.05]      # m/s, 1 sigma, above the tach floor
 
 train:
-  total_steps: 150000000   # ~9 h; v1's 30M saw the helix too rarely
+  total_steps: 300000000   # ~18 h at v2's rate
   n_envs: 256
   n_steps: 64
   batch_size: 4096
@@ -131,10 +167,15 @@ train:
   gamma: 0.995
   gae_lambda: 0.95
   clip_range: 0.2
-  ent_coef: 0.005
+  ent_coef: 0.0             # the std is held in log_std_range instead; v2's
+                            # bonus grew the clipped speed std to 1.48
   learning_rate: 3.0e-4
   lr_final_fraction: 0.05
   net_arch: [128, 128]
   log_std_init: -1.0
+  log_std_range: [-2.5, -0.5]   # std 0.08..0.61 (ppo_policy.py)
   eval_every_steps: 2000000
-  eval_episodes_per_layout: 8
+  eval_episodes_per_layout: 12
+  # Per obstacle, on the held-out layouts: dealt just before it, does the
+  # policy get through?  Measures every obstacle before laps finish.
+  section_eval_per_layout: 2

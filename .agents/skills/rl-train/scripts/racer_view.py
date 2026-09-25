@@ -134,6 +134,29 @@ def render(run_dir: Path, ui, patience, min_evals, threshold) -> str:
         )
     lines.append("")
 
+    # Per obstacle: held-out clear rate when dealt just before it, and how
+    # often training met it and failed there since the last eval.
+    sections = last["heldout"].get("sections") or {}
+    zones = rollout.get("zones") or {}
+    if sections:
+        lines.append(
+            f"{ui.BOLD}obstacles{ui.RESET}        held-out clear   trend        "
+            "training met / failed"
+        )
+        for name, rate in sections.items():
+            trend = [
+                r["heldout"]["sections"].get(name, 0.0)
+                for r in records
+                if r["heldout"].get("sections")
+            ]
+            met, failed = zones.get(name, [0, 0])
+            tint = ui.GREEN if rate >= 0.8 else ui.YELLOW if rate >= 0.4 else ui.RED
+            lines.append(
+                f"  {name:15s} {ui.color(f'{100 * rate:5.0f}%', tint)}          "
+                f"{ui.sparkline(trend[-12:]):12s} {met:7d} / {failed:<6d}"
+            )
+        lines.append("")
+
     att = last["train"].get("attitude_deg") or {}
     shown = [
         z

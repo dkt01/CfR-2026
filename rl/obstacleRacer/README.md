@@ -18,15 +18,27 @@ Two frames are stacked. `observation.py` builds this, for both training and
 
 It gives a `DriveCommand`:
 - steering = a map-free follow-the-gap prior + the policy's residual (full authority)
-- speed from 0 to 3.5 m/s. The car has no brakes, so speed is limited by
+- speed from -1 to 3.5 m/s. The car has no brakes, so speed is limited by
   sight distance.
+
+The policy (`ppo_policy.py`) keeps its Gaussian's mean inside the action range
+(tanh) and its spread inside `train.log_std_range`. In v2 the unbounded mean
+ran to -6 at the bank, so every sample clipped to a full stop and the slow
+crawl round it was never tried.
 
 The reward is privileged, computed in simulation only (`reward.py`):
 - progress along a hand-placed centerline, per layout
 - a time cost
-- a bonus for each hoop and for finishing
-- terminal penalties for crashes, hoop misses, stalls and leaving the course
-- costs for grazing obstacles and steering chatter
+- a bonus for each hoop and for finishing, and a potential-based nudge
+  toward each hoop's center over the last 2.5 m before it (it hands back
+  what it gave as the car crosses, so only threading pays)
+- a cost for speed lost to contact; touching is not the end of a run
+- terminal penalties for hard crashes (over 1.5 m/s lost in one step), hoop
+  misses, leaving the course and, worst of all, stopping or circling
+- costs for grazing obstacles, steering chatter and speed-command chatter
+
+A run that never reaches the hoops is neither paid nor charged for them: the
+miss penalty needs the car at or past a hoop.
 
 ## How the course is modeled
 
@@ -51,6 +63,18 @@ surfaces, and wheels that can leave the ground. Traction is mu times load. So
 the car pitches up the ramp, goes light over the deck crest, rolls on the
 bank, and bounces through the potholes.
 
+Reverse follows the Arduino and last week's characterization
+(`docs/characterization-results.md`). A reverse target while rolling forward
+only coasts, because there is no braking. The car drives backwards 0.5 s
+after it drops under the tachometer's 0.3 m/s floor, on the same drag curve.
+Below about 1 m/s the target the car chases wanders (throttle dither), so a
+slow crawl is not a precise tool. The speed the policy sees is signed by the
+controller's direction, as `ArduinoStatus.speed` is.
+
+A car that touches an obstacle is put back where it was clear and slides
+along it, keeping the share of its speed the slide carries; head-on, it
+stops and has to back off.
+
 `sensor.py` ray-marches the visual grid from wherever the body put the camera,
 following the surface out from under the car the way the segmenter does.
 
@@ -64,9 +88,15 @@ means the same course in Gazebo.
 Episodes start either:
 - in the start box, (−0.7, 0) ± 0.1 m in x and y and ± 5° in heading, from
   rest. Evaluation always starts here.
-- dealt part way round, with the same noise, the helix included. Half of
+- dealt part way round, with the same noise, the helix included: 35% of
   these start 0.5-6 m before a spot where a recent training episode failed,
-  so the obstacles the policy cannot yet do get practiced.
+  45% start 0.5-4 m before an obstacle picked uniformly from all nine (so the
+  hoops, car wash and buckets get practiced however rarely the policy reaches
+  them from the start box), and the rest anywhere.
+
+Each eval also deals the car 2 m before every obstacle on the held-out
+layouts and records whether it gets through; the dashboard shows that per
+obstacle next to how often training met and failed at it.
 
 Every episode is one full lap from its own start point. Progress wraps round
 the loop at the timing line, all three hoops must be threaded during the

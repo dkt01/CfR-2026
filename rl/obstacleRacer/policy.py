@@ -25,9 +25,11 @@ import numpy as np
 
 
 class NumpyPolicy:
-    def __init__(self, weights, biases, activation="tanh", meta=None):
+    def __init__(self, weights, biases, activation="tanh", meta=None, output="clip"):
         self.weights = weights
         self.biases = biases
+        # "tanh": the policy's mean is squashed (ppo_policy.SquashedMeanPolicy).
+        self.output = output
         self.activation = (
             np.tanh if activation == "tanh" else lambda v: np.maximum(v, 0)
         )
@@ -41,7 +43,8 @@ class NumpyPolicy:
         biases = [blob[f"b{i}"] for i in range(n)]
         meta = {k: blob[k] for k in blob.files if k.startswith("meta_")}
         act = str(blob["activation"]) if "activation" in blob.files else "tanh"
-        policy = cls(weights, biases, act, meta)
+        output = str(blob["output"]) if "output" in blob.files else "clip"
+        policy = cls(weights, biases, act, meta, output)
         expected = int(blob["obs_dim"])
         if weights[0].shape[0] != expected:
             raise ValueError(
@@ -56,4 +59,7 @@ class NumpyPolicy:
         h = np.asarray(obs, dtype=np.float64)
         for w, b in zip(self.weights[:-1], self.biases[:-1]):
             h = self.activation(h @ w + b)
-        return np.clip(h @ self.weights[-1] + self.biases[-1], -1.0, 1.0)
+        out = h @ self.weights[-1] + self.biases[-1]
+        if self.output == "tanh":
+            out = np.tanh(out)
+        return np.clip(out, -1.0, 1.0)
