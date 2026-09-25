@@ -53,7 +53,7 @@ LED_COLORS = {
 }
 
 KEY_BINDINGS_HELP = (
-    "space=SET ESTOP  c=CLEAR ESTOP  backspace=TOGGLE SENSE  `=TOGGLE OVERRIDE  "
+    "space=SET SOFT ESTOP  c=CLEAR SOFT ESTOP  `=TOGGLE PHYSICAL OVERRIDE  "
     "a=TOGGLE AUTO ARM  enter=MANUAL START  q=QUIT"
 )
 
@@ -85,11 +85,14 @@ def render_inputs(inputState: InputState) -> Table:
             f"[{color}]\u25a0 ON[/{color}]" if value else "[grey58]\u25a1 off[/grey58]"
         )
 
-    table.add_row("ESTOP", toggleSwitch(inputState.estop, "red"))
-    table.add_row("ESTOP OVERRIDE", toggleSwitch(inputState.estop_override, "red"))
+    table.add_row("SOFT ESTOP", toggleSwitch(inputState.estop_software, "red"))
+    # Read from the XBee's GPIO; asserted (ON) whenever the loop is open, the
+    # cable is out, or the XBee has stopped answering.
+    table.add_row("PHYSICAL ESTOP", toggleSwitch(inputState.estop, "red"))
+    table.add_row("PHYSICAL OVERRIDE", toggleSwitch(inputState.estop_override, "red"))
     table.add_row("AUTO ARM", toggleSwitch(inputState.auto_arm, "blue"))
 
-    # Physically a sensed cable connection, not a switch, so it gets a distinct glyph.
+    # Sensed cable connection, not a switch, so it gets a distinct glyph.
     senseText = (
         "[green]\u2b23 CONNECTED[/green]"
         if inputState.estop_sense
@@ -170,6 +173,14 @@ def render(
         render_status(robotState, controllerState),
         render_cycle_rates(cycleMonitor),
     )
+    # Loud border while the physical E-Stop is being ignored.
+    if inputState.estop_override:
+        return Panel(
+            grid,
+            title=f"{TUI_TITLE} - PHYSICAL E-STOP OVERRIDDEN",
+            subtitle=KEY_BINDINGS_HELP,
+            border_style="bold bright_red",
+        )
     return Panel(grid, title=TUI_TITLE, subtitle=KEY_BINDINGS_HELP)
 
 
@@ -181,12 +192,21 @@ def render_quit_confirm() -> Panel:
     )
 
 
+def render_override_confirm() -> Panel:
+    return Panel(
+        "Ignore the PHYSICAL E-Stop? [bold]y[/bold] = yes, any other key = cancel",
+        title="Confirm E-Stop Override",
+        style="bold bright_red",
+    )
+
+
 def keyboardControl(
     inputState: InputState,
     inputMutex: threading.Lock,
     lastEnterTime: list[float],
     runEvent: threading.Event,
     quitConfirmEvent: threading.Event,
+    overrideConfirmEvent: threading.Event,
     cycleMonitor: CycleRateMonitor,
 ):
     # This thread is the sole reader of stdin for the process's lifetime; the
@@ -194,6 +214,7 @@ def keyboardControl(
     # than a second blocking input() call, to avoid two threads fighting over
     # terminal raw/cooked mode at once.
     awaitingQuitConfirm = False
+    awaitingOverrideConfirm = False
 
     while runEvent.is_set():
         key = readchar.readkey()
@@ -207,18 +228,30 @@ def keyboardControl(
                 return
             continue
 
+        if awaitingOverrideConfirm:
+            awaitingOverrideConfirm = False
+            overrideConfirmEvent.clear()
+            if key in ("y", "Y"):
+                with inputMutex:
+                    inputState.estop_override = True
+            continue
+
         if key == readchar.key.SPACE:
             with inputMutex:
-                inputState.estop = True
+                inputState.estop_software = True
         elif key in ("c", "C"):
             with inputMutex:
-                inputState.estop = False
-        elif key == readchar.key.BACKSPACE:
-            with inputMutex:
-                inputState.estop_sense = not inputState.estop_sense
+                inputState.estop_software = False
         elif key == "`":
+            # Disabling the override is the safe direction, so only enabling
+            # needs confirmation.
             with inputMutex:
-                inputState.estop_override = not inputState.estop_override
+                overrideOn = inputState.estop_override
+                if overrideOn:
+                    inputState.estop_override = False
+            if not overrideOn:
+                awaitingOverrideConfirm = True
+                overrideConfirmEvent.set()
         elif key in ("a", "A"):
             with inputMutex:
                 inputState.auto_arm = not inputState.auto_arm
@@ -241,6 +274,7 @@ def renderLoop(
     lastEnterTime: list[float],
     runEvent: threading.Event,
     quitConfirmEvent: threading.Event,
+    overrideConfirmEvent: threading.Event,
     cycleMonitor: CycleRateMonitor,
 ):
     console = Console()
@@ -265,11 +299,13 @@ def renderLoop(
                     controllerConnected = controllerState.comms_ok
                 if controllerWasConnected and not controllerConnected:
                     with inputStateMutex:
-                        inputState.estop = True
+                        inputState.estop_software = True
                 controllerWasConnected = controllerConnected
 
                 if quitConfirmEvent.is_set():
                     panel = render_quit_confirm()
+                elif overrideConfirmEvent.is_set():
+                    panel = render_override_confirm()
                 else:
                     with robotStateMutex, inputStateMutex, controllerStateMutex:
                         panel = render(
@@ -284,8 +320,10 @@ def renderLoop(
 
 def main():
     inputState = InputState()
+    # Physical E-Stop and sense stay asserted/absent until the XBee reports the
+    # RJ-45 state; the software E-Stop latches until the operator clears it.
     inputState.estop = True
-    inputState.estop_sense = True
+    inputState.estop_software = True
     controllerState = ControllerState()
     robotState = RobotState()
 
@@ -298,6 +336,7 @@ def main():
     runEvent = threading.Event()
     runEvent.set()
     quitConfirmEvent = threading.Event()
+    overrideConfirmEvent = threading.Event()
 
     threadController = threading.Thread(
         target=controllerControlPygame,
@@ -314,6 +353,7 @@ def main():
             inputMutex,
             runEvent,
             cycleMonitor,
+            True,
         ),
     )
     threadKeyboard = threading.Thread(
@@ -324,6 +364,7 @@ def main():
             lastEnterTime,
             runEvent,
             quitConfirmEvent,
+            overrideConfirmEvent,
             cycleMonitor,
         ),
     )
@@ -342,6 +383,7 @@ def main():
         lastEnterTime,
         runEvent,
         quitConfirmEvent,
+        overrideConfirmEvent,
         cycleMonitor,
     )
 

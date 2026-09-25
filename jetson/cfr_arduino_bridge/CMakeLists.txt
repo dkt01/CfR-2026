@@ -145,7 +145,7 @@ install(DIRECTORY include/
 # meshes/ is referenced from the worlds as model://cfr_arduino_bridge/meshes,
 # which Gazebo resolves against GZ_SIM_RESOURCE_PATH -- simulation.launch.py
 # points that at the share root.
-install(DIRECTORY config launch meshes worlds
+install(DIRECTORY config launch materials meshes worlds
   DESTINATION share/${PROJECT_NAME}
 )
 

@@ -4,10 +4,10 @@
     {
       "id": 0,
       "name": "telemetry-region-labeling",
-      "prompt": "I've got a CSV of the car's (x, y) position from an obstacle-course RL episode, sampled every 100ms, at .claude/skills/obstacle-course-regions-workspace/iteration-1/telemetry_sample.csv (columns: t_ms, x, y, world meters -- same frame as /zed/zed_node/pose). Can you tell me which obstacle region each row falls into, and give me a quick summary of how much time it spent in each region?",
+      "prompt": "I've got a CSV of the car's (x, y) position from an obstacle-course RL episode, sampled every 100ms, at .agents/skills/obstacle-course-regions-workspace/iteration-1/telemetry_sample.csv (columns: t_ms, x, y, world meters -- same frame as /zed/zed_node/pose). Can you tell me which obstacle region each row falls into, and give me a quick summary of how much time it spent in each region?",
       "expected_output": "A per-row region label using the skill's actual region names/bounds (not fabricated), plus a time-in-region summary (100ms per row). Two of the twelve rows (t=300ms and t=700ms) don't land inside any named region's box and should be reported as such (ordinary lane / no match) rather than forced into the nearest region.",
       "files": [
-        ".claude/skills/obstacle-course-regions-workspace/iteration-1/telemetry_sample.csv"
+        ".agents/skills/obstacle-course-regions-workspace/iteration-1/telemetry_sample.csv"
       ]
     },
     {
