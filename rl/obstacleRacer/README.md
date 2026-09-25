@@ -129,6 +129,32 @@ In the sim container, with the workspace built:
 ./validate.sh --policy runs/v1/policy.npz   # held-out layouts x 5 noisy starts
 ```
 
+To watch a run the way it happens on race day (the driver waits for the start
+signal and takes the throttle off when lap_counter reports the lap):
+
+```bash
+# Gazebo: course, ZED, start signal detector, lap counter (1 lap), driver
+LIBGL_ALWAYS_SOFTWARE=1 ros2 launch rl/obstacleRacer/obstacle_racer_sim.launch.py \
+    policy:=runs/v4/policy.npz green_after:=60
+# or turn the signal green yourself:
+ros2 service call /obstacle_randomizer/start_signal std_srvs/srv/SetBool "{data: true}"
+
+# Send it to the Orin: the code to ~/software/obstacleRacer, and runs/v4's
+# policy.npz (export_policy.py first) and config.yaml to its top level
+jetson/scripts/syncSoftware.sh --racer-policy v4 --build
+
+# The car, with ~/software/scripts/launch.sh --no-cmd-vel already up and the
+# E-Stop in hand: start signal detector, lap counter, driver, recorder
+ros2 launch ~/software/obstacleRacer/obstacle_racer_car.launch.py speed_scale:=0.3
+```
+
+Without `--racer-policy` the sync sends the code and the tree's config.yaml
+only, which is enough for `driver:=prior`.
+
+`obstacle_racer.launch.py` is the driver alone, for validate.sh.  The car
+launch records with `--cloud-hz 0`: record_run.py otherwise drops the ZED cloud
+to 1 Hz, and this driver steers from the cloud.
+
 Other checks:
 
 | Command | Checks |

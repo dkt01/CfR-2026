@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import math
 import sys
-import time
 from pathlib import Path
 
 import numpy as np
@@ -170,6 +169,16 @@ class ObstacleRacer(Node):
     def param(self, name):
         return self.get_parameter(name).value
 
+    def now(self):
+        """Seconds on the node's clock: sim time in Gazebo, as formula_one_node.
+
+        Staleness is judged on it, not on the wall clock -- Gazebo rendering
+        the ZED under load runs at a fraction of real time (0.19 measured), so
+        a cloud arriving every 0.3 s of sim time is 1.6 s apart on the wall,
+        and a wall-clock timeout held the car at zero speed forever.
+        """
+        return self.get_clock().now().nanoseconds * 1e-9
+
     # -------------------------------------------------------------- inputs
 
     def on_pose(self, msg):
@@ -184,7 +193,7 @@ class ObstacleRacer(Node):
             self.yaw_rate = (1 - a) * self.yaw_rate + a * max(-8.0, min(8.0, rate))
         self.prev_yaw, self.prev_stamp = yaw, stamp
         self.pose = (pitch, roll, yaw)
-        self.pose_time = time.monotonic()
+        self.pose_time = self.now()
 
     def on_cloud(self, msg):
         if self.pose is None:
@@ -209,7 +218,7 @@ class ObstacleRacer(Node):
             (g.kind, g.center[0], g.center[1], g.axis[0], g.axis[1]) for g in seg.gates
         ]
         self.gate = O.gate_features(gates, self.cfg)[None, :]
-        self.cloud_time = time.monotonic()
+        self.cloud_time = self.now()
 
     def on_status(self, msg):
         self.status = msg
@@ -217,7 +226,7 @@ class ObstacleRacer(Node):
     def on_go(self, msg):
         if msg.data and not self.go:
             self.get_logger().info("GREEN -- going")
-            self.started_at = time.monotonic()
+            self.started_at = self.now()
         self.go = self.go or bool(msg.data)
 
     def on_done(self, msg):
@@ -228,7 +237,7 @@ class ObstacleRacer(Node):
     def on_manual(self, request, response):
         self.go = bool(request.data)
         self.done = False if request.data else self.done
-        self.started_at = time.monotonic() if request.data else None
+        self.started_at = self.now() if request.data else None
         response.success = True
         response.message = "manual start" if request.data else "manual stop"
         return response
@@ -247,7 +256,7 @@ class ObstacleRacer(Node):
         self.drive.publish(msg)
 
     def tick(self):
-        now = time.monotonic()
+        now = self.now()
         stale = (
             self.pose_time is None
             or now - self.pose_time > self.param("pose_timeout")
