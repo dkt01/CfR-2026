@@ -2,7 +2,7 @@
 """Record one drive on the Orin into a self-contained run directory.
 
     ./record_run.py --label f1_v3.5 --policy ~/cfr/rl/formulaOne/runs/v3.5/policy.npz
-    ./record_run.py --label wall_test --svo --map      # heavier ZED capture
+    ./record_run.py --label wall_test --svo --cloud-hz 1   # heavier ZED capture
 
 Normally started for you by formula_one.launch.py (record:=auto records
 whenever use_sim_time is false, i.e. on the car).  Ctrl-C / SIGTERM finishes
@@ -28,6 +28,11 @@ write bandwidth than is sensible alongside a live drive.  `depth.point_cloud_fre
 is a dynamic ZED parameter, so the cloud rate is turned down to --cloud-hz for
 the run and restored afterwards.  Nothing in the formulaOne driver reads the
 cloud, so this cannot change how the car drives.
+
+By default no live cloud is recorded at all (--cloud-hz 0).  Instead ZED
+spatial mapping runs for the drive and the finished map -- one fused cloud of
+the whole course -- is saved in the bag at the end; see MAP_RUN_PERIOD_S.
+--no-map turns that off, --cloud-hz N records the live cloud as well.
 
 Why a regex rather than --topics: rosbag2 discovers topics as they appear, and
 a regex is the one filter whose meaning is the same in every Jazzy release.
@@ -94,6 +99,23 @@ IMAGE_TOPICS = [
     ZED + r"/left/image_rect_color",
 ]
 CLOUD_TOPIC = ZED + r"/point_cloud/cloud_registered"
+FUSED_TOPIC = ZED + "/mapping/fused_cloud"
+# The ZED's spatial map is published whole, every time: each message is the
+# entire map so far, so recording it at the wrapper's 1 Hz default is a
+# growing multi-megabyte cloud every second, of which only the last is ever
+# used.  During the run it is held to one every MAP_RUN_PERIOD_S (the
+# wrapper cannot stop it outright), and at the end the rate is raised once
+# to get the finished map into the bag.
+MAP_RUN_PERIOD_S = 50.0
+MAP_FINAL_WAIT_S = 20.0
+# JPEG quality of the recorded camera stream.  image_transport declares it
+# under a name that starts with a dot, which a params YAML cannot express,
+# so it is set here at run time.  Both names: the second is the deprecated
+# form image_transport still reads.
+JPEG_QUALITY_PARAMS = [
+    ".zed_node.rgb.color.rect.image.compressed.jpeg_quality",
+    ".zed_node.rgb.color.rect.image.jpeg_quality",
+]
 
 # Parameter snapshots, taken a few seconds in so late starters are up.
 PARAM_NODES = [
@@ -159,6 +181,7 @@ class Recorder(Node):
         self.started_mono = time.monotonic()
         self.cloud_freq_before = None
         self.cloud_dropped = False
+        self.mapping_on = False
         self.live = {
             "driver_state": None,
             "lap": None,
@@ -277,15 +300,32 @@ class Recorder(Node):
         return {3: value.double_value, 2: value.integer_value}.get(value.type)
 
     def set_param_double(self, node, name, number):
-        from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
-        from rcl_interfaces.srv import SetParameters
+        from rcl_interfaces.msg import ParameterType, ParameterValue
 
-        param = Parameter(
-            name=name,
-            value=ParameterValue(
+        return self.set_param(
+            node,
+            name,
+            ParameterValue(
                 type=ParameterType.PARAMETER_DOUBLE, double_value=float(number)
             ),
         )
+
+    def set_param_int(self, node, name, number):
+        from rcl_interfaces.msg import ParameterType, ParameterValue
+
+        return self.set_param(
+            node,
+            name,
+            ParameterValue(
+                type=ParameterType.PARAMETER_INTEGER, integer_value=int(number)
+            ),
+        )
+
+    def set_param(self, node, name, value):
+        from rcl_interfaces.msg import Parameter
+        from rcl_interfaces.srv import SetParameters
+
+        param = Parameter(name=name, value=value)
         response = self.call(
             SetParameters,
             f"{node}/set_parameters",
@@ -297,6 +337,20 @@ class Recorder(Node):
 
     def start(self):
         args = self.args
+        if not args.no_images and args.jpeg_quality > 0:
+            # At image_transport's default of 95, 1280x720 frames are ~250 KB
+            # each; the camera stream was 84% of a 5 GB bag.
+            done = [
+                name
+                for name in JPEG_QUALITY_PARAMS
+                if self.set_param_int(ZED, name, args.jpeg_quality)
+            ]
+            self.log(
+                f"ZED JPEG quality -> {args.jpeg_quality}"
+                if done
+                else "WARNING: could not set the ZED JPEG quality -- images record at "
+                "the node's own quality"
+            )
         if args.cloud_hz > 0:
             self.cloud_freq_before = self.get_param(ZED, "depth.point_cloud_freq")
             if self.cloud_freq_before is not None and self.set_param_double(
@@ -321,12 +375,22 @@ class Recorder(Node):
         if args.map:
             from std_srvs.srv import SetBool
 
+            # Before mapping starts, so the first publishes are already slow.
+            slowed = self.set_param_double(
+                ZED, "mapping.fused_pointcloud_freq", 1.0 / MAP_RUN_PERIOD_S
+            )
             ok = self.call(
                 SetBool, f"{ZED}/enable_mapping", SetBool.Request(data=True), 10.0
             )
+            self.mapping_on = bool(ok and ok.success)
+            if self.mapping_on and not slowed:
+                self.log(
+                    "WARNING: could not slow the ZED map rate -- the bag records the "
+                    "whole map every second"
+                )
             self.log(
-                "ZED spatial mapping ON"
-                if ok and ok.success
+                "ZED spatial mapping ON (final map saved at the end)"
+                if self.mapping_on
                 else f"ZED spatial mapping NOT enabled ({getattr(ok, 'message', 'no service')})"
             )
 
@@ -449,10 +513,43 @@ class Recorder(Node):
                     else f"area memory not saved ({getattr(ok, 'message', 'no service')})"
                 )
 
-        if args.map:
-            # Leave one more fused cloud in the bag before stopping; the
-            # wrapper publishes at mapping.fused_pointcloud_freq (1 Hz default).
-            time.sleep(1.5)
+        if args.map and self.mapping_on:
+            self.capture_final_map()
+
+    def capture_final_map(self):
+        """Raise the map rate once and wait for a map to go out, so the bag's
+        last fused cloud is the finished map -- the one the Run Lab shows.
+        The bag records the topic; this only watches for the message."""
+        from std_srvs.srv import SetBool
+
+        got = threading.Event()
+        sub = self.create_subscription(
+            _msg("sensor_msgs.msg", "PointCloud2"),
+            FUSED_TOPIC,
+            lambda _m: got.set(),
+            1,
+        )
+        try:
+            # Must not exceed the live cloud rate, which the wrapper enforces;
+            # that is the recorder's --cloud-hz while a cloud is recorded.
+            final_hz = min(1.0, self.args.cloud_hz) if self.args.cloud_hz > 0 else 1.0
+            self.set_param_double(ZED, "mapping.fused_pointcloud_freq", final_hz)
+            deadline = time.monotonic() + MAP_FINAL_WAIT_S
+            while not got.is_set() and time.monotonic() < deadline:
+                rclpy.spin_once(self, timeout_sec=0.1)
+            # The bag receives the same message independently; give it a
+            # moment to write it before the bag is stopped.
+            time.sleep(1.0)
+            self.log(
+                "final ZED map recorded"
+                if got.is_set()
+                else f"WARNING: no ZED map arrived in {MAP_FINAL_WAIT_S:.0f} s -- "
+                "the bag holds the last one published during the run"
+            )
+        finally:
+            self.destroy_subscription(sub)
+        # Mapping costs GPU the next run's tracking needs; it is per run.
+        self.call(SetBool, f"{ZED}/enable_mapping", SetBool.Request(data=False), 10.0)
 
     def restore_cloud_rate(self):
         if self.cloud_freq_before is not None:
@@ -550,8 +647,9 @@ def main():
     parser.add_argument(
         "--cloud-hz",
         type=float,
-        default=1.0,
-        help="ZED cloud rate for the run; 0 = no cloud",
+        default=0.0,
+        help="ZED live cloud rate for the run; 0 = no live cloud (the default: "
+        "the final map is recorded instead, see --no-map)",
     )
     parser.add_argument(
         "--cloud-any-rate",
@@ -561,7 +659,19 @@ def main():
     parser.add_argument(
         "--no-images", action="store_true", help="skip the camera stream"
     )
-    parser.add_argument("--map", action="store_true", help="enable ZED spatial mapping")
+    parser.add_argument(
+        "--jpeg-quality",
+        type=int,
+        default=50,
+        help="JPEG quality of the recorded camera stream, 1-100; 0 = leave as is",
+    )
+    parser.add_argument(
+        "--map",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="ZED spatial mapping, with the finished map saved in the bag at the "
+        "end (default on; --no-map turns it off)",
+    )
     parser.add_argument(
         "--svo", action="store_true", help="record a ZED SVO2 alongside"
     )

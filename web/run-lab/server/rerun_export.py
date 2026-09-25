@@ -17,13 +17,19 @@ Entity layout (Z up, metres, track frame):
     world/cloud/frame         the ZED cloud at the playhead
     world/cloud/map           the clouds accumulated into one voxel map, static
     world/cloud/zed_map       the ZED's own spatial map (--map), static
+    pose2d/pose               the ZED's raw pose in its OWN map frame, z = 0,
+                              static; pose2d/jumps the steps
+                              no car makes; pose2d/car the pose over time.
+                              Only the "pose2d" layout shows them.
     camera                    EncodedImage frames
     metrics/<group>/<name>    Scalars; one TimeSeriesView per group
     events, rosout            TextLog
 
 Timeline: "run", a duration in seconds -- the same t the Run Lab uses (sim
 time for a simulated run).  The saved blueprint lays the views out; users can
-rearrange and Rerun keeps their layout per recording.
+rearrange and Rerun keeps their layout per recording.  blueprint(follow=True)
+is the same layout opened on the "Follow car" view, rooted at world/car
+(the Replay page's toggle).
 """
 
 from __future__ import annotations
@@ -124,7 +130,12 @@ class RunRecording:
     def __init__(self, path: Path, run_name: str):
         self.path = Path(path)
         self.rec = rr.RecordingStream(APP_ID, recording_id=run_name)
-        self.rec.save(str(self.path), default_blueprint=blueprint())
+        self.rec.save(str(self.path))
+
+    def layout(self, camera_size=None):
+        """The saved blueprint.  Sent once the camera's frame size is known
+        (the 2D view is pinned to it), before any bulk data is written."""
+        self.rec.send_blueprint(blueprint(camera_size))
 
     def at(self, t):
         self.rec.set_time(TIMELINE, duration=float(t))
@@ -251,6 +262,87 @@ class RunRecording:
                 static=True,
             )
 
+    def pose2d(self, series):
+        """The ZED's pose exactly as reported, in its map frame,
+        flat at z = 0: the localisation, before any track fit.  A pose jump
+        is drawn red; the path is broken there and at gaps, so a jump is
+        never smoothed into a line."""
+        c = series["columns"]
+        if "x_map" not in c:
+            return
+        t = _arr(c["t"])
+        x, y = _arr(c["x_map"]), _arr(c["y_map"])
+
+        def strips(px, py):
+            """Runs of consecutive finite samples, split where a step is too
+            long for the car; plus those steps as their own segments."""
+            ok = np.isfinite(px) & np.isfinite(py)
+            runs, cur, jumps = [], [], []
+            for i in range(len(px)):
+                if not ok[i]:
+                    if len(cur) > 1:
+                        runs.append(cur)
+                    cur = []
+                    continue
+                if cur:
+                    j = cur[-1]
+                    step = math.hypot(px[i] - px[j], py[i] - py[j])
+                    # 8 m/s cap on a 20 Hz grid, with room: 0.6 m per sample.
+                    if step > max(0.6, 8.0 * (t[i] - t[j])):
+                        jumps.append([[px[j], py[j], 0.0], [px[i], py[i], 0.0]])
+                        if len(cur) > 1:
+                            runs.append(cur)
+                        cur = []
+                cur.append(i)
+            if len(cur) > 1:
+                runs.append(cur)
+            return [[[px[i], py[i], 0.0] for i in run] for run in runs], jumps
+
+        pose_runs, jumps = strips(x, y)
+        if pose_runs:
+            self.rec.log(
+                "pose2d/pose",
+                rr.LineStrips3D(pose_runs, colors=[SERIES[0]], radii=0.03),
+                static=True,
+            )
+        if jumps:
+            self.rec.log(
+                "pose2d/jumps",
+                rr.LineStrips3D(jumps, colors=[STATUS["bad"]], radii=0.05),
+                static=True,
+            )
+        ok = np.isfinite(x) & np.isfinite(y)
+        if not ok.any():
+            return
+        first = np.flatnonzero(ok)[0]
+        self.rec.log(
+            "pose2d/start",
+            rr.Points3D([[x[first], y[first], 0.0]], colors=[STATUS["good"]], radii=0.12,
+                        labels=["start"]),
+            static=True,
+        )
+        # The car at the playhead: a marker and its heading, moved over time.
+        yaw = _arr(c.get("yaw_map") or [0.0] * len(t))
+        ok &= np.isfinite(yaw)
+        self.rec.log(
+            "pose2d/car",
+            rr.Arrows3D(origins=[[0, 0, 0.02]], vectors=[[0.6, 0, 0]],
+                        colors=[SERIES[7]], radii=0.04),
+            static=True,
+        )
+        half = yaw[ok] / 2
+        rr.send_columns(
+            "pose2d/car",
+            indexes=[rr.TimeColumn(TIMELINE, duration=t[ok])],
+            columns=rr.Transform3D.columns(
+                translation=np.column_stack([x[ok], y[ok], np.zeros(ok.sum())]),
+                quaternion=np.column_stack(
+                    [np.zeros(ok.sum()), np.zeros(ok.sum()), np.sin(half), np.cos(half)]
+                ),
+            ),
+            recording=self.rec,
+        )
+
     def events(self, summary, series):
         c = series["columns"]
         t = _arr(c["t"])
@@ -355,7 +447,9 @@ class RunRecording:
         self.rec.log("camera", rr.EncodedImage(contents=jpeg, media_type="image/jpeg"))
 
 
-def blueprint():
+def blueprint(camera_size=None, *, follow=False):
+    """The layout.  ``follow`` opens on the view that rides with the car
+    instead of the fixed view of the whole course; both are tabs either way."""
     course = rrb.Spatial3DView(
         origin="world",
         name="Course",
@@ -363,12 +457,26 @@ def blueprint():
             position=[20.0, -15.0, 15.0], look_target=[20.0, 0.5, 0.0], eye_up=[0, 0, 1]
         ),
     )
+    # Rooted at the car, so the world is drawn in the car's frame: the eye
+    # sits behind and above it and stays there through every move and turn,
+    # like a chase camera.  (Tracking an entity from a world-rooted view
+    # only follows until the eye is touched or the layout is reloaded.)
     chase = rrb.Spatial3DView(
-        origin="world",
-        name="Chase",
-        contents=["+ world/**", "- world/cloud/map", "- world/cloud/zed_map"],
-        eye_controls=rrb.EyeControls3D(tracking_entity="world/car", eye_up=[0, 0, 1]),
+        origin="world/car",
+        name="Follow car",
+        # The live cloud only: the accumulated maps bury the car up close.
+        contents=["+ /world/**", "- /world/cloud/map", "- /world/cloud/zed_map"],
+        eye_controls=rrb.EyeControls3D(
+            position=[-3.5, 0.0, 2.0], look_target=[1.5, 0.0, 0.2], eye_up=[0, 0, 1]
+        ),
     )
+    # Unpinned, the 2D view fills the pane and crops whatever spills over;
+    # pinned to the frame it letterboxes the whole image instead.
+    bounds = None
+    if camera_size:
+        bounds = rrb.VisualBounds2D(
+            x_range=[0, camera_size[0]], y_range=[0, camera_size[1]]
+        )
     plots = rrb.Tabs(
         *[
             rrb.TimeSeriesView(origin=f"metrics/{g}", name=title)
@@ -378,9 +486,13 @@ def blueprint():
     )
     return rrb.Blueprint(
         rrb.Horizontal(
-            rrb.Vertical(rrb.Tabs(course, chase), plots, row_shares=[3, 2]),
             rrb.Vertical(
-                rrb.Spatial2DView(origin="camera", name="Camera"),
+                rrb.Tabs(course, chase, active_tab=1 if follow else 0),
+                plots,
+                row_shares=[3, 2],
+            ),
+            rrb.Vertical(
+                rrb.Spatial2DView(origin="camera", name="Camera", visual_bounds=bounds),
                 rrb.TimeSeriesView(
                     origin="metrics/clearance", name=GROUP_TITLES["clearance"]
                 ),
@@ -388,12 +500,36 @@ def blueprint():
                     rrb.TextLogView(origin="events", name="Events"),
                     rrb.TextLogView(origin="rosout", name="ROS log"),
                 ),
-                row_shares=[2, 2, 2],
+                row_shares=[3, 2, 2],
             ),
             column_shares=[3, 2],
         ),
-        # Paused: the Run Lab's timeline decides where to look first.
-        rrb.TimePanel(timeline=TIMELINE, state="expanded", play_state="paused"),
+        # Paused: the Run Lab's timeline decides where to look first.  Just
+        # the play bar -- the Run Lab's own timeline sits under the viewer.
+        rrb.TimePanel(timeline=TIMELINE, state="collapsed", play_state="paused"),
+        collapse_panels=True,
+    )
+
+
+def pose2d_blueprint(extent=None):
+    """The ZED page's layout: the pose alone, looked at straight down with
+    x to the right and y up, framed on the pose's extent.  A 3D view rather
+    than a 2D one because Rerun's 2D views put y DOWN, which would mirror
+    every turn."""
+    xmin, xmax, ymin, ymax = extent or (-10.0, 10.0, -10.0, 10.0)
+    cx, cy = (xmin + xmax) / 2, (ymin + ymax) / 2
+    # High enough to see the whole extent through the default ~75 deg FOV.
+    height = max(6.0, 0.8 * max(xmax - xmin, ymax - ymin))
+    view = rrb.Spatial3DView(
+        origin="pose2d",
+        name="ZED pose, map frame (red: jumps)",
+        eye_controls=rrb.EyeControls3D(
+            position=[cx, cy - 0.01, height], look_target=[cx, cy, 0.0], eye_up=[0, 1, 0]
+        ),
+    )
+    return rrb.Blueprint(
+        view,
+        rrb.TimePanel(timeline=TIMELINE, state="collapsed", play_state="paused"),
         collapse_panels=True,
     )
 

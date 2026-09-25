@@ -17,9 +17,17 @@ function theme() {
 }
 
 export class RerunView {
-    constructor(container, { run, height = 720 }) {
+    // view: which layout the server's blueprint route builds -- "replay" (the
+    // whole run) or "pose2d" (the ZED page's top-down pose).  height: a fixed
+    // height in px; without it the viewer fills the page below its top edge.
+    // stamp: when the run was last analysed.  It goes on every URL, so a
+    // re-processed run is a new URL and no browser cache can hand back the
+    // previous recording.
+    constructor(container, { run, view = "replay", height = null, stamp = "" }) {
         this.run = run;
-        this.wrap = h("div", { class: "rerun-wrap", style: { height: `${height}px` } });
+        this.view = view;
+        this.stamp = stamp;
+        this.wrap = h("div", { class: "rerun-wrap" });
         this.status = h("div", { class: "rerun-status" }, "Loading the Rerun viewer…");
         this.wrap.append(this.status);
         container.append(this.wrap);
@@ -28,15 +36,34 @@ export class RerunView {
         this.echoUntil = 0;
         this.lastPush = 0;
         this.offs = [];
+        // Fill the scrolling page area (above the shared timeline) below the
+        // viewer's top edge.
+        this.fit = () => {
+            if (height) {
+                this.wrap.style.height = `${height}px`;
+                return;
+            }
+            const page = document.getElementById("page");
+            if (!page) return;
+            const top = this.wrap.getBoundingClientRect().top - page.getBoundingClientRect().top + page.scrollTop;
+            this.wrap.style.height = `${Math.max(560, page.clientHeight - top - 16)}px`;
+        };
+        this.fit();
+        window.addEventListener("resize", this.fit);
+        this.offs.push(() => window.removeEventListener("resize", this.fit));
         this.start();
     }
 
     async start() {
         try {
             // Absolute: the viewer reads a bare "/api/..." as the host "api".
-            const url = new URL(`/api/runs/${encodeURIComponent(this.run)}/recording.rrd`, location.href).href;
-            await this.viewer.start(url, this.wrap, {
+            const url = new URL(`/api/runs/${encodeURIComponent(this.run)}/recording.rrd?v=${encodeURIComponent(this.stamp)}`, location.href).href;
+            // The layout goes in with the recording, every time: blueprints
+            // apply per application, so without it a page could open on the
+            // layout another page last used.
+            await this.viewer.start([url, this.blueprintUrl(false)], this.wrap, {
                 hide_welcome_screen: true,
+                allow_fullscreen: true,
                 width: "100%",
                 height: "100%",
                 theme: theme(),
@@ -67,6 +94,21 @@ export class RerunView {
         );
         this.ready = true;
         this.push(playhead.t, true);
+    }
+
+    // Swap the layout for the one that opens on the "Follow car" view (or
+    // back to the whole course).  Opening a blueprint applies it to the
+    // recording with the same application id; the time cursor stays put,
+    // but push it again in case the layout's time panel reset it.
+    follow(on) {
+        if (!this.ready) return;
+        this.viewer.open(this.blueprintUrl(on));
+        setTimeout(() => this.push(playhead.t, true), 400);
+    }
+
+    blueprintUrl(follow) {
+        const q = `view=${encodeURIComponent(this.view)}&follow=${follow ? 1 : 0}&v=${encodeURIComponent(this.stamp)}`;
+        return new URL(`/api/runs/${encodeURIComponent(this.run)}/blueprint.rbl?${q}`, location.href).href;
     }
 
     push(t, force) {

@@ -1,4 +1,4 @@
-"""Run Lab: pull runs off the Orin, analyse them, replay them.
+"""Run Lab: pull runs off the Orin, analyse them, watch them back in Rerun.
 
     web/run-lab/run.sh          # builds the UI if needed, serves on :8765
 
@@ -27,7 +27,6 @@ import analyze  # noqa: E402
 import course as course_mod  # noqa: E402
 import orin  # noqa: E402
 from jobs import JobRunner  # noqa: E402
-from replay import ReplayManager, ros_available  # noqa: E402
 
 REPO = HERE.parents[2]
 RUNS = Path(os.environ.get("CFR_RUNS_LOCAL", REPO / "runs")).expanduser()
@@ -36,8 +35,22 @@ SETTINGS = RUNS / ".runlab.json"
 DIST = HERE.parent / "frontend" / "dist"
 
 app = FastAPI(title="CfR Run Lab")
+
+
+@app.middleware("http")
+async def revalidate(request, call_next):
+    """Re-processing rewrites a run's analysis in place, under the same URL.
+    Without Cache-Control the browser guesses a freshness period from
+    Last-Modified and keeps serving the old summary and recording.rrd without
+    asking.  no-cache makes it revalidate every time: an unchanged file is a
+    cheap 304 on its ETag, a changed one is fetched."""
+    response = await call_next(request)
+    # Everything but the build's content-hashed assets: the API, and the page
+    # itself -- a stale index.html loads a stale app bundle.
+    if not request.url.path.startswith("/assets/"):
+        response.headers.setdefault("Cache-Control", "no-cache")
+    return response
 jobs = JobRunner()
-replay = ReplayManager()
 
 
 def settings():
@@ -72,7 +85,6 @@ def analysis_file(name, filename):
 def health():
     return {
         "runs_dir": str(RUNS),
-        "ros_available": ros_available(),
         "version": analyze.VERSION,
         "settings": settings(),
     }
@@ -317,6 +329,34 @@ def recording(name: str):
     )
 
 
+@app.get("/api/runs/{name}/blueprint.rbl")
+def recording_blueprint(name: str, follow: bool = False, view: str = "replay"):
+    """The recording's layout, opened on the Course view or (follow=1) the
+    view that rides with the car.  The viewer applies a blueprint it opens
+    to the recording with the same application id."""
+    import tempfile
+
+    import rerun_export
+
+    summary = json.loads(analysis_file(name, "summary.json").read_text())
+    if view == "pose2d":
+        # Framed on the pose itself, from the series the analysis already has.
+        series = json.loads(analysis_file(name, "series.json").read_text())
+        xs = [v for v in series["columns"].get("x_map", []) if v is not None]
+        ys = [v for v in series["columns"].get("y_map", []) if v is not None]
+        extent = [min(xs), max(xs), min(ys), max(ys)] if xs and ys else None
+        bp = rerun_export.pose2d_blueprint(extent)
+    else:
+        bp = rerun_export.blueprint(
+            (summary.get("perception") or {}).get("camera_size"), follow=follow
+        )
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "layout.rbl"
+        bp.save(rerun_export.APP_ID, path)
+        data = path.read_bytes()
+    return Response(data, media_type="application/octet-stream")
+
+
 # One native Rerun viewer at a time, owned by the server.
 _viewer = {"proc": None}
 
@@ -460,72 +500,6 @@ def markdown_report(name, s):
                 f"| {lap['lap']} | {lap['time']} | {lap['max_speed']} | {lap['min_clearance']} | {lap['mean_abs_cte']} |"
             )
     return "\n".join(lines) + "\n"
-
-
-# ------------------------------------------------------------------- replay
-
-
-@app.get("/api/replay")
-def replay_status():
-    return replay.status()
-
-
-@app.post("/api/replay/gazebo")
-def replay_gazebo(body: dict = Body(...)):
-    try:
-        return replay.start_gazebo(
-            run_dir(body["run"]),
-            gui=bool(body.get("gui", False)),
-            web=bool(body.get("web", True)),
-            rate=float(body.get("rate", 1.0)),
-            start=float(body.get("start", 0.0)),
-            loop=bool(body.get("loop", False)),
-        )
-    except (RuntimeError, FileNotFoundError) as error:
-        raise HTTPException(409, str(error)) from error
-
-
-@app.post("/api/replay/rviz")
-def replay_rviz(body: dict = Body(...)):
-    try:
-        return replay.start_rviz(
-            run_dir(body["run"]),
-            rate=float(body.get("rate", 1.0)),
-            start=float(body.get("start", 0.0)),
-            loop=bool(body.get("loop", False)),
-        )
-    except RuntimeError as error:
-        raise HTTPException(409, str(error)) from error
-
-
-@app.post("/api/replay/gui")
-def replay_gui():
-    try:
-        return replay.open_gazebo_gui()
-    except RuntimeError as error:
-        raise HTTPException(409, str(error)) from error
-
-
-@app.post("/api/replay/control")
-def replay_control(body: dict = Body(...)):
-    action = body.get("action")
-    paths = {"seek": "/seek", "pause": "/pause", "play": "/play", "rate": "/rate"}
-    if action not in paths:
-        raise HTTPException(400, "unknown action")
-    try:
-        return replay.ghost_control(paths[action], body)
-    except OSError as error:
-        raise HTTPException(409, f"ghost not reachable: {error}") from error
-
-
-@app.post("/api/replay/stop")
-def replay_stop():
-    return replay.stop()
-
-
-@app.on_event("shutdown")
-def _shutdown():
-    replay.stop()
 
 
 # ------------------------------------------------------------------- static

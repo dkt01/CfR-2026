@@ -89,7 +89,7 @@ function renderSidebar() {
                   RUN_TABS.map(([key, label, ic]) => item(`#/run/${encodeURIComponent(r.run)}/${key}`, label, ic, r.tab === key)),
               ]
             : null,
-        h("div", { class: "sidebar-foot" }, state.health ? h("span", {}, state.health.ros_available ? "ROS 2 ✓" : "no ROS") : null, themeBtn),
+        h("div", { class: "sidebar-foot" }, themeBtn),
         ].flat(Infinity).filter(Boolean),
     );
 }

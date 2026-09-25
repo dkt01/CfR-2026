@@ -38,6 +38,12 @@
       # default, pinned because older revisions shipped HD1080 at 30.
       grab_resolution: 'HD720'
       grab_frame_rate: 60
+      # Images and depth are PUBLISHED at 12 fps; tracking still runs on every
+      # grabbed frame.  Nothing on the car needs more: the start-signal
+      # detector was tuned for a 15 Hz camera (confirm_frames 2 is 167 ms
+      # here), and the recorder's JPEG stream at the full grab rate was 84% of
+      # a 5 GB bag and CPU the Orin needed to hold the grab rate.
+      pub_frame_rate: 12.0
       # Undistortion.  The published `rect` images and all tracking use the
       # factory calibration stored for this camera; self-calibration refines
       # the stereo extrinsics at open.  Both stay as the factory intends --
