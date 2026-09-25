@@ -111,14 +111,18 @@ class ObstacleRacer(Node):
         self.policy = (
             NumpyPolicy.load(self.param("policy")) if self.mode == "policy" else None
         )
-        depth = int(self.cfg["env"]["frame_stack"])
-        if self.policy is not None and self.policy.obs_dim != O.FRAME_DIM * depth:
+        want = O.obs_dim(self.cfg)
+        if self.policy is not None and self.policy.obs_dim != want:
             raise SystemExit(
                 f"{self.param('policy')} takes {self.policy.obs_dim} inputs; observation.py "
-                f"builds {O.FRAME_DIM * depth}.  It was trained on a different observation."
+                f"builds {want} under {self.param('config')}.  Ship the policy's own "
+                "config.yaml: it was trained on a different observation."
             )
-        self.stack = O.Stack(1, depth)
-        self.stack_ready = False
+        self.stack = O.Stack(1, O.frame_offsets(self.cfg), O.frame_dim(self.cfg))
+        self.memory = O.Memory(1, self.cfg)
+        # True until the first tick of a run: the stack, the memory and the
+        # prior then start from that frame, as an episode does in training.
+        self.fresh = True
 
         self.dt = 1.0 / float(self.cfg["env"]["control_hz"])
         self.scan = np.full((1, O.SCAN_BINS), float(self.cfg["sensor"]["max_range"]))
@@ -135,7 +139,6 @@ class ObstacleRacer(Node):
         self.started_at = None
         self.prev_action = np.zeros((1, 2))
         self.prior = np.zeros(1)
-        self.prior_fresh = True
 
         self.create_subscription(
             PointCloud2,
@@ -227,6 +230,7 @@ class ObstacleRacer(Node):
         if msg.data and not self.go:
             self.get_logger().info("GREEN -- going")
             self.started_at = self.now()
+            self.fresh = True
         self.go = self.go or bool(msg.data)
 
     def on_done(self, msg):
@@ -238,6 +242,7 @@ class ObstacleRacer(Node):
         self.go = bool(request.data)
         self.done = False if request.data else self.done
         self.started_at = self.now() if request.data else None
+        self.fresh = True
         response.success = True
         response.message = "manual start" if request.data else "manual stop"
         return response
@@ -267,11 +272,12 @@ class ObstacleRacer(Node):
         speed_meas = O.tach(np.array([speed]))
         yaw_rate = np.array([self.yaw_rate])
 
+        fresh = np.array([self.fresh])
+        if self.fresh:
+            self.prev_action = np.zeros((1, 2))
         raw = O.prior_steer(self.scan, self.gate, yaw_rate, self.cfg)
-        self.prior = O.smooth_prior(
-            self.prior, raw, np.array([self.prior_fresh]), self.cfg
-        )
-        self.prior_fresh = False
+        self.prior = O.smooth_prior(self.prior, raw, fresh, self.cfg)
+        memory = self.memory.update(speed_meas, fresh=fresh)
         frame = O.frame(
             self.scan,
             self.gate,
@@ -280,10 +286,11 @@ class ObstacleRacer(Node):
             self.prev_action,
             self.prior,
             self.cfg,
+            memory,
         )
-        if not self.stack_ready:
+        if self.fresh:
             self.stack.reset(np.array([0]), frame)
-            self.stack_ready = True
+            self.fresh = False
             obs = self.stack.obs
         else:
             obs = self.stack.push(frame)

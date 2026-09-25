@@ -10,7 +10,7 @@ the segmented ZED cloud (scan + gates, as `cloud_segmentation.py`'s
 `scan_from_segmentation` and `Segmentation.gates` give them), the wheel speed
 the Arduino reports, and the yaw rate.  No pose, no map, no centerline.
 
-Per frame (FRAME_DIM = 49):
+Per frame (FRAME_DIM = 49, or 52 with env.memory_features):
 
     scan      36  nearest blocking return per bearing bin / max_range,
                   bin 0 rightmost (scan_from_segmentation's order)
@@ -22,8 +22,15 @@ Per frame (FRAME_DIM = 49):
     yaw rate   1  rad/s / 3
     action     2  previous raw action
     prior      1  the prior's steering command
+    memory     3  with env.memory_features (Memory, below): time the tach has
+                  read stopped / 3 s, the tach speed averaged over ~2 s / v_cap,
+                  and the direction the controller last reported (+1 / -1)
 
-Two frames are stacked, newest first.
+Frames are stacked newest first: env.frame_offsets control steps back (v5:
+0, 2, 10, 20 -- now, 0.1, 0.5 and 1.0 s ago), or the last env.frame_stack
+steps in older configs.  A second of scan history covers what the 110 deg
+camera loses beside the car: hoop posts as it threads them, bales as it
+turns past them.
 """
 
 from __future__ import annotations
@@ -35,6 +42,8 @@ import numpy as np
 SCAN_BINS = 36
 GATE_DIM = 8
 FRAME_DIM = SCAN_BINS + GATE_DIM + 5
+MEMORY_DIM = 3
+STOP_CAP_S = 3.0  # Memory's stopped time saturates here
 TACH_FLOOR = 0.30  # m/s: ArduinoStatus.speed cannot resolve below this
 YAW_RATE_SCALE = 3.0
 
@@ -182,21 +191,100 @@ def smooth_prior(previous, raw, fresh, cfg):
     return out
 
 
-def frame(scan, gate, speed_meas, yaw_rate_meas, prev_action, prior, cfg):
-    """One frame of the observation, (B, FRAME_DIM) float32."""
+def frame_dim(cfg):
+    """Values per frame under this config."""
+    return FRAME_DIM + (MEMORY_DIM if cfg["env"].get("memory_features") else 0)
+
+
+def frame_offsets(cfg):
+    """Control steps back of each stacked frame, newest first."""
+    e = cfg["env"]
+    if "frame_offsets" in e:
+        return [int(k) for k in e["frame_offsets"]]
+    return list(range(int(e["frame_stack"])))
+
+
+def obs_dim(cfg):
+    return frame_dim(cfg) * len(frame_offsets(cfg))
+
+
+def frame(scan, gate, speed_meas, yaw_rate_meas, prev_action, prior, cfg, memory=None):
+    """One frame of the observation, (B, frame_dim(cfg)) float32.
+
+    `memory` is Memory.update's (B, 3), required when the config turns
+    memory_features on and ignored otherwise.
+    """
     s = cfg["sensor"]
     v_cap = float(cfg["env"]["v_cap"])
-    return np.concatenate(
-        [
-            np.asarray(scan) / float(s["max_range"]),
-            np.asarray(gate),
-            (np.asarray(speed_meas) / v_cap)[:, None],
-            np.clip(np.asarray(yaw_rate_meas) / YAW_RATE_SCALE, -3, 3)[:, None],
-            np.asarray(prev_action),
-            np.asarray(prior)[:, None],
-        ],
-        axis=1,
-    ).astype(np.float32)
+    parts = [
+        np.asarray(scan) / float(s["max_range"]),
+        np.asarray(gate),
+        (np.asarray(speed_meas) / v_cap)[:, None],
+        np.clip(np.asarray(yaw_rate_meas) / YAW_RATE_SCALE, -3, 3)[:, None],
+        np.asarray(prev_action),
+        np.asarray(prior)[:, None],
+    ]
+    if cfg["env"].get("memory_features"):
+        if memory is None:
+            raise ValueError("memory_features is on: pass Memory.update's output")
+        parts.append(np.asarray(memory))
+    return np.concatenate(parts, axis=1).astype(np.float32)
+
+
+class Memory:
+    """Slow state the policy cannot see in a second of frames, from the tach.
+
+    All three come from ArduinoStatus.speed alone, updated once per control
+    step, so the car computes them exactly as training does:
+
+        stopped    s the tach has read zero, capped at STOP_CAP_S, / STOP_CAP_S:
+                   how long the car has been stuck, which the frames cannot
+                   tell apart from a moment ago
+        mean speed the tach reading low-passed over memory_tau_s, / v_cap:
+                   signed, so it says whether the car has been backing out
+        direction  the sign of the last nonzero reading: the controller's
+                   direction, which the tach hides below 0.3 m/s -- whether
+                   reverse has engaged yet (+1 until anything is read)
+    """
+
+    def __init__(self, n, cfg):
+        self.dt = 1.0 / float(cfg["env"]["control_hz"])
+        self.tau = float(cfg["env"].get("memory_tau_s", 2.0))
+        self.v_cap = float(cfg["env"]["v_cap"])
+        self.stopped = np.zeros(n)
+        self.mean_v = np.zeros(n)
+        self.direction = np.ones(n)
+
+    def update(self, speed_meas, idx=None, fresh=None):
+        """Advance cars `idx` (all by default) by one step; returns (k, 3).
+
+        `fresh` marks cars on their first frame: they start from their own
+        reading (stopped 0, mean speed = the reading) rather than from the
+        last episode's.
+        """
+        if idx is None:
+            idx = np.arange(len(self.stopped))
+        v = np.asarray(speed_meas, dtype=np.float64)
+        if fresh is not None and np.any(fresh):
+            f = idx[np.asarray(fresh, bool)]
+            self.stopped[f] = 0.0
+            self.mean_v[f] = v[np.asarray(fresh, bool)]
+            self.direction[f] = 1.0
+        moving = v != 0.0
+        self.stopped[idx] = np.where(
+            moving, 0.0, np.minimum(self.stopped[idx] + self.dt, STOP_CAP_S)
+        )
+        self.direction[idx] = np.where(moving, np.sign(v), self.direction[idx])
+        a = self.dt / (self.tau + self.dt)
+        self.mean_v[idx] += a * (v - self.mean_v[idx])
+        return np.stack(
+            [
+                self.stopped[idx] / STOP_CAP_S,
+                self.mean_v[idx] / self.v_cap,
+                self.direction[idx],
+            ],
+            axis=1,
+        )
 
 
 def action_to_command(action, prior, cfg):
@@ -223,10 +311,18 @@ def speed_to_action(speed, cfg):
 
 
 class Stack:
-    """The last `depth` frames, newest first, flattened."""
+    """Frames `offsets` control steps back (0 = newest), newest first, flattened.
 
-    def __init__(self, n, depth):
-        self.buf = np.zeros((n, depth, FRAME_DIM), np.float32)
+    Keeps every frame back to the oldest offset; a reset fills the history
+    with the first frame, so a fresh episode reads as having stood there.
+    """
+
+    def __init__(self, n, offsets, dim=FRAME_DIM):
+        if isinstance(offsets, int):  # a plain depth: the last `offsets` frames
+            offsets = range(offsets)
+        self.offsets = np.asarray(list(offsets), np.int64)
+        assert self.offsets[0] == 0 and (np.diff(self.offsets) > 0).all()
+        self.buf = np.zeros((n, int(self.offsets[-1]) + 1, dim), np.float32)
 
     def reset(self, idx, first):
         self.buf[idx] = first[:, None, :]
@@ -234,8 +330,8 @@ class Stack:
     def push(self, f):
         self.buf[:, 1:] = self.buf[:, :-1]
         self.buf[:, 0] = f
-        return self.buf.reshape(len(self.buf), -1)
+        return self.obs
 
     @property
     def obs(self):
-        return self.buf.reshape(len(self.buf), -1)
+        return self.buf[:, self.offsets].reshape(len(self.buf), -1)

@@ -53,6 +53,16 @@ env:
   fail_memory: 400          # failures remembered per layout
   section_start_prob: 0.45
   section_backoff_m: [0.5, 4.0]
+  # Which obstacle a section start goes before: in proportion to its recent
+  # failure rate (env.section_weights), mixed this much with uniform so the
+  # obstacles already cleared keep some practice.  1.0 is v4's uniform pick.
+  section_uniform_mix: 0.3
+  section_weight_decay: 0.999   # per training episode: ~1000-episode memory
+  # Of dealt starts, this share start exactly where a recent episode ended
+  # pinned, stopped against what it hit, so backing out gets practiced:
+  # v4 at 20M, 38 of 48 held-out runs ended pinned, and 61% of pinned cars
+  # never commanded reverse before the run was cut.
+  stuck_start_prob: 0.10
   # Throttle dither: below ~1 m/s the Arduino drives the ESC in bursts (bench:
   # 200-350 spur RPM sd around 150-500 RPM targets, README), the tachometer
   # reads zero half the time under 0.6 m/s and nothing under 0.3 m/s
@@ -70,12 +80,21 @@ env:
   stall_speed: 0.25         # m/s, either direction
   stall_s: 2.5
   pinned_window_s: 3.0      # a stop this soon after a touch is "pinned",
-                            # charged the crash penalty, not the stall one
+                            # charged reward.pinned, not the stall one...
+  pinned_s: 6.0             # ...and ends the run after this long stopped,
+                            # not stall_s: reverse engages only after ~0.5 s
+                            # under the tach floor, then it has to back off
+                            # and drive on
   progress_window_s: 6.0    # end the run as a stall if it advanced less than...
   progress_window_m: 0.5    # ...this over the window (going round, not along)
   off_course_m: 2.2         # m from the centerline: left the lane (the bucket
                             # section and east corridor are ~3 m wide)
-  frame_stack: 2
+  # Frames the policy sees, in control steps back: now, 0.1, 0.5 and 1.0 s.
+  # v4 had two frames 0.1 s apart and no idea how long it had been stuck or
+  # where the hoop posts went once they left the camera's 110 deg.
+  frame_offsets: [0, 2, 10, 20]
+  memory_features: true     # observation.Memory: stopped time, ~2 s mean
+  memory_tau_s: 2.0         # speed, controller direction (tach only)
 
 sensor:
   bins: 36
@@ -123,6 +142,9 @@ reward:
   target_lap_s: 90.0
   bump: 6.0                 # times (m/s lost to contact)^2
   crash: -60.0
+  pinned: -45.0             # stuck, after pinned_s of the time cost: with
+                            # that wait it must cost no more than a hard crash
+                            # (reward.py), or crawling beats touching again
   hoop_miss: -60.0
   stall: -70.0              # stopping is the worst way to end a run
   off_course: -60.0
@@ -182,7 +204,10 @@ train:
   net_arch: [128, 128]
   log_std_init: -1.5            # std 0.22: exploration noise must stay cheap
                                 # next to the time cost (reward.py check)
-  log_std_range: [-2.5, -0.5]   # std 0.08..0.61, sigmoid-bounded (ppo_policy.py)
+  log_std_range: [-2.0, -0.5]   # std 0.135..0.61, sigmoid-bounded (ppo_policy.py).
+                                # v4's floor was -2.5 (0.082): std slid onto it by
+                                # 40M, when progress stalled, leaving +-0.19 m/s
+                                # of speed noise -- too little to try reversing
   eval_every_steps: 2000000
   eval_episodes_per_layout: 12
   # Per obstacle, on the held-out layouts: dealt just before it, does the

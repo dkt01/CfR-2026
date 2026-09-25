@@ -20,7 +20,8 @@ Per control step (20 Hz):
 Episodes start in the start box ((-0.7, 0), yaw 0, +/-0.1 m in x and y,
 +/-5 deg, from rest) or, for training coverage, dealt part way round with the
 same noise: before a recent failure, before an obstacle picked uniformly from
-all of them, or anywhere.  Every episode is one full lap from wherever it started: progress
+all of them, or anywhere -- or, with stuck_start_prob, exactly where a recent
+episode ended pinned against something, stopped, to practice backing out.  Every episode is one full lap from wherever it started: progress
 wraps round the loop at the timing line, all three hoops have to be threaded
 during the episode, and the finish counts only once the car is back past its
 own start point (and, from the start box, over the timing line).
@@ -84,11 +85,27 @@ def _regions():
     return regions
 
 
+# Regions whose drivable surface is up off the floor.  The regions are 2D, and
+# the overpass deck runs over the tunnel, so where a centerline point is in
+# both it is the line's height that says which one the car is driving: on the
+# deck it is the overpass, on the floor under it the tunnel.  Picking the
+# first 2D hit instead labeled the tunnel exit (floor level, s ~15.6-16.3 m)
+# "overpass_ramp": every one of v4's 19 held-out "pinned@overpass_ramp"
+# endings at 20M was there, and the overpass section ran on to 16.3 m,
+# through the helix and the tunnel.
+ELEVATED_REGIONS = ("overpass_ramp", "helical_ramp")
+ELEVATED_Z = 0.15  # m; the deck is at 0.64, the tunnel floor at 0
+
+
 def zone_labels(lines):
     """Per layout, a zone index for every centerline point, and the names.
 
     Named regions come from the obstacle-course-regions skill; the lane
-    between two of them is 'after_<previous>'.
+    between two of them is 'after_<previous>'.  Where 2D regions overlap,
+    the one at the line's height wins (ELEVATED_REGIONS), and an obstacle
+    the line has left is never re-entered: each is driven once a lap, so a
+    later point inside its outline is the floor under it (past the tunnel,
+    under the ramp), not the obstacle again.
     """
     regions = _regions()
     names = ["start"]
@@ -96,9 +113,18 @@ def zone_labels(lines):
     for line in lines:
         labels = np.zeros(len(line.points), np.int64)
         current = "start"
-        for i, (x, y, _) in enumerate(line.points):
-            hits = regions.classify(float(x), float(y))
+        left = set()
+        for i, (x, y, z) in enumerate(line.points):
+            hits = [
+                h for h in regions.classify(float(x), float(y)) if h.name not in left
+            ]
+            if len(hits) > 1:
+                up = z > ELEVATED_Z
+                level = [h for h in hits if (h.name in ELEVATED_REGIONS) == up]
+                hits = level or hits
             if hits:
+                if hits[0].name != current and current != "start":
+                    left.add(current)
                 current = hits[0].name
                 name = current
             else:
@@ -138,8 +164,9 @@ class ObstacleEnv:
         self._hoop_geometry()
         self._deal_table()
         self._section_geometry()
-        self.stack = O.Stack(n, int(e["frame_stack"]))
-        self.obs_dim = O.FRAME_DIM * int(e["frame_stack"])
+        self.stack = O.Stack(n, O.frame_offsets(cfg), O.frame_dim(cfg))
+        self.obs_dim = O.obs_dim(cfg)
+        self.memory = O.Memory(n, cfg)
         self.act_dim = 2
         z = np.zeros(n)
         self.t = z.copy()
@@ -181,6 +208,21 @@ class ObstacleEnv:
         self.visited = np.zeros((n, len(self.zone_names)), bool)
         self.zone_attempts = np.zeros(len(self.zone_names), np.int64)
         self.zone_fails = np.zeros(len(self.zone_names), np.int64)
+        # Decaying counts, per obstacle, of training runs that met it and of
+        # those that failed at it, for weighting section starts toward what
+        # the policy cannot yet do.  A run that ends in the lane after an
+        # obstacle ("after_tunnel") failed that obstacle.
+        self.practice_met = np.zeros(len(self.zone_names))
+        self.practice_fail = np.zeros(len(self.zone_names))
+        self.section_of_zone = np.array(
+            [
+                self.zone_names.index(n[len("after_") :])
+                if n.startswith("after_")
+                else (-1 if n == "start" else z)
+                for z, n in enumerate(self.zone_names)
+            ],
+            np.int64,
+        )
 
     # ------------------------------------------------------------ geometry
 
@@ -250,7 +292,8 @@ class ObstacleEnv:
     def _deal_table(self):
         """Per layout: arc lengths a car can be dealt in at, part way round.
 
-        Anywhere round the loop, not on top of a bucket or a hoop.
+        Anywhere round the loop, not on top of a bucket, a hoop or a Wide
+        Section bale.
         The helix is dealt too (place() sets the car on its segments): it is
         where v1 crashed, and a policy that only meets it at the end of a
         ramp climb practices it a few times per million steps.
@@ -276,6 +319,8 @@ class ObstacleEnv:
                     < 0.6
                 ):
                     continue
+                if centerline_module.near_wide_bale(layout, x, y, 0.45):
+                    continue
                 ok.append(s)
             self.deal.append(np.asarray(ok))
         # Where recent training episodes failed, per layout, for dealing
@@ -283,6 +328,10 @@ class ObstacleEnv:
         memory = int(e.get("fail_memory", 400))
         self.fail_s = np.zeros((len(self.deal), memory))
         self.fail_n = np.zeros(len(self.deal), np.int64)
+        # Where recent episodes ended pinned, as (s, x, y, z, yaw), for
+        # starting a car right there, stopped, to learn to back out.
+        self.stuck_pose = np.zeros((len(self.deal), memory, 5))
+        self.stuck_n = np.zeros(len(self.deal), np.int64)
 
     # --------------------------------------------------------------- reset
 
@@ -310,8 +359,19 @@ class ObstacleEnv:
         yaw = np.empty(k)
         speed = np.zeros(k)
         s0 = np.zeros(k)
+        stuck = np.zeros(k, bool)
+        p_stuck = (
+            0.0
+            if self.forced_s is not None or self.start_box_only
+            else float(e.get("stuck_start_prob", 0.0))
+        )
         for i in range(k):
-            if box[i]:
+            n_stuck = min(self.stuck_n[lay[i]], self.stuck_pose.shape[1])
+            if not box[i] and n_stuck and self.rng.random() < p_stuck:
+                pose = self.stuck_pose[lay[i], self.rng.integers(n_stuck)]
+                s0[i], x[i], y[i], z[i], yaw[i] = pose
+                stuck[i] = True
+            elif box[i]:
                 x[i], y[i], z[i] = START_BOX
                 yaw[i] = 0.0
             else:
@@ -334,19 +394,27 @@ class ObstacleEnv:
                     s0[i] = table[max(j, 0)]
                 x[i], y[i], z[i], yaw[i] = self.lines.lines[lay[i]].pose_at(s0[i])
                 speed[i] = self.rng.uniform(*e["dealt_speed"])
-        x += self.rng.uniform(-xy, xy, k)
-        y += self.rng.uniform(-xy, xy, k)
-        yaw += self.rng.uniform(-yawn, yawn, k)
+        # A stuck start goes exactly where the car stopped: noise could put
+        # it inside what it was stuck on.
+        free = ~stuck
+        x[free] += self.rng.uniform(-xy, xy, free.sum())
+        y[free] += self.rng.uniform(-xy, xy, free.sum())
+        yaw[free] += self.rng.uniform(-yawn, yawn, free.sum())
         self.plant.reset(idx, lay, x, y, z, yaw, speed)
 
-        # A dealt start that lands the car against something is re-dealt.
-        touching = P.body_contact(
-            self.plant.OBS, self.plant.lay[idx], self.plant.state[idx], 0.03
+        # A dealt start that lands the car against something is re-dealt;
+        # a stuck start is against something on purpose.
+        touching = (
+            P.body_contact(
+                self.plant.OBS, self.plant.lay[idx], self.plant.state[idx], 0.03
+            )
+            & ~stuck
         )
         if touching.any() and attempt < 4:
             self._reset_idx(idx[touching], attempt + 1, lay[touching])
-            idx = idx[~touching]
-            lay, s0, box = lay[~touching], s0[~touching], box[~touching]
+            keep = ~touching
+            idx, lay, s0 = idx[keep], lay[keep], s0[keep]
+            box, stuck = box[keep], stuck[keep]
             if len(idx) == 0:
                 return
 
@@ -366,7 +434,8 @@ class ObstacleEnv:
         self.hoop_d[idx] = np.mod(self.hoop_s[lay] - self.s[idx, None], loop[:, None])
         self.t[idx] = 0.0
         self.stall_t[idx] = 0.0
-        self.touch_age[idx] = np.inf
+        # A stuck start has just touched: the recovery window applies.
+        self.touch_age[idx] = np.where(stuck, 0.0, np.inf)
         self.progress_mark[idx] = 0.0
         self.hoop_state[idx] = 0
         self.hoop_u[idx] = self._hoop_u(idx)
@@ -385,7 +454,7 @@ class ObstacleEnv:
         self.touches[idx] = 0
         self.v_lost[idx] = 0.0
         self.visited[idx] = False
-        self.start_kind[idx] = np.where(box, 0, 1)
+        self.start_kind[idx] = np.where(box, 0, np.where(stuck, 2, 1))
         r = self.cfg["randomize"]
         if r["enabled"]:
             self.yaw_noise[idx] = self.rng.uniform(*r["yaw_rate_noise"], len(idx))
@@ -404,16 +473,31 @@ class ObstacleEnv:
     def _pick_layouts(self, k):
         return self.layout_ids[self.rng.integers(len(self.layout_ids), size=k)]
 
+    def section_weights(self, lay=0):
+        """Chance of each obstacle being the one a section start is dealt before.
+
+        In proportion to its recent failure rate, (fails + 1) / (met + 2),
+        mixed with uniform by env.section_uniform_mix so the obstacles the
+        policy already clears stay in practice.  v4 spent as many section
+        starts on gravel and the car wash (100% clear) as on the tunnel and
+        the bank (50%) or the buckets and hoops (12%).  A mix of 1 is uniform.
+        """
+        cands = list(self.section_s[lay])
+        rate = (self.practice_fail[cands] + 1.0) / (self.practice_met[cands] + 2.0)
+        mix = float(self.cfg["env"].get("section_uniform_mix", 1.0))
+        p = (1.0 - mix) * rate / rate.sum() + mix / len(cands)
+        return cands, p
+
     def section_target(self, lay, zone=None):
         """An arc length a few meters before an obstacle on layout `lay`.
 
-        The obstacle is `zone`, or one picked uniformly from those the line
-        passes through, so each is practiced equally however far into the
-        lap it sits.
+        The obstacle is `zone`, or one picked by section_weights from those
+        the line passes through.
         """
         spans = self.section_s[lay]
         if zone is None:
-            zone = list(spans)[self.rng.integers(len(spans))]
+            cands, p = self.section_weights(lay)
+            zone = cands[self.rng.choice(len(cands), p=p)]
         back = self.rng.uniform(*self.cfg["env"]["section_backoff_m"])
         return spans[zone][0] - back
 
@@ -437,12 +521,12 @@ class ObstacleEnv:
         speed = O.tach(signed + self.rng.normal(0, 1, k) * self.speed_noise[idx])
         yaw_rate = st[:, P.S_R] + self.rng.normal(0, 1, k) * self.yaw_noise[idx]
         raw = O.prior_steer(scan, gate, yaw_rate, self.cfg)
-        prior = O.smooth_prior(
-            self.prior[idx], raw, fresh[idx] if fresh is not None else None, self.cfg
-        )
+        first = fresh[idx] if fresh is not None else None
+        prior = O.smooth_prior(self.prior[idx], raw, first, self.cfg)
         self.prior[idx] = prior
+        memory = self.memory.update(speed, idx, first)
         return O.frame(
-            scan, gate, speed, yaw_rate, self.prev_action[idx], prior, self.cfg
+            scan, gate, speed, yaw_rate, self.prev_action[idx], prior, self.cfg, memory
         )
 
     def _track(self, st, lay):
@@ -513,14 +597,28 @@ class ObstacleEnv:
         self.stall_t = np.where(
             v < float(e["stall_speed"]), self.stall_t + self.dt, 0.0
         )
-        stalled = self.stall_t >= float(e["stall_s"])
+        # Stopped against something it touched in the last pinned_window_s
+        # is "pinned".  It gets pinned_s, not stall_s, before the run ends:
+        # time for the Arduino to change direction (~0.5 s under the tach
+        # floor), back off and drive on.  v4 at 20M: 61% of pinned cars never
+        # commanded reverse in their last 2.5 s -- too short to learn in.
+        self.touch_age = np.where(touched, 0.0, self.touch_age + self.dt)
+        recovering = self.touch_age <= float(e["pinned_window_s"])
+        limit = np.where(
+            recovering, float(e.get("pinned_s", e["stall_s"])), float(e["stall_s"])
+        )
+        stalled = self.stall_t >= limit
         all_idx = np.arange(self.n)
         off_course = off > float(e["off_course_m"])
         finished = (self.dist >= self.goal) & (self.hoop_state == 1).all(1)
         window = float(e["progress_window_s"])
         due = self.t - self.progress_mark[:, 0] >= window
-        no_progress = due & (
-            self.dist - self.progress_mark[:, 1] < float(e["progress_window_m"])
+        # Backing off a wall is progress lost on purpose: a window with a
+        # touch in it is not judged (the stall clock still is).
+        no_progress = (
+            due
+            & (self.touch_age >= window)
+            & (self.dist - self.progress_mark[:, 1] < float(e["progress_window_m"]))
         )
         self.progress_mark[due] = np.c_[self.t[due], self.dist[due]]
         # Circling or edging about without getting anywhere is stopping by
@@ -528,14 +626,13 @@ class ObstacleEnv:
         stopped = stalled | no_progress
         timeout = self.t >= float(e["episode_s"])
         crash = crashed | rolled
-        # Stopped against what it just hit: charged as the crash it is, not
-        # as the (dearer) stall.  Otherwise a head-on touch at walking pace,
-        # which leaves the car stuck pushing on the wall, costs more than
-        # hitting the wall hard enough to crash -- v3/v4-smoke: every stall
-        # at step 0 came within 3 s of a contact, and the policy learned to
-        # crawl.  Parking in the open stays the worst ending.
-        self.touch_age = np.where(touched, 0.0, self.touch_age + self.dt)
-        pinned = stopped & (self.touch_age <= float(e["pinned_window_s"]))
+        # Stuck against what it just hit is charged reward.pinned, set so
+        # that with the longer wait it costs no more than hitting the wall
+        # hard enough to crash (reward.py checks it).  Otherwise a head-on
+        # touch at walking pace costs more than a crash -- v3/v4-smoke: every
+        # stall at step 0 came within 3 s of a contact, and the policy learned
+        # to crawl.  Parking in the open stays the worst ending.
+        pinned = stopped & recovering
 
         # Reward.
         clearance = P.body_clearance(self.plant.OBS, lay, st, CLEARANCE_RINGS)
@@ -558,7 +655,7 @@ class ObstacleEnv:
             hoops_now,
             finished,
             lap_time,
-            crash | pinned,
+            crash,
             hoop_missed,
             stopped & ~pinned,
             off_course,
@@ -568,6 +665,7 @@ class ObstacleEnv:
             lost,
             speed_cmd - self.prev_speed_cmd,
             align,
+            pinned,
         )
         self.prev_speed_cmd = speed_cmd
         self.prev_dsteer = dsteer
@@ -626,10 +724,30 @@ class ObstacleEnv:
                 self.zone_attempts[met] += 1
                 if causes[i] in FAILURES:
                     self.zone_fails[self.zone_of[lay[i], self.idx[i]]] += 1
+                if not self.start_box_only and self.forced_s is None:
+                    decay = float(e.get("section_weight_decay", 0.999))
+                    self.practice_met *= decay
+                    self.practice_fail *= decay
+                    sections = self.section_of_zone[np.flatnonzero(met)]
+                    self.practice_met[np.unique(sections[sections >= 0])] += 1.0
+                    if causes[i] in FAILURES:
+                        where = self.section_of_zone[self.zone_of[lay[i], self.idx[i]]]
+                        if where >= 0:
+                            self.practice_fail[where] += 1.0
                 if not self.start_box_only and causes[i] in FAILURES:
                     L = int(lay[i])
                     self.fail_s[L, self.fail_n[L] % self.fail_s.shape[1]] = self.s[i]
                     self.fail_n[L] += 1
+                    if causes[i] == "pinned":
+                        slot = self.stuck_n[L] % self.stuck_pose.shape[1]
+                        self.stuck_pose[L, slot] = (
+                            self.s[i],
+                            st[i, P.S_X],
+                            st[i, P.S_Y],
+                            st[i, P.S_Z],
+                            st[i, P.S_YAW],
+                        )
+                        self.stuck_n[L] += 1
                 infos[i]["terminal_observation"] = obs[i].copy()
             self._reset_idx(done)
             obs[done] = self.stack.obs[done]
@@ -669,7 +787,7 @@ class ObstacleEnv:
             },
             "outcome": str(cause),
             "seed": int(self.model.seeds[lay]),
-            "start": "box" if self.start_kind[i] == 0 else "dealt",
+            "start": ("box", "dealt", "stuck")[int(self.start_kind[i])],
             "s_start": float(self.s_start[i]),
             "s_end": float(self.s[i]),
             "dist": float(self.dist[i]),

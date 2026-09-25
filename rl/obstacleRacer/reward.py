@@ -21,8 +21,12 @@ numpy-trained policy round the Speed Course:
                 run -- the plant slides the car along what it touched -- but
                 it costs in proportion to how hard
     crash       terminal; an impact that took more than crash_speed off the
-                car in one step, or a rollover -- or "pinned": stopped within
-                pinned_window_s of touching something, stuck against it
+                car in one step, or a rollover
+    pinned      terminal; stopped for pinned_s within pinned_window_s of
+                touching something -- stuck against it and not backing out.
+                pinned_s is longer than stall_s so there is time to reverse
+                out; the penalty is set so that the wait plus the penalty
+                still costs no more than a hard crash
     hoop miss   terminal; passing a hoop outside its posts fails the run
     stall       terminal; stopped for stall_s, or less than
                 progress_window_m of progress in progress_window_s (circling)
@@ -64,6 +68,7 @@ TERMS = (
     "finish",
     "bump",
     "crash",
+    "pinned",
     "hoop_miss",
     "stall",
     "off_course",
@@ -91,6 +96,7 @@ def step_reward(
     v_lost=0.0,
     dspeed=0.0,
     align=0.0,
+    pinned=None,
 ):
     """Per-car reward for one control step, and the per-term breakdown.
 
@@ -113,6 +119,11 @@ def step_reward(
         ),
         "bump": -float(r["bump"]) * np.asarray(v_lost) ** 2 * np.ones_like(ds),
         "crash": np.where(crashed, float(r["crash"]), 0.0),
+        "pinned": np.where(
+            np.zeros_like(ds, bool) if pinned is None else pinned,
+            float(r.get("pinned", r["crash"])),
+            0.0,
+        ),
         "hoop_miss": np.where(missed, float(r["hoop_miss"]), 0.0),
         "stall": np.where(stalled, float(r["stall"]), 0.0),
         "off_course": np.where(off_course, float(r["off_course"]), 0.0),
@@ -151,13 +162,20 @@ def episode_return(
     """Return of an idealized episode: `meters` at constant `speed`, then outcome.
 
     `bumps` is the speed (m/s) each survived contact took off the car; the
-    car then pays the time to get back up to speed.
+    car then pays the time to get back up to speed.  A stall or pinned
+    ending also pays the time spent stopped before the run is ended
+    (stall_s or pinned_s).
     """
     r = cfg["reward"]
     dt = 1.0 / float(cfg["env"]["control_hz"])
     seconds = meters / speed if speed > 0 else float(cfg["env"]["stall_s"])
     accel = float(cfg["plant"]["max_accel"])
     seconds += sum(b / accel / 2 for b in bumps)
+    if speed > 0 and outcome in ("stall", "pinned"):
+        e = cfg["env"]
+        seconds += float(
+            e["stall_s"] if outcome == "stall" else e.get("pinned_s", e["stall_s"])
+        )
     total = float(r["progress"]) * meters - float(r["time"]) * seconds
     total += float(r["hoop"]) * hoops
     total -= float(r["graze"]) * grazing**2 * seconds
@@ -169,7 +187,7 @@ def episode_return(
             0.0, float(r["target_lap_s"]) - lap_s
         )
     elif outcome == "pinned":
-        total += float(r["crash"])
+        total += float(r.get("pinned", r["crash"]))
     elif outcome in ("crash", "hoop_miss", "stall", "off_course"):
         total += float(r[outcome])
     del dt
@@ -194,6 +212,11 @@ def assert_episode_incentives(cfg, lap=74.0):
     # 10 m, then into a wall: gently (stuck against it) or hard (a crash).
     wall_soft = E(2.0, 10.0, "pinned", 0, bumps=[0.8])
     wall_hard = E(2.0, 10.0, "crash", 0, bumps=[float(cfg["env"]["crash_speed"])])
+    recovered = (
+        E(2.0, 10.0, "timeout", 0, bumps=[0.8])
+        - float(r["time"]) * float(cfg["env"].get("pinned_s", cfg["env"]["stall_s"]))
+        + E(2.0, 10.0, "timeout", 0)
+    )
     # At a hoop: thread it, graze a post threading it, go round it (a miss,
     # the run ends), or stop short of it.  Each continuation is the same
     # 10 m more of lap, so only the hoop's own terms separate them.
@@ -217,6 +240,9 @@ def assert_episode_incentives(cfg, lap=74.0):
         > wall_hard,
         "stuck against a wall > parked in the open": wall_soft
         > E(2.0, 10.0, "stall", 0),
+        # Backing out costs a few seconds and a bump, then the lap goes on;
+        # giving up there must never pay better.
+        "backing out and driving on > staying stuck": recovered > wall_soft,
         "driving 10 m then crashing > crashing at once": try_10m > crash_early,
         "standing still < 0": stand < 0,
         "threading a hoop > going round it": thread > go_round,
@@ -260,6 +286,9 @@ def assert_episode_incentives(cfg, lap=74.0):
         go_round=go_round,
         stop_short=stop_short,
         try_10m=try_10m,
+        wall_soft=wall_soft,
+        wall_hard=wall_hard,
+        recovered=recovered,
     )
 
 

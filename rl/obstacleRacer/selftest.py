@@ -383,6 +383,133 @@ def contact_checks(cfg, model):
     return failures
 
 
+def memory_checks(cfg):
+    """The stacked frames and the tach-only memory features, by hand."""
+    import observation as O
+
+    failures = 0
+    offsets = O.frame_offsets(cfg)
+    stack = O.Stack(1, offsets, 1)
+    stack.reset(np.array([0]), np.zeros((1, 1), np.float32))
+    for k in range(1, 31):
+        obs = stack.push(np.full((1, 1), k, np.float32))
+    want = [30 - o for o in offsets]
+    failures += check(
+        "the stack holds the frames at frame_offsets steps back",
+        obs[0].tolist() == want,
+        f"offsets {offsets}: {obs[0].tolist()}, want {want}",
+    )
+    dt = 1.0 / float(cfg["env"]["control_hz"])
+    mem = O.Memory(1, cfg)
+    readings = [1.0] * 20 + [0.0] * 30 + [-0.6] * 10
+    out = [mem.update(np.array([v]))[0] for v in readings]
+    failures += check(
+        "stopped time counts while the tach reads zero and caps",
+        abs(out[29][0] - 10 * dt / O.STOP_CAP_S) < 1e-9
+        and out[49][0] <= 1.0
+        and out[50][0] == 0.0,
+        f"after 0.5 s {out[29][0]:.3f}, capped {out[49][0]:.3f}, moving again {out[50][0]:.3f}",
+    )
+    failures += check(
+        "direction holds through the tach's silence and flips on a reverse reading",
+        out[49][2] == 1.0 and out[59][2] == -1.0,
+        f"stopped {out[49][2]:+.0f}, reversing {out[59][2]:+.0f}",
+    )
+    failures += check(
+        "mean speed follows the tach, signed",
+        out[19][1] > 0 and out[59][1] < out[49][1],
+        f"{out[19][1]:+.3f} driving, {out[59][1]:+.3f} backing",
+    )
+    return failures
+
+
+def recovery_checks(cfg, model):
+    """Stuck against a wall: time to back out, and stuck starts where it stopped.
+
+    Two cars on layout 0, turned to face the lane's side at s = 18 m (the
+    contact check's head-on spot).  One keeps pushing: the run has to end
+    pinned, and not before pinned_s.  The other reverses once it has
+    stopped: before the run is ended it has to be moving backwards, off the
+    wall -- recovery is physically there to be learned.
+    """
+    import env as env_module
+    import observation as O
+
+    failures = 0
+    cfg = dict(cfg, randomize=dict(cfg["randomize"], enabled=False))
+    cfg["env"] = dict(cfg["env"], stuck_start_prob=0.0)
+    env = env_module.ObstacleEnv(cfg, model, 2, np.array([0]), seed=0)
+    env.forced_lay = np.zeros(2, np.int64)
+    env.forced_s = np.full(2, 18.0)
+    env.reset()
+    st = env.plant.state
+    x, y, z, yaw = (
+        st[:, P.S_X].copy(),
+        st[:, P.S_Y].copy(),
+        st[:, P.S_Z].copy(),
+        st[:, P.S_YAW].copy(),
+    )
+    env.plant.reset(
+        np.arange(2), np.zeros(2, np.int64), x, y, z, yaw + math.pi / 2, np.full(2, 0.8)
+    )
+    dt = env.dt
+    forward = O.speed_to_action(1.0, cfg)
+    back = O.speed_to_action(-1.0, cfg)
+    ends = [None, None]
+    stopped_at = None
+    backed = 0.0
+    for i in range(int(12.0 / dt)):
+        a = np.zeros((2, 2))
+        a[:, 1] = forward
+        if stopped_at is not None and ends[1] is None:
+            a[1, 1] = back
+        _, _, term, trunc, info = env.step(a)
+        if (
+            stopped_at is None
+            and env.touch_age[1] == 0
+            and abs(env.plant.state[1, P.S_V]) < 0.1
+        ):
+            stopped_at = (i + 1) * dt
+        if stopped_at is not None and ends[1] is None:
+            backed = min(backed, env.plant.state[1, P.S_V])
+        for k in range(2):
+            if (term[k] or trunc[k]) and ends[k] is None:
+                ends[k] = ((i + 1) * dt, info[k]["outcome"])
+                if k == 0:
+                    env.forced_s = None  # let car 1's own run go on unforced
+        if None not in ends:
+            break
+    pinned_s = float(cfg["env"].get("pinned_s", cfg["env"]["stall_s"]))
+    failures += check(
+        "pushing on a wall ends pinned, after pinned_s rather than stall_s",
+        ends[0] is not None and ends[0][1] == "pinned" and ends[0][0] >= pinned_s,
+        f"ended {ends[0]}, pinned_s {pinned_s} s, stall_s {cfg['env']['stall_s']} s",
+    )
+    failures += check(
+        "reversing once stopped backs the car off before the run is ended",
+        stopped_at is not None and backed < -float(cfg["env"]["stall_speed"]),
+        f"stopped at {stopped_at} s, fastest backwards {backed:+.2f} m/s, run {ends[1]}",
+    )
+    # The pushing car's pinned pose is now in the stuck memory.
+    k = int(min(env.stuck_n[0], env.stuck_pose.shape[1]))
+    ok = k > 0
+    detail = f"{env.stuck_n[0]} stuck poses recorded"
+    if ok:
+        env.forced_s = None
+        env.forced_lay = np.zeros(2, np.int64)
+        env.cfg["env"] = dict(env.cfg["env"], stuck_start_prob=1.0, start_box_prob=0.0)
+        env._reset_idx(np.array([0]))
+        pose = env.stuck_pose[0, :k]
+        near = np.hypot(
+            pose[:, 1] - env.plant.state[0, P.S_X],
+            pose[:, 2] - env.plant.state[0, P.S_Y],
+        ).min()
+        ok = env.start_kind[0] == 2 and near < 0.05 and env.touch_age[0] == 0.0
+        detail += f"; restarted {near:.3f} m from one, kind {env.start_kind[0]}"
+    failures += check("a stuck start puts the car back where it was pinned", ok, detail)
+    return failures
+
+
 def coverage_checks(cfg, model):
     """Every obstacle on every layout is a section the env deals starts before."""
     import env as env_module
@@ -432,6 +559,60 @@ def coverage_checks(cfg, model):
         "section starts are dealt before every obstacle",
         want <= set(seen),
         f"{dict(seen)}",
+    )
+    # Section starts lean toward what fails: one obstacle failing every time
+    # it is met, the rest never, gets well over its uniform share -- and the
+    # rest keep theirs above zero.
+    tunnel = env.zone_names.index("tunnel")
+    cands = list(env.section_s[0])
+    env.practice_met[:] = 50.0
+    env.practice_fail[:] = 0.0
+    env.practice_fail[tunnel] = 50.0
+    _, p = env.section_weights(0)
+    share = dict(zip(cands, p))
+    uniform = 1.0 / len(cands)
+    failures += check(
+        "section starts favor the obstacle that keeps failing",
+        share[tunnel] > 3 * uniform
+        and min(p) > 0.5 * float(cfg["env"].get("section_uniform_mix", 1.0)) * uniform,
+        f"tunnel {share[tunnel]:.2f} vs uniform {uniform:.2f}, least {min(p):.3f}",
+    )
+    env.practice_met[:] = 0.0
+    env.practice_fail[:] = 0.0
+    # An obstacle is where the car drives through it, not every point inside
+    # its 2D outline: each is one unbroken stretch of the line, and where the
+    # deck crosses over the tunnel the label follows the line's height.
+    split, wrong_level = {}, {}
+    for k, line in enumerate(env.lines.lines):
+        zones = env.zone_of[k, : len(line.points)]
+        runs = zones[np.r_[True, zones[1:] != zones[:-1]]]
+        again = sorted({env.zone_names[z] for z in runs if (runs == z).sum() > 1})
+        if again:
+            split[int(model.seeds[k])] = again
+        for i in np.flatnonzero(zones == env.zone_names.index("tunnel")):
+            if line.points[i, 2] > env_module.ELEVATED_Z:
+                wrong_level[int(model.seeds[k])] = (
+                    f"tunnel at z {line.points[i, 2]:.2f}"
+                )
+        for name in env_module.ELEVATED_REGIONS:
+            for i in np.flatnonzero(zones == env.zone_names.index(name)):
+                x, y, z = line.points[i]
+                if (
+                    z <= env_module.ELEVATED_Z
+                    and len(env_module._regions().classify(x, y)) > 1
+                ):
+                    wrong_level[int(model.seeds[k])] = (
+                        f"{name} on the floor at s {line.arc[i]:.1f}"
+                    )
+    failures += check(
+        "each obstacle is one unbroken stretch of the line",
+        not split,
+        str(split),
+    )
+    failures += check(
+        "over/under crossings are labeled by height (deck vs tunnel)",
+        not wrong_level,
+        str(wrong_level),
     )
     return failures
 
@@ -574,6 +755,9 @@ def main() -> int:
     print("reverse and contact")
     failures += reverse_checks(cfg, model)
     failures += contact_checks(cfg, model)
+    print("observation memory and recovery")
+    failures += memory_checks(cfg)
+    failures += recovery_checks(cfg, model)
     print("hoops")
     failures += hoop_incentives(cfg, model)
     print("coverage")

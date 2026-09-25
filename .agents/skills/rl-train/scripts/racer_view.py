@@ -142,16 +142,28 @@ def render(run_dir: Path, ui, patience, min_evals, threshold) -> str:
             f"  training rollouts since last eval: ep_rew_mean {rollout['ep_rew_mean']:.1f}, "
             f"{rollout['outcomes']}"
         )
+    if rollout.get("stuck_starts"):
+        trend = [
+            r["rollout"]["stuck_recovered"]
+            for r in records
+            if (r.get("rollout") or {}).get("stuck_starts")
+        ]
+        lines.append(
+            f"  stuck starts backed out and drove on: "
+            f"{100 * rollout['stuck_recovered']:.0f}% of {rollout['stuck_starts']}  "
+            f"{ui.sparkline(trend[-12:])}"
+        )
     lines.append("")
 
     # Per obstacle: held-out clear rate when dealt just before it, and how
     # often training met it and failed there since the last eval.
     sections = last["heldout"].get("sections") or {}
     zones = rollout.get("zones") or {}
+    practice = rollout.get("practice") or {}
     if sections:
         lines.append(
             f"{ui.BOLD}obstacles{ui.RESET}        held-out clear   trend        "
-            "training met / failed"
+            "training met / failed   practice"
         )
         for name, rate in sections.items():
             trend = [
@@ -163,7 +175,8 @@ def render(run_dir: Path, ui, patience, min_evals, threshold) -> str:
             tint = ui.GREEN if rate >= 0.8 else ui.YELLOW if rate >= 0.4 else ui.RED
             lines.append(
                 f"  {name:15s} {ui.color(f'{100 * rate:5.0f}%', tint)}          "
-                f"{ui.sparkline(trend[-12:]):12s} {met:7d} / {failed:<6d}"
+                f"{ui.sparkline(trend[-12:]):12s} {met:7d} / {failed:<6d}  "
+                + (f"{100 * practice[name]:4.0f}%" if name in practice else "")
             )
         lines.append("")
 

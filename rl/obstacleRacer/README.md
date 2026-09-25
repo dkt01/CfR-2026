@@ -12,9 +12,16 @@ It gets only what the car can measure:
 - tachometer speed
 - yaw rate
 - its previous action
+- (v5) three memory values from the tachometer alone: how long it has read
+  stopped, its speed averaged over about 2 s, and the direction the
+  controller last reported
 
-Two frames are stacked. `observation.py` builds this, for both training and
-`obstacle_racer_node.py` on the car.
+v5 stacks frames from now, 0.1, 0.5 and 1.0 s ago (`env.frame_offsets`); v4
+stacked the last two. A second of history covers what the 110 degree camera
+loses beside the car: hoop posts while threading them, bales while turning
+past them. `observation.py` builds all of it, for both training and
+`obstacle_racer_node.py` on the car, which starts its stack and memory fresh
+on the start signal as an episode does.
 
 It gives a `DriveCommand`:
 - steering = a map-free follow-the-gap prior + the policy's residual (full authority)
@@ -37,8 +44,12 @@ The reward is privileged, computed in simulation only (`reward.py`):
 - a cost for speed lost to contact; touching is not the end of a run
 - terminal penalties for hard crashes (over 1.5 m/s lost in one step), hoop
   misses, leaving the course and, worst of all, stopping or circling. A stop
-  within 3 s of touching something is "pinned" and costs a crash, so a gentle
-  touch never costs more than a hard hit
+  within 3 s of touching something is "pinned": it gets `env.pinned_s` (6 s)
+  rather than 2.5 s before the run ends, time to reverse out, and costs
+  `reward.pinned`, set so that the wait plus the penalty never costs more
+  than a hard hit. A share of starts (`env.stuck_start_prob`) put the car
+  back exactly where a recent run ended pinned, stopped, to practice backing
+  out; the TUI shows how many of those drive on
 - costs for grazing obstacles, steering chatter and speed-command chatter.
   These are charged on the sampled action, exploration noise included, so
   `reward.py` checks that noise at the starting std costs under half the time
@@ -90,16 +101,26 @@ following the surface out from under the car the way the segmenter does.
 Training uses 10 randomizer seeds (101–110). Four more seeds (201, 202, 208,
 218) are held out, one per entrance slot. They come from
 `obstacle_randomizer_node`'s own draw (`obstacle_layout_draw.py`), so a seed
-means the same course in Gazebo.
+means the same course in Gazebo.  A layout is the buckets, the hoops, the
+open bucket-section entrance and, since v5, the Wide Section's seven bales,
+which the drawing calls "changeable boundaries": any yaw, anywhere in the
+section, with a 20 in track guaranteed from the potholes lane to the
+entrance.
 
 Episodes start either:
 - in the start box, (−0.7, 0) ± 0.1 m in x and y and ± 5° in heading, from
   rest. Evaluation always starts here.
 - dealt part way round, with the same noise, the helix included: 35% of
   these start 0.5-6 m before a spot where a recent training episode failed,
-  45% start 0.5-4 m before an obstacle picked uniformly from all nine (so the
-  hoops, car wash and buckets get practiced however rarely the policy reaches
-  them from the start box), and the rest anywhere.
+  45% start 0.5-4 m before an obstacle (so the hoops, car wash and buckets
+  get practiced however rarely the policy reaches them from the start box),
+  and the rest anywhere. Since v5 the obstacle is picked in proportion to its
+  recent failure rate, mixed 30% with uniform (`env.section_uniform_mix`):
+  v4 gave the always-cleared gravel and car wash as many starts as the
+  tunnel, the bank, the buckets and the hoops. The dashboard's "practice"
+  column is each obstacle's current share.
+- (v5) exactly where a recent run ended stuck, stopped, for 10% of the dealt
+  starts: practice at backing out.
 
 Each eval also deals the car 2 m before every obstacle on the held-out
 layouts and records whether it gets through; the dashboard shows that per

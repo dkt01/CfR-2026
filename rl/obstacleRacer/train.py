@@ -109,6 +109,7 @@ def evaluate(env, predict, per_layout):
     return out[:want]
 
 
+RECOVERED_M = 2.0  # a stuck start that got this far along has backed out
 SECTION_BACKOFF_M = 2.0
 SECTION_PAST_M = 1.5  # past the obstacle's end: a hoop missed is due by 1 m
 SECTION_TIME_S = 30.0
@@ -319,7 +320,9 @@ def main():
     started = time.time()
     best = [(-1.0, -1.0, 0.0)]
     target = model.num_timesteps + total if args.resume else total
-    rollout_stats = {"ep_rew": [], "outcomes": Counter()}
+    # Stuck starts (env.stuck_start_prob): how many, and how many backed out
+    # and drove on at least RECOVERED_M -- the thing v5 is meant to learn.
+    rollout_stats = {"ep_rew": [], "outcomes": Counter(), "stuck": [0, 0]}
 
     def evaluate_now(label):
         def predict(obs):
@@ -351,10 +354,19 @@ def main():
                 else None,
                 outcomes=dict(rollout_stats["outcomes"]),
                 zones=met,
+                # Share of section starts each obstacle is getting now.
+                practice={
+                    inner.zone_names[z]: float(p)
+                    for z, p in zip(*inner.section_weights())
+                },
+                stuck_starts=rollout_stats["stuck"][0],
+                stuck_recovered=rollout_stats["stuck"][1]
+                / max(rollout_stats["stuck"][0], 1),
             ),
         )
         rollout_stats["ep_rew"].clear()
         rollout_stats["outcomes"].clear()
+        rollout_stats["stuck"] = [0, 0]
         history.append(record)
         history_path.write_text(json.dumps(history, indent=1))
 
@@ -393,6 +405,9 @@ def main():
                 if info and "episode" in info:
                     rollout_stats["ep_rew"].append(info["episode"]["r"])
                     rollout_stats["outcomes"][info["outcome"]] += 1
+                    if info.get("start") == "stuck":
+                        rollout_stats["stuck"][0] += 1
+                        rollout_stats["stuck"][1] += info["dist"] >= RECOVERED_M
             if self.next_at is None:
                 self.next_at = self.num_timesteps + every
             if self.num_timesteps >= self.next_at:
