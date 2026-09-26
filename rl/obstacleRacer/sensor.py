@@ -419,7 +419,7 @@ class Sensor:
         self.gate = np.zeros((n, 2 * GATE_FEATURES))
         seed_numba(int(rng.integers(1 << 31)))
 
-    def read(self, lay, state, idx=None):
+    def read(self, lay, state, idx=None, draw_for_all=False):
         """(scan, gate) for every car, or just for cars `idx`."""
         if idx is None:
             s, L, scan, gate = state, lay, self.scan, self.gate
@@ -427,9 +427,14 @@ class Sensor:
             s, L = state[idx], lay[idx]
             scan = np.zeros((len(idx), self.sc.bins))
             gate = np.zeros((len(idx), 2 * GATE_FEATURES))
-        misread = (self.rng.random(len(s)) < self.cfg["carwash_misread_prob"]).astype(
-            np.uint8
-        )
+        # The env draws for every car on each control step, even if it only
+        # renders a subset.  This keeps episode-start randomization on the
+        # same NumPy RNG stream as the full-render path.
+        n_draw = self.n if draw_for_all else len(s)
+        misread = self.rng.random(n_draw) < self.cfg["carwash_misread_prob"]
+        if draw_for_all and idx is not None:
+            misread = misread[idx]
+        misread = misread.astype(np.uint8)
         sense(
             self.LAY,
             self.VIS,
