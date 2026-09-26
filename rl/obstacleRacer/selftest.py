@@ -434,6 +434,8 @@ def memory_checks(cfg):
 
 def camera_checks(cfg, model):
     """The policy sees camera_hz frames, each latency_s old, held between."""
+    from copy import deepcopy
+
     import env as env_module
 
     failures = 0
@@ -460,6 +462,54 @@ def camera_checks(cfg, model):
         "each run draws a latency inside latency_s",
         env.cam_lat.min() >= lo and env.cam_lat.max() <= hi,
         f"steps {env.cam_lat.min()}..{env.cam_lat.max()}, allowed {lo}..{hi}",
+    )
+    # Compare skipped captures with a reference that renders every car on
+    # every step.  Every frame that reaches the policy must be identical.
+    env.scan_hist[:] = 0
+    env.gate_hist[:] = 0
+    env.scan_held[:] = 0
+    env.gate_held[:] = 0
+    phase = env.cam_phase.copy()
+    scan_hist = env.scan_hist.copy()
+    gate_hist = env.gate_hist.copy()
+    scan_held = env.scan_held.copy()
+    gate_held = env.gate_held.copy()
+    rng = np.random.default_rng(41)
+    same = True
+    for _ in range(30):
+        scan = rng.normal(size=env.scan_held.shape)
+        gate = rng.normal(size=env.gate_held.shape)
+        rows = env._capture_rows()
+        actual_scan, actual_gate = env._camera(scan[rows], gate[rows], rows)
+        scan_hist = np.roll(scan_hist, 1, axis=1)
+        gate_hist = np.roll(gate_hist, 1, axis=1)
+        scan_hist[:, 0] = scan
+        gate_hist[:, 0] = gate
+        phase += env.dt
+        due = phase >= env.cam_period
+        phase[due] -= env.cam_period
+        received = np.flatnonzero(due)
+        scan_held[received] = scan_hist[received, env.cam_lat[received]]
+        gate_held[received] = gate_hist[received, env.cam_lat[received]]
+        same &= (
+            np.array_equal(actual_scan, scan_held)
+            and np.array_equal(actual_gate, gate_held)
+            and np.array_equal(env.cam_phase, phase)
+        )
+    failures += check("skipped captures preserve delivered camera frames", same)
+    rng_state = deepcopy(env.rng.bit_generator.state)
+    env.sensor.read(env.plant.lay, env.plant.state)
+    full_rng_state = deepcopy(env.rng.bit_generator.state)
+    env.rng.bit_generator.state = rng_state
+    env.sensor.read(
+        env.plant.lay,
+        env.plant.state,
+        np.arange(0, env.n, 2),
+        draw_for_all=True,
+    )
+    failures += check(
+        "skipped captures preserve the episode RNG stream",
+        env.rng.bit_generator.state == full_rng_state,
     )
     return failures
 

@@ -612,7 +612,18 @@ class ObstacleEnv:
             heading,
         )
 
-    def _camera(self, scan, gate):
+    def _capture_rows(self):
+        """Cars whose scan this step will be delivered after their latency."""
+        phase = self.cam_phase.copy()
+        capture = np.zeros(self.n, bool)
+        for lag in range(self.lat_steps[1] + 1):
+            phase += self.dt
+            due = phase >= self.cam_period
+            capture |= due & (self.cam_lat == lag)
+            phase[due] -= self.cam_period
+        return np.flatnonzero(capture)
+
+    def _camera(self, scan, gate, capture_rows):
         """What the policy sees this step: the last frame to have arrived.
 
         A frame is due every cam_period; the one delivered was rendered
@@ -620,8 +631,8 @@ class ObstacleEnv:
         """
         self.scan_hist = np.roll(self.scan_hist, 1, axis=1)
         self.gate_hist = np.roll(self.gate_hist, 1, axis=1)
-        self.scan_hist[:, 0] = scan
-        self.gate_hist[:, 0] = gate
+        self.scan_hist[capture_rows, 0] = scan
+        self.gate_hist[capture_rows, 0] = gate
         self.cam_phase += self.dt
         due = self.cam_phase >= self.cam_period
         self.cam_phase[due] -= self.cam_period
@@ -790,7 +801,9 @@ class ObstacleEnv:
 
         terminated = finished | crash | hoop_missed | stopped | off_course
         truncated = ~terminated & timeout
-        scan, gate = self._camera(*self.sensor.read(lay, st))
+        capture_rows = self._capture_rows()
+        scan, gate = self.sensor.read(lay, st, capture_rows, draw_for_all=True)
+        scan, gate = self._camera(scan, gate, capture_rows)
         obs = self.stack.push(self._frame(scan, gate)).copy()
 
         infos = [{} for _ in range(self.n)]
