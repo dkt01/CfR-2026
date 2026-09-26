@@ -102,7 +102,31 @@ namespace cfr_arduino_bridge {
         xyz_[3 * i + 1] = y;
         xyz_[3 * i + 2] = z;
       });
-      seg::Segment(xyz_.data(), n, pitch_, roll_, params_, &result_);
+      // Both the ZED and Gazebo publish registered color, but their extra
+      // point fields are not laid out identically. Accept packed rgb or rgba
+      // in either FLOAT32 or UINT32 form, and keep geometry-only behavior if
+      // the cloud does not provide color.
+      const sensor_msgs::msg::PointField* color_field = nullptr;
+      for (const auto& field : msg.fields) {
+        if ((field.name == "rgb" || field.name == "rgba") &&
+            (field.datatype == sensor_msgs::msg::PointField::FLOAT32 ||
+             field.datatype == sensor_msgs::msg::PointField::UINT32) &&
+            field.offset + 4 <= layout.point_step) {
+          color_field = &field;
+          break;
+        }
+      }
+      if (color_field) {
+        rgb_.resize(n);
+        for (size_t i = 0; i < n; ++i) {
+          const uint8_t* bytes = msg.data.data() + layout.Offset(i) + color_field->offset;
+          rgb_[i] = msg.is_bigendian ? (uint32_t(bytes[0]) << 24) | (uint32_t(bytes[1]) << 16) |
+                                           (uint32_t(bytes[2]) << 8) | uint32_t(bytes[3]) :
+                                       (uint32_t(bytes[3]) << 24) | (uint32_t(bytes[2]) << 16) |
+                                           (uint32_t(bytes[1]) << 8) | uint32_t(bytes[0]);
+        }
+      }
+      seg::Segment(xyz_.data(), n, pitch_, roll_, params_, &result_, color_field ? rgb_.data() : nullptr);
 
       // Everything is segmented; only every stride-th row and column of an
       // organized cloud is published.
@@ -152,6 +176,7 @@ namespace cfr_arduino_bridge {
     double pitch_ = 0.0;
     double roll_ = 0.0;
     std::vector<double> xyz_;
+    std::vector<uint32_t> rgb_;
     seg::Segmentation result_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr publisher_;
     rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr pose_sub_;

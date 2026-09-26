@@ -39,7 +39,7 @@ BALE = (184, 122, 31)  # 0.72 0.48 0.12, 202 of them on the speed course
 BOARD = (0, 162, 234)  # 0.00 0.64 0.92, the signal's own board (Oasis Blue)
 ARM_RED = (226, 53, 37)  # 0.89 0.21 0.15, Poppy Red
 ARM_GREEN = (88, 154, 80)  # 0.35 0.60 0.31, Leafy Green
-RIBBON_RED = (230, 64, 51)  # 0.90 0.25 0.20, twenty car wash ribbons
+RIBBON_YELLOW = (255, 245, 48)  # 1.00 0.96 0.19, car wash ribbons
 
 # Things an outdoor course puts in frame that the simulator does not.  The
 # shirt is the same red as the signal on purpose -- that is the point of it --
@@ -159,6 +159,7 @@ def test_world_colours_are_where_the_bands_say_they_are():
         (BALE, False, False),
         (GROUND, False, False),
         (BOARD, False, False),
+        (RIBBON_YELLOW, False, False),
         (ARM_RED, True, False),
         (ARM_GREEN, False, True),
         (SHIRT_RED, True, False),

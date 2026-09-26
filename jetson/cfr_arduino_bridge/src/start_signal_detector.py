@@ -58,8 +58,7 @@ the signal is the only red or green thing in frame, because neither holds:
   confirmed green: both arms turn about one pivot, so a real transition
   happens in one place.  Somebody in a red shirt standing near the course has
   their own site and can do nothing from it but stand there; the obstacle
-  course's car wash, which hangs twenty ribbons of much the same red as the
-  signal, likewise.
+  course's car wash hangs yellow ribbons, outside either signal color band.
 * **A prior once the signal is found.**  The best site is fed back as a
   `Focus`, and inside that box the color floors relax by
   `focus_relaxation` -- a known signal is read on weaker evidence than an
@@ -261,8 +260,8 @@ class Thresholds:
       covers that drift with 4 degrees still held clear of skin.
     * Green starts at 110, at the edge of turf and foliage, which sit between
       80 and 110 even in full sun, and above the simulated ground plane's
-      105.  It stops short of the signal's own oasis blue board at 198 and of
-      the car wash's blue ribbons at 212.  The arms themselves render at 5
+      105, well above the car wash's yellow ribbons.  It stops short of the
+      signal's own oasis blue board at 198. The arms themselves render at 5
       and 114 -- Leafy Green sits closer to real foliage than a more saturated
       green would, which is why the margin here is thinner than red's.
 

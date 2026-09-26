@@ -138,6 +138,9 @@ namespace cfr_arduino_bridge::segmentation {
     // The span must fit the car (0.30 m) with room either side.
     double gate_min_span = 0.40;
     double gate_max_span = 1.40;
+    // The wash arches span 1.151 m; the course hoops span 0.584 m. Thin
+    // streamers may vanish from a stereo frame, but the rigid arch remains.
+    double carwash_min_span = 0.85;
     // Thin in the direction of travel: a hoop's base is 0.4 m deep but it is
     // ground; above it the frame is one 34 mm tube.
     double gate_max_thickness = 0.15;
@@ -192,6 +195,7 @@ namespace cfr_arduino_bridge::segmentation {
   X(frame_margin_deg)              \
   X(gate_min_span)                 \
   X(gate_max_span)                 \
+  X(carwash_min_span)              \
   X(gate_max_thickness)            \
   X(see_through_deg)               \
   X(support_reach)                 \
@@ -237,6 +241,14 @@ namespace cfr_arduino_bridge::segmentation {
   // Classify an N x 3 row-major body-frame cloud.  `out`'s buffers are
   // resized to N and reused, so a caller that segments every frame keeps
   // one Segmentation and allocates nothing after the first.
-  void Segment(const double* xyz, size_t n, double pitch, double roll, const Params& params, Segmentation* out);
+  // rgb may be null when the input cloud has no registered color. Packed as
+  // 0x00RRGGBB; color only supports the geometric car wash classification.
+  void Segment(const double* xyz,
+               size_t n,
+               double pitch,
+               double roll,
+               const Params& params,
+               Segmentation* out,
+               const uint32_t* rgb = nullptr);
 
 }  // namespace cfr_arduino_bridge::segmentation

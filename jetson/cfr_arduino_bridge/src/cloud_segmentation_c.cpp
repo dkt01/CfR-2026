@@ -86,6 +86,7 @@ int64_t cfr_segment(const double* xyz,
                     double roll,
                     const double* params,
                     int param_count,
+                    const uint32_t* rgb,
                     uint8_t* labels,
                     double* height,
                     uint8_t* blocking,
@@ -96,7 +97,7 @@ int64_t cfr_segment(const double* xyz,
     return -1;
   }
   seg::Segmentation out;
-  seg::Segment(xyz, static_cast<size_t>(n), pitch, roll, FromArray(params), &out);
+  seg::Segment(xyz, static_cast<size_t>(n), pitch, roll, FromArray(params), &out, rgb);
   for (int64_t k = 0; k < n; ++k) {
     labels[k] = out.labels[static_cast<size_t>(k)];
     height[k] = out.height[static_cast<size_t>(k)];

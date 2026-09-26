@@ -313,6 +313,14 @@ reduces the result to the same bearing-binned scan
 `rl/bale_follower/cloud_scan.py` produces, with only blocking points in it: a
 gate's posts block, its bar and ribbons do not.
 
+For the car wash, a detected wide arch locates the curtain even when thin
+streamers disappear from stereo. Registered lemon-yellow cloud color lets
+separately attached streamers bend and tangle up to 0.425 m from their anchors
+without being treated as solid obstacles; the geometry rule still applies
+when color is unavailable. Synthetic bend and tangle cases are tested in
+`test/test_cloud_segmentation.py`; a real windy recording is still needed to
+measure field accuracy.
+
 With `sensors:=true`, `cloud_segmentation_node` republishes the cloud
 colored by class on `/zed/segmented/points`, bridged to Gazebo transport.
 The browser viewer's **Color by class** button switches the robot view to it.
@@ -336,9 +344,10 @@ docker run --rm -v "$PWD:/repo" -w /repo unfrobotics/docker-ros2-jazzy-gz-rviz2:
 
 `python3 test/test_cloud_segmentation.py --report` (with the workspace sourced,
 or `CFR_CLOUD_SEGMENTATION_LIB` pointing at a built library) prints the per-view table
-the thresholds were set against. The views the segmenter still gets wrong are
-listed in `KNOWN_LIMITATIONS` in the test as strict expected failures, each
-with its reason. They are all the car wash, seen from inside it or from 2 m
+the thresholds were set against. These fixtures do not include registered
+color. The geometry-only views the segmenter still gets wrong are listed in
+`KNOWN_LIMITATIONS` in the test as strict expected failures, each with its
+reason. They are all the car wash, seen from inside it or from 2 m
 or more out.
 
 ### Regenerating the course
@@ -633,8 +642,8 @@ optional:
   open shade is lit blue and takes red towards magenta. Poppy Red is warm
   enough to drift past a tighter band under direct-sun clipping, which is why
   16 rather than 12. Green starts at 110, right at the edge of turf and
-  foliage at 80 to 110, and stops short of the board's oasis blue at 198 and
-  the car wash's blue ribbons at 212. The arms render at 5 and 114 -- Leafy
+  foliage at 80 to 110 and well above the car wash's yellow ribbons. It stops
+  short of the board's oasis blue at 198. The arms render at 5 and 114 -- Leafy
   Green sits close enough to real foliage that size and place, not hue, are
   what keep foliage out here.
 * **Arm-sized, not merely the right color.** The count applies to the densest
@@ -652,8 +661,9 @@ optional:
   per site, so a start is one site going from red to green within
   `max_transition_distance` -- both arms turn about one pivot, so a real
   transition happens in one place. A marshal in a red shirt has their own
-  site and can do nothing from it but stand there; the car wash's twenty red
-  ribbons likewise. A site nothing has been seen at for `forget_frames` is
+  site and can do nothing from it but stand there; the car wash's yellow
+  ribbons are outside both signal color bands. A site nothing has been seen
+  at for `forget_frames` is
   dropped, which is also what stops a red object removed from a spot pairing
   with a green one put there later.
 * **Weaker evidence once it is found.** The best site is fed back as a box to
