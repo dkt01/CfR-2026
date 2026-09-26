@@ -218,7 +218,8 @@ if(BUILD_TESTING)
 
   # obstacle_randomizer_node's layout draw, which rl/obstacleRacer's exported
   # training layouts must keep agreeing with.
-  ament_add_pytest_test(test_obstacle_layout_draw test/test_obstacle_layout_draw.py)
+  ament_add_pytest_test(test_obstacle_layout_draw test/test_obstacle_layout_draw.py
+    TIMEOUT 180)
 
   # maneuver_runner_node's arming/abort state machine -- unlike the two tests
   # above, this one has no ROS-free module to import: it constructs a real

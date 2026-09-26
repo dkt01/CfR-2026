@@ -551,7 +551,9 @@ def build_car_wash() -> str:
             )
         for row in range(8):
             strip_y = y + (row - 3.5) * 0.127
-            colour = "0.90 0.25 0.20 1" if row % 2 else "0.20 0.45 0.85 1"
+            colour = (
+                "1.0 0.96 0.19 1"  # lemon-yellow party streamers on the real course
+            )
             body += box(
                 f"strip_{arch}_{row}",
                 (arch_x, strip_y, 0.3275, 0, 0, 0),
