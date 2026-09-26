@@ -296,51 +296,13 @@ class ObservationBuilder:
                 (room_right / _ROOM_SCALE)[:, None],
                 np.clip(clear / _CLEAR_SCALE, -1.0, 3.0)[:, None],
                 steer_ff[:, None],
-                # HOW FAR BEHIND ITS OWN WHEELS THE CHASSIS IS, right now:
-                # the yaw rate the command already in flight implies, minus
-                # the yaw rate the car actually has.
-                #
-                # This is here to make the chassis lag OBSERVABLE.  The
-                # policy is a plain MLP with one step of history, and
-                # `yaw_tau_scale` redraws the lag every episode over a range
-                # wide enough to change how early a hairpin has to be set up
-                # by half a metre.  Without this channel the policy cannot
-                # tell which car it drew and its only safe answer is to drive
-                # every car like the slowest one -- which is exactly how an
-                # over-wide randomisation once turned into a policy that took
-                # 101 s a run and three rounds of reward tuning looking for a
-                # problem that was not in the reward.  With it, the lag is a
-                # state variable it can read off a single frame and respond
-                # to, because for a first-order lag this difference IS the
-                # state.
+                # Expose chassis lag: the policy's single-frame observation
+                # cannot infer randomized yaw response from speed and pose.
                 np.clip(rate_lag / _RATE_SCALE, -3.0, 3.0)[:, None],
-                # HOW HARD THIS CAR IS ACTUALLY SLOWING, when enabled.  The
-                # car has no brakes, so 5.2 -> 2.5 m/s is 9.3 m of coasting
-                # against ~12 m straights, and `coast_scale` redraws the drag
-                # +/-20% each episode -- nearly two metres of stopping
-                # distance the policy otherwise cannot see.
-                #
-                # MEASURED RESULT: it raised top speed 2.7 -> 3.3 m/s and did
-                # NOT pay for itself overall (run v4 scored below v3.5 on the
-                # same reward).  Kept, off by default, because the finding is
-                # that the straights are limited by something else -- and the
-                # next person should not spend another run rediscovering it.
+                # Optional measured deceleration exposes randomized coast drag.
+                # It raised top speed in v4 but lowered overall reward, so it
+                # remains off by default.
                 *accel_channel,
-                # HOW HARD THIS PARTICULAR CAR IS ACTUALLY SLOWING DOWN.
-                #
-                # This is the straights.  The car has no brakes, so shedding
-                # 5.2 -> 2.5 m/s is 9.3 m of coasting against straights of
-                # about 12 m -- and `coast_scale` redraws the drag +/-20%
-                # every episode, which moves that stopping distance by nearly
-                # two metres.  A policy that cannot tell which car it drew
-                # cannot know where to lift off, so its only safe answer is
-                # to never use the straight at all: run v3 topped out at
-                # 2.7 m/s where the cap allowed 5.2.
-                #
-                # Achieved dv/dt is the drag, measured, once per tick.  Same
-                # argument as the chassis-lag channel above: a randomisation
-                # the policy can OBSERVE costs lap time; one it cannot costs
-                # far more.
                 lap_progress[:, None],
                 has_target[:, None],
                 np.clip(pace / _PACE_SCALE, -3.0, 3.0)[:, None],

@@ -1,36 +1,8 @@
-// Drive the speed course after either visual or manual start; stop after
-// three laps.
-//
-//     ros2 run cfr_arduino_bridge left_wall_follower_node --ros-args -p source:=cloud
-//
-// Two sources (left_wall.hpp has the control laws):
-//
-//   * `cloud`, the physical car: steers off the ZED's registered cloud.  This
-//     is the car's sensor-to-actuator path, so a command goes out the moment
-//     a cloud has been read -- not at the next tick of a timer, which is up to
-//     a whole period of latency the car would be driving blind through.
-//   * `simulation`: follows the centerline against Gazebo ground truth pose
-//     and the bales in the world file, on the timer.
-//
-// Either way the timer keeps /cmd_vel alive at 10 Hz: the latest command
-// while running and fresh, and a stop whenever not started, stopped, done, or
-// when the source has gone quiet for half a second.
-//
-// | Interface | Type | Direction |
-// | --------- | ---- | --------- |
-// | `/start_signal_detector/go` | `std_msgs/Bool` | subscribed, latched |
-// | `/lap_counter/done` | `std_msgs/Bool` | subscribed, latched |
-// | `cloud_topic` (cloud) | `sensor_msgs/PointCloud2` | subscribed |
-// | `/zed/zed_node/pose` (simulation) | `geometry_msgs/PoseStamped` | subscribed |
-// | `/obstacle_randomizer/start_signal_green` (simulation) | `std_msgs/Bool` | subscribed, latched |
-// | `/start_signal_detector/state` (simulation) | `cfr_interfaces/StartSignal` | subscribed |
-// | `/cmd_vel` | `geometry_msgs/Twist` | published |
-// | `/left_wall_follower/manual_go` | `std_msgs/Bool` | published, latched |
-// | `~/manual_start` | `std_srvs/SetBool` | service |
-//
-// Parameters: `source` (above), `cloud_topic`, `cloud_reliable` (default
-// true; see CloudQoS in cloud_msg.hpp), `auto_start_signal` (simulation: turn
-// the simulated signal once the detector is armed).
+// Drive the speed course after visual or manual start, stopping after three
+// laps. The car's cloud path commands immediately on a new frame to avoid an
+// extra control period of latency. The simulation source uses ground truth
+// pose on a timer. Both publish a stop if input goes quiet for 0.5 s.
+// Control laws are in left_wall.hpp.
 
 #include <chrono>
 #include <cmath>

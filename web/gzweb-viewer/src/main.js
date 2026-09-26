@@ -189,30 +189,9 @@ function rotateOffset(offset, yaw) {
   };
 }
 
-// HOW FAST THE CAMERA IS ALLOWED TO SWING AROUND THE CAR.
-//
-// The follow camera used to be bolted rigidly to the car's heading, which is
-// fine on a straight and unwatchable in a hairpin.  Measured over a scripted
-// lap of the speed course: the car reaches 1.67 rad/s of yaw, which spins the
-// whole scene at 96 deg/s and drags the camera - on a 4.9 m lever - past the
-// car at 4.1 m/s while the car itself is doing 2.25 m/s.  The car never
-// actually leaves the frame, because the target is locked to it; everything
-// around it does, and that is what losing it in a hairpin looks like.
-//
-// So the TARGET still tracks the car's position exactly, and only the camera's
-// orbit ANGLE is smoothed.  The cost is that the camera lags the car's heading,
-// so a hairpin is watched from slightly outside the turn rather than from
-// directly behind:
-//
-//   tau    cap        camera m/s in hairpins   scene spin   worst heading lag
-//   none   -                        4.06         96 deg/s           0 deg
-//   0.25   1.2 rad/s                3.00         69 deg/s          28 deg
-//   0.30   1.2 rad/s                2.88         69 deg/s          31 deg  <--
-//   0.35   1.0 rad/s                2.35         57 deg/s          54 deg
-//
-// 31 degrees still reads as a chase view, and outside the turn is where you
-// want to watch an apex from anyway.  Past about 50 the car is being watched
-// side-on and it stops looking like following at all.
+// Follow position exactly but smooth and rate-limit orbit angle. This avoids
+// spinning the scene at the car's full yaw rate in hairpins. The selected
+// settings kept heading lag near 31 degrees on a scripted lap.
 const FOLLOW_YAW_TAU = 0.3;        // s, first-order lag on the camera heading
 const FOLLOW_YAW_MAX_RATE = 1.2;   // rad/s, hard cap on top of it
 

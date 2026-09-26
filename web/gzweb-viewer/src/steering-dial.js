@@ -1,18 +1,6 @@
-// Analog steering gauge overlaid on the 3D scene, next to the speedometer.
-//
-// It reads the commanded gz.msgs.Twist on /sim/cmd_vel (see main.js), which
-// is the input Gazebo's AckermannSteering plugin actually acts on, and turns
-// it back into a steering angle with the same bicycle model
-// cmd_vel_to_drive_node.cpp uses to go the other way (steering angle ->
-// yaw rate).  Curvature is derived from the displayed (smoothed) angle
-// rather than smoothed separately, so the needle and the printed number
-// never disagree.
-//
-// The gauge is centered on zero: negative commands (right turns) sweep the
-// left half, positive (left turns) sweep the right half, same convention as
-// a signed number line. The rotating steering-wheel icon at the centre is
-// the more intuitive "which way is it turning" read; the arc is the "how
-// hard" read.
+// Steering gauge from Gazebo's commanded Twist. Convert yaw rate to steering
+// angle with the bicycle model; derive curvature from the displayed angle so
+// the needle and number agree.
 
 import { CENTER, RADIUS, START_ANGLE, SWEEP, polar, arcPath, element } from "./dial-utils.js";
 

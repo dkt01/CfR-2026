@@ -1,17 +1,5 @@
-// Analog speed gauge overlaid on the 3D scene.
-//
-// The dial is an SVG built here rather than in index.html: the tick ring is 20
-// elements that differ only by angle, and both it and the sweep have to be
-// recomputed whenever DIAL_MAX changes, so generating it keeps the two in step.
-//
-// Speed is reported from pose differencing (see main.js) at whatever rate the
-// simulation publishes, which is far above the display rate and jittery in dt.
-// The needle therefore chases the reported value in a requestAnimationFrame
-// loop instead of being written directly, so its motion is tied to frames
-// rather than to message arrival.
-//
-// Geometry (the viewBox, face radius, sweep, and SVG helpers) is shared with
-// steering-dial.js via dial-utils.js, so both gauges sit on the same face.
+// Smooth the needle at display frame rate because pose-derived speed arrives
+// at a different, jittery rate. SVG geometry is shared with steering-dial.js.
 
 import { CENTER, RADIUS, START_ANGLE, SWEEP, ARC_LENGTH, polar, arcPath, element } from "./dial-utils.js";
 

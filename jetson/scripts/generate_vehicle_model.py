@@ -156,38 +156,13 @@ def build_model(vehicle, spawn_pose):
     # level and makes every z in vehicle.yaml a height above the ground.
     wheel_inertia = 0.5 * wheel_mass * radius * radius
 
-    # geometry.ride_height was measured at race weight with the collars at
-    # maximum preload, so THAT ride height is the suspension joint's zero and
-    # spring_reference is the position the spring would rest at with the car
-    # lifted off it - one static sag away.
-    #
-    # The sign is the part that is easy to get wrong, and it was wrong here.
-    # The joint's child is the upright, whose height the ground pins, so a
-    # positive joint position means the CHASSIS has come down: gravity drives q
-    # positive, the spring contributes -k (q - reference), and equilibrium sits
-    # at q = reference + load / k.  Holding the car at q = 0 therefore needs a
-    # NEGATIVE reference.  A positive one settles at twice the sag - with the
-    # old 3500 N/m placeholder that was 5 mm and nobody noticed, at the real
-    # rate it is 68 mm, which is the chassis on its bump stops.
-    #
-    # The load is the SPRUNG corner load.  Wheels, uprights and knuckles hang
-    # below the joint and are carried by the ground, not by the spring; using
-    # total_mass here (as this did) overstates every corner by 19%.  The
-    # front/rear split is therefore the SPRUNG one, taken off the chassis CG
-    # rather than off the whole car's (see mass.cg_x and chassis_cg_x above).
-    #
-    # KNOWN RESIDUAL, so it is not rediscovered as a bug: with these references
-    # the car settles about 2.8 mm below the ride height they aim at (47.8 mm
-    # front, 46.6 mm rear against the 50 mm A4 measured), because gz-sim's
-    # dartsim resolves the static equilibrium with roughly 10% more load on the
-    # springs than rigid-body statics puts there -- 31.6 N against the 28.4 N
-    # the chassis weighs.  It is a genuine settled equilibrium, not a transient
-    # (joint velocities reach 1e-12), and it holds across a 10x sweep of
-    # spring_stiffness, so it is not an integration artifact either.  The cause
-    # is not understood.  It is left uncompensated on purpose: biasing the
-    # reference to hit 50 mm would trade a derived number for a fudge fitted to
-    # one engine's behaviour, which is exactly what the coast-deceleration pair
-    # in arduino_bridge.yaml used to be.
+    # Ride height at race weight defines joint zero. The upright is pinned by
+    # the ground, so positive joint travel lowers the chassis; spring
+    # equilibrium q = reference + sprung_corner_load / rate therefore needs a
+    # negative reference at q = 0. Use sprung mass and chassis CG because the
+    # wheels and uprights are supported by the ground.
+    # Gazebo settles ~2.8 mm below the measured height for an unknown reason.
+    # Keep the derived reference instead of fitting it to one physics engine.
     front_weight_fraction = 0.5 + chassis_cg_x / wheelbase
     rear_weight_fraction = 1.0 - front_weight_fraction
     front_corner_load_n = chassis_mass * front_weight_fraction / 2.0 * GRAVITY

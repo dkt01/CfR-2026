@@ -1,20 +1,6 @@
-// Apply a simple stereo-like depth error to Gazebo's perfect RGB-D cloud.
-//
-// Sits between the bridged Gazebo cloud and the ZED's topic, so everything
-// downstream reads a cloud with the real camera's kind of error.  That puts it
-// on the simulator's sensor path -- every frame the follower, the segmenter or
-// a training environment sees has come through here -- and the real car has
-// no such hop at all.  So it does as little as it can: the message it is
-// handed is corrupted in place and published on, no copy, keeping the latest
-// frame only, and the latency it adds is the sim's alone to carry.
-//
-// | Interface | Type | Direction |
-// | --------- | ---- | --------- |
-// | `/zed/gz/rgbd/points` | `sensor_msgs/PointCloud2` | subscribed |
-// | `/zed/zed_node/point_cloud/cloud_registered` | `sensor_msgs/PointCloud2` | published |
-//
-// Parameters: noise_a, noise_b (sigma = a + b x^2, meters), dropout (fraction
-// of returns lost), seed (0 draws one from the OS).
+// Add stereo-like error to Gazebo's perfect cloud before downstream nodes
+// see it. Modify the message in place to avoid another full cloud copy.
+// Noise sigma = noise_a + noise_b * range^2; dropout removes returns.
 
 #include <cstdint>
 #include <memory>
