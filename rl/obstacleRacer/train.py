@@ -264,6 +264,20 @@ def main():
 
     cfg = yaml.safe_load(args.config.read_text())
     tcfg = cfg["train"]
+    if recurrent:
+        import torch
+
+        # Short, frequently reset LSTM sequences cost more in MKLDNN and with
+        # four CPU threads on the training laptop (see bench_ppo.py).
+        torch.set_num_threads(
+            int(tcfg.get("torch_cpu_threads", torch.get_num_threads()))
+        )
+        torch.backends.mkldnn.enabled = bool(tcfg.get("torch_mkldnn", True))
+        print(
+            f"PyTorch CPU: {torch.get_num_threads()} threads, "
+            f"MKLDNN {'on' if torch.backends.mkldnn.enabled else 'off'}",
+            flush=True,
+        )
     # The reward is checked against the config this run actually uses, not
     # only when someone remembers to run reward.py.
     reward.assert_reachable(cfg)

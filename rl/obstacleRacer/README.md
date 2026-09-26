@@ -204,3 +204,4 @@ Other checks:
 | `python3 centerline.py` | Every layout's line is clear of the walls |
 | `python3 layouts.py --check` | Exported layouts match the randomizer |
 | `python3 bench.py --policy runs/v5/best_model.zip` | Env steps/s and where a step's time goes; `--save`/`--check` for a speedup that must change nothing |
+| `python3 bench_ppo.py runs/v7/best_model.zip` | Time recurrent PPO updates on one real rollout with the default and tuned CPU settings; leaves the checkpoint untouched |

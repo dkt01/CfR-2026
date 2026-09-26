@@ -23,6 +23,8 @@ that pays, not just the second the frame stack covers.
 from __future__ import annotations
 
 import math
+import json
+import zipfile
 
 import numpy as np
 import torch as th
@@ -85,10 +87,11 @@ if RecurrentActorCriticPolicy is not None:
 
 def load(path, **kwargs):
     """A saved checkpoint, as PPO or RecurrentPPO -- whichever it was saved as."""
-    import zipfile
-
     with zipfile.ZipFile(path) as z:
-        recurrent = b"Lstm" in z.read("data")
+        # SB3 serializes the policy class, so its name is not plain text in
+        # `data`. The LSTM settings are stored as ordinary policy kwargs.
+        policy_kwargs = json.loads(z.read("data"))["policy_kwargs"]
+        recurrent = "lstm_hidden_size" in policy_kwargs
     if recurrent:
         from sb3_contrib import RecurrentPPO
 

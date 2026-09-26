@@ -222,6 +222,11 @@ train:
   # RecurrentPPO), so the policy can remember past the frame stack.
   recurrent: true
   lstm_hidden_size: 128
+  # CPU runtime settings only; the policy, observations and PPO settings stay
+  # the same. bench_ppo.py measured a 13.5-13.9 s update versus 17-19 s with
+  # PyTorch's 4-thread MKLDNN default on the i7-1165G7 training laptop.
+  torch_cpu_threads: 2
+  torch_mkldnn: false
   log_std_init: -1.5            # std 0.22: exploration noise must stay cheap
                                 # next to the time cost (reward.py check)
   log_std_range: [-2.0, -0.5]   # std 0.135..0.61, sigmoid-bounded (ppo_policy.py).
