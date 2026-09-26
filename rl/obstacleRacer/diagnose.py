@@ -48,7 +48,7 @@ def main():
     seeds = layouts.TRAIN_SEEDS + layouts.HELDOUT_SEEDS
     model = course_model.CourseModel(seeds)
     ids = (
-        np.arange(len(layouts.TRAIN_SEEDS))
+        np.arange(len(layouts.TRAIN_EVAL_SEEDS))
         if args.train
         else np.arange(len(layouts.TRAIN_SEEDS), len(seeds))
     )

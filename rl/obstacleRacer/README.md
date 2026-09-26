@@ -101,8 +101,12 @@ result, which `bench.py --check` confirms.
 
 ## Layouts and starts
 
-Training uses 10 randomizer seeds (101–110). Four more seeds (201, 202, 208,
-218) are held out, one per entrance slot. They come from
+Training uses 200 randomizer seeds (101–110, then 1001–1190); the start-box
+check each evaluation drives the first ten. Four more seeds (201, 202, 208,
+218) are held out, one per entrance slot. v5 trained on ten and learned
+those ten Wide Section bale arrangements by heart, so v6 uses 200. Each
+layout's grid is kept only where it differs from the static course, in
+16-cell tiles: about 5 MB a layout instead of 66. They come from
 `obstacle_randomizer_node`'s own draw (`obstacle_layout_draw.py`), so a seed
 means the same course in Gazebo.  A layout is the buckets, the hoops, the
 open bucket-section entrance and, since v5, the Wide Section's seven bales,

@@ -85,7 +85,10 @@ env:
                             # not stall_s: reverse engages only after ~0.5 s
                             # under the tach floor, then it has to back off
                             # and drive on
-  progress_window_s: 6.0    # end the run as a stall if it advanced less than...
+  progress_window_s: 10.0   # end the run as a stall if it advanced less than...
+                            # (v5's 6 s ended 76% of Wide Section visits,
+                            # most rocking in the dead end before the
+                            # reverse-and-turn out of it could pay off)
   progress_window_m: 0.5    # ...this over the window (going round, not along)
   off_course_m: 2.2         # m from the centerline: left the lane (the bucket
                             # section and east corridor are ~3 m wide)

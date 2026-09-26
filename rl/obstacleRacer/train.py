@@ -6,14 +6,14 @@
     python3 train.py --dir runs/smoke --steps 1000000 --eval-every 250000
 
 Every evaluation drives deterministic episodes from the start box (+/-0.1 m,
-+/-5 deg, from rest) on the ten TRAINING layouts and on the four HELD-OUT
++/-5 deg, from rest) on ten of the TRAINING layouts and on the four HELD-OUT
 ones, plus a per-obstacle check on the held-out layouts (dealt 2 m before
 each obstacle: does the car get through it?), and appends a record to
 <dir>/history.json -- the file the rl-train skill's tui.py watches.  The
 record also carries, from the training rollouts, how often each obstacle was
 met and failed at.  The best model is the one that finishes the most
 held-out runs, then scores best on held-out progress and obstacles cleared,
-then laps quickest: a policy that only knows its ten courses is not the one
+then laps quickest: a policy that only knows its training courses is not the one
 to take to the event.
 """
 
@@ -112,7 +112,9 @@ def evaluate(env, predict, per_layout):
 RECOVERED_M = 2.0  # a stuck start that got this far along has backed out
 SECTION_BACKOFF_M = 2.0
 SECTION_PAST_M = 1.5  # past the obstacle's end: a hoop missed is due by 1 m
-SECTION_TIME_S = 30.0
+# v5's 30 s failed Wide Section runs that got through, slowly, after it:
+# the section is 6-8 m of bales to find a way through.
+SECTION_TIME_S = 60.0
 
 
 def section_eval(env, predict, per_layout):
@@ -265,8 +267,16 @@ def main():
         float(tcfg["reward_scale"]),
     )
     per = int(tcfg["eval_episodes_per_layout"])
+    # Every training layout is trained on; the start-box check drives the
+    # first ten (layouts.TRAIN_EVAL_SEEDS) so it costs what it did in v5.
+    train_eval_ids = np.arange(len(layouts.TRAIN_EVAL_SEEDS))
     eval_train = EvalEnv(
-        cfg, model_, per * len(train_ids), train_ids, seed=10_001, start_box_only=True
+        cfg,
+        model_,
+        per * len(train_eval_ids),
+        train_eval_ids,
+        seed=10_001,
+        start_box_only=True,
     )
     eval_held = EvalEnv(
         cfg, model_, per * len(held_ids), held_ids, seed=10_002, start_box_only=True

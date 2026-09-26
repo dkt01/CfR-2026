@@ -152,7 +152,7 @@ The Obstacle Course is trained by `rl/obstacleRacer`, in numpy, the way
 `rl/formulaOne` trains the Speed Course. It does not use this skill's Docker
 container or `start`. The course comes in from the Gazebo world: collision
 primitives for physics, visual meshes for the segmented-camera model. The car
-has a sprung body that pitches and rolls on it. There are 10 training layouts
+has a sprung body that pitches and rolls on it. There are 200 training layouts
 and 4 held-out ones. Gazebo only validates the result.
 
 ```bash
