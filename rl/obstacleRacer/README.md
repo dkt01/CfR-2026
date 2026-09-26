@@ -15,6 +15,10 @@ It gets only what the car can measure:
 - (v5) three memory values from the tachometer alone: how long it has read
   stopped, its speed averaged over about 2 s, and the direction the
   controller last reported
+- (v7) its heading since the start box, integrated from the yaw rate, as sin
+  and cos. The course is fixed, so this says where the Wide Section's exit
+  is when the camera can't see it. Training starts the estimate off by up to
+  5 degrees and drifts it at a random bias, as the car's would.
 
 v5 stacks frames from now, 0.1, 0.5 and 1.0 s ago (`env.frame_offsets`); v4
 stacked the last two. A second of history covers what the 110 degree camera
@@ -22,6 +26,15 @@ loses beside the car: hoop posts while threading them, bales while turning
 past them. `observation.py` builds all of it, for both training and
 `obstacle_racer_node.py` on the car, which starts its stack and memory fresh
 on the start signal as an episode does.
+
+v7's policy is recurrent (`train.recurrent`, sb3-contrib RecurrentPPO): an
+LSTM sits between the observation and the MLP and carries its memory for the
+whole run, so the policy can remember an exit or a hoop post long after the
+frame stack has dropped it. `policy.py` runs the LSTM in numpy, and the node
+resets its state on the start signal.
+
+The scans reach it as the car's do: a new frame at the ZED's 12 Hz, each
+50-100 ms old, held between frames (`sensor.camera_hz`, `sensor.latency_s`).
 
 It gives a `DriveCommand`:
 - steering = a map-free follow-the-gap prior + the policy's residual (full authority)
@@ -142,7 +155,7 @@ point it started from (from the start box, that is over the timing line).
 
 ```bash
 uv venv --python 3.12 .venv
-uv pip install --python .venv/Scripts/python.exe numpy scipy pyyaml matplotlib gymnasium stable-baselines3 numba torch
+uv pip install --python .venv/Scripts/python.exe numpy scipy pyyaml matplotlib gymnasium stable-baselines3 sb3-contrib numba torch
 .venv/Scripts/python.exe selftest.py
 .venv/Scripts/python.exe train.py --dir runs/v1
 ../../.agents/skills/rl-train/scripts/rl.sh tui --dir rl/obstacleRacer/runs/v1

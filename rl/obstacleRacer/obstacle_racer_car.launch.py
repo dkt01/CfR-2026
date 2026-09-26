@@ -17,13 +17,18 @@ It adds, beside the bridge and camera:
 
     start_signal_detector   on the ZED's color image; latches /start_signal_detector/go
     lap_counter             `laps` laps (1: one run is one lap); latches /lap_counter/done
-    obstacle_racer_node     drives on go, takes the throttle off on done
+    obstacle_racer_node     drives on go or Manual Start, takes the throttle off on done
     record_run.py           the run, into ~/cfr_runs (record:=false to skip)
 
-The car will not move until the detector sees red turn green.  To release it
-by hand instead:
+The car will not move until the detector sees red turn green, or the
+Arduino's Manual Start bit (ArduinoStatus.manual_start) goes from 0 to 1 -- whichever comes first.
+A bit already set when the driver starts does not count; press it again.  To
+release it from a terminal instead:
 
     ros2 service call /obstacle_racer/manual_start std_srvs/srv/SetBool "{data: true}"
+
+Either manual start also publishes /left_wall_follower/manual_go, which arms
+lap_counter as the detector's go does.
 
 and `{data: false}` stops it without killing the node.
 

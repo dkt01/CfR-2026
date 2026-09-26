@@ -51,13 +51,15 @@ BALE_LENGTH = 36 * INCH
 BALE_WIDTH = 18 * INCH
 BALE_HEIGHT = 14 * INCH
 
-# Straw bales are soft and grab the car rather than let it slide past, unlike
-# the MDF/plywood ramp, tunnel, and banked-turn walls (left at the engine's
-# default friction) that a car can reasonably scrape against.  Matched to the
-# floor's own grip (see the floor collision's <mu>50</mu> below) so a car
-# pressed into a bale wall can't out-drive the friction and stalls instead of
-# sliding along it.
-BALE_FRICTION = 50
+# Straw on a rubber tire: grippier than the MDF/plywood ramp, tunnel, and
+# banked-turn walls (left at the engine's default friction), but a car
+# brushing a bale wall slides along it.  Gazebo takes the lower of the two
+# surfaces' mu, so this is the tire-bale contact (the tires are mu 1).  It was
+# 50, to make a car pressed into a bale stall; with the wheels driven at their
+# commanded speed whatever the load (AckermannSteering), a tire -- which
+# stands 12 mm proud of the body -- then climbed any bale it brushed and
+# rolled the car, at 1.5 m/s and 6 deg.  At 0.5 the car scrubs and slides.
+BALE_FRICTION = 0.5
 
 # The start/finish line, and the centerline of the 32 in wide start lane, in
 # DXF feet.  The world origin sits here with +x pointing the way the car

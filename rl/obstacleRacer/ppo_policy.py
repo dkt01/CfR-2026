@@ -13,18 +13,26 @@ parameter.  Not a clamp: v3 clamped, and a clamp passes no gradient at its
 bound, so once the std drifted to the floor (0.082) it could never come back
 up.  The deterministic action is the mean itself; export_policy.py writes
 `output: tanh` so the car's NumpyPolicy squashes it the same way.
+
+From v7 the network is recurrent (train.recurrent): an LSTM carries a hidden
+state from step to step, so the policy can remember what left the camera's
+view -- the Wide Section's exit, hoop posts beside the car -- for as long as
+that pays, not just the second the frame stack covers.
 """
 
 from __future__ import annotations
 
 import math
 
+import numpy as np
 import torch as th
 from stable_baselines3.common.distributions import DiagGaussianDistribution
 from stable_baselines3.common.policies import ActorCriticPolicy
 
 
-class SquashedMeanPolicy(ActorCriticPolicy):
+class _SquashedMean:
+    """The squashed mean and bounded std, for either policy class below."""
+
     squashes_mean = True
 
     def __init__(self, *args, log_std_range=(-2.5, -0.5), **kwargs):
@@ -58,3 +66,57 @@ class SquashedMeanPolicy(ActorCriticPolicy):
         data = super()._get_constructor_parameters()
         data["log_std_range"] = self.log_std_range
         return data
+
+
+class SquashedMeanPolicy(_SquashedMean, ActorCriticPolicy):
+    """v1-v6: a feed-forward MLP over the stacked frames."""
+
+
+try:  # the car runs policy.py alone and needs neither
+    from sb3_contrib.common.recurrent.policies import RecurrentActorCriticPolicy
+except ImportError:  # pragma: no cover
+    RecurrentActorCriticPolicy = None
+
+if RecurrentActorCriticPolicy is not None:
+
+    class SquashedMeanLstmPolicy(_SquashedMean, RecurrentActorCriticPolicy):
+        """v7: the same head behind an LSTM (sb3-contrib's RecurrentPPO)."""
+
+
+def load(path, **kwargs):
+    """A saved checkpoint, as PPO or RecurrentPPO -- whichever it was saved as."""
+    import zipfile
+
+    with zipfile.ZipFile(path) as z:
+        recurrent = b"Lstm" in z.read("data")
+    if recurrent:
+        from sb3_contrib import RecurrentPPO
+
+        return RecurrentPPO.load(path, **kwargs)
+    from stable_baselines3 import PPO
+
+    return PPO.load(path, **kwargs)
+
+
+class Driver:
+    """Deterministic actions for a batch of cars, carrying the LSTM state.
+
+    Call it with the observation each step and tell it, via `ended`, which
+    cars' episodes just ended (their env reset them), so their hidden state
+    starts fresh.  An MLP policy ignores the state.
+    """
+
+    def __init__(self, model, n):
+        self.model = model
+        self.state = None
+        self.start = np.ones(n, bool)
+
+    def __call__(self, obs):
+        action, self.state = self.model.predict(
+            obs, state=self.state, episode_start=self.start, deterministic=True
+        )
+        self.start = np.zeros(len(obs), bool)
+        return action
+
+    def ended(self, mask):
+        self.start = np.asarray(mask, bool).copy()

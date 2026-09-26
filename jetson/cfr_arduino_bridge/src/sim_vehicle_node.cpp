@@ -68,6 +68,12 @@ namespace cfr_arduino_bridge {
       // p90 of achieved acceleration below 2.5 m/s across the whole campaign.
       max_acceleration_ = declare_parameter<double>("max_acceleration", 3.0);
 
+      // The car's arduino_bridge rate-limits every speed target it sends
+      // (arduino_bridge.yaml speed_slew_rate), and in simulation this node
+      // stands in for the bridge.  Without it the simulated car reached
+      // 3 m/s ~0.7 s sooner than the car it models.  Zero disables it.
+      speed_slew_rate_ = declare_parameter<double>("speed_slew_rate", 2.0);
+
       // Zero means "coast only", which is what the car does today.  It is a
       // parameter rather than a constant so that a firmware fix to the brake
       // path can be modelled here before it is trusted on the car.
@@ -177,7 +183,7 @@ namespace cfr_arduino_bridge {
         if (!std::isfinite(target) || std::abs(target) <= neutral_speed_deadband_) {
           target = 0.0;
         }
-        ApproachTarget(std::clamp(target, -max_speed_, max_speed_), elapsed);
+        ApproachTarget(SlewTarget(std::clamp(target, -max_speed_, max_speed_), elapsed), elapsed);
         AdvanceTachometer(elapsed);
 
         const double steering = EffectiveSteeringAngle(static_cast<double>(effective.steering));
@@ -188,6 +194,8 @@ namespace cfr_arduino_bridge {
         const double effective_wheelbase = wheelbase_ + understeer_gradient_ * simulated_speed_ * simulated_speed_;
         twist.angular.z = simulated_speed_ * std::tan(steering) / effective_wheelbase;
       } else {
+        // The bridge snaps its target to zero rather than ramping it.
+        slewed_target_ = 0.0;
         ApproachTarget(0.0, elapsed);
         AdvanceTachometer(elapsed);
         twist.linear.x = simulated_speed_;
@@ -354,6 +362,19 @@ namespace cfr_arduino_bridge {
       return delayed_;
     }
 
+    // arduino_bridge's ApplySpeedSlew: the target moves toward the command at
+    // speed_slew_rate_.  The bridge applies it before the dead time and this
+    // node after; a pure delay and a rate limit commute.
+    double SlewTarget(double target, double elapsed) {
+      if (speed_slew_rate_ <= 0.0) {
+        slewed_target_ = target;
+      } else {
+        const double step = speed_slew_rate_ * elapsed;
+        slewed_target_ += std::clamp(target - slewed_target_, -step, step);
+      }
+      return slewed_target_;
+    }
+
     // Coast drag in m/s^2 at a given speed magnitude.
     double CoastDeceleration(double speed) const {
       return (coast_f0_ + coast_f1_ * speed + coast_f2_ * speed * speed) / vehicle_mass_;
@@ -427,6 +448,8 @@ namespace cfr_arduino_bridge {
     double throttle_kv_us_ = 11.13;
     double spur_fraction_ = 0.0;
     double target_speed_ = 0.0;
+    double speed_slew_rate_ = 2.0;
+    double slewed_target_ = 0.0;
     TachModel tach_;
     std::vector<double> steering_commands_;
     std::vector<double> steering_angles_;

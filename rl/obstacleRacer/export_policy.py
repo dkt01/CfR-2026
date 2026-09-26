@@ -30,9 +30,11 @@ def main():
     args = ap.parse_args()
 
     import torch
-    from stable_baselines3 import PPO
 
-    model = PPO.load(args.checkpoint, device="cpu")
+    import ppo_policy
+
+    model = ppo_policy.load(args.checkpoint, device="cpu")
+    lstm = getattr(model.policy, "lstm_actor", None)
     layers = []
     for module in list(model.policy.mlp_extractor.policy_net) + [
         model.policy.action_net
@@ -49,7 +51,7 @@ def main():
     # `layers` holds torch Linear MODULES, so the input width is
     # `in_features` -- indexing it like an array raised TypeError and took a
     # 39-minute training run's export with it.
-    obs_dim = int(layers[0].in_features)
+    obs_dim = int(layers[0].in_features) if lstm is None else int(lstm.input_size)
     squashed = bool(getattr(model.policy, "squashes_mean", False))
     blob = {
         "n_layers": len(layers),
@@ -61,11 +63,24 @@ def main():
         # Transposed once, here, so the runtime is a plain `obs @ w + b`.
         blob[f"w{i}"] = layer.weight.detach().cpu().numpy().T.astype(np.float64)
         blob[f"b{i}"] = layer.bias.detach().cpu().numpy().astype(np.float64)
+    if lstm is not None:
+        if lstm.num_layers != 1:
+            raise SystemExit("policy.py runs a one-layer LSTM")
+        blob["lstm_w_ih"] = lstm.weight_ih_l0.detach().cpu().numpy().astype(np.float64)
+        blob["lstm_w_hh"] = lstm.weight_hh_l0.detach().cpu().numpy().astype(np.float64)
+        blob["lstm_b"] = (
+            (lstm.bias_ih_l0 + lstm.bias_hh_l0)
+            .detach()
+            .cpu()
+            .numpy()
+            .astype(np.float64)
+        )
 
     out = args.out or args.checkpoint.with_suffix(".npz")
     np.savez(out, **blob)
     shape = " -> ".join(
-        [str(blob["w0"].shape[0])]
+        ([f"{obs_dim} -> LSTM {lstm.hidden_size}"] if lstm is not None else [])
+        + [str(blob["w0"].shape[0])]
         + [str(blob[f"w{i}"].shape[1]) for i in range(len(layers))]
     )
     print(
@@ -77,12 +92,26 @@ def main():
     from policy import NumpyPolicy
 
     check = NumpyPolicy.load(out)
-    probe = np.random.default_rng(0).normal(0, 1, (64, obs_dim)).astype(np.float32)
-    with torch.no_grad():
-        want, _, _ = model.policy(torch.as_tensor(probe), deterministic=True)
-    want = np.clip(want.cpu().numpy(), -1.0, 1.0)
-    error = float(np.abs(check.act(probe) - want).max())
-    print(f"numpy vs torch, worst of 64 samples: {error:.2e}")
+    rng = np.random.default_rng(0)
+    if lstm is None:
+        probe = rng.normal(0, 1, (64, obs_dim)).astype(np.float32)
+        with torch.no_grad():
+            want, _, _ = model.policy(torch.as_tensor(probe), deterministic=True)
+        want = np.clip(want.cpu().numpy(), -1.0, 1.0)
+        error = float(np.abs(check.act(probe) - want).max())
+    else:
+        # A 40-step episode for 16 cars: the hidden state must track too.
+        check.reset(16)
+        state, start, error = None, np.ones(16, bool), 0.0
+        for _ in range(40):
+            probe = rng.normal(0, 1, (16, obs_dim)).astype(np.float32)
+            want, state = model.predict(
+                probe, state=state, episode_start=start, deterministic=True
+            )
+            start = np.zeros(16, bool)
+            got = check.act(probe)
+            error = max(error, float(np.abs(got - np.clip(want, -1, 1)).max()))
+    print(f"numpy vs torch, worst difference over the probe: {error:.2e}")
     if error > 1e-5:
         raise SystemExit("EXPORT MISMATCH -- do not deploy this file")
 

@@ -23,11 +23,13 @@ SENSORS_SYSTEM = """<plugin filename="gz-sim-sensors-system" name="gz::sim::syst
 # One rgbd_camera rather than a colour and a depth sensor: they would share a
 # calibration anyway, and Gazebo publishes image, depth_image, points and
 # camera_info off this one.  simulation.launch.py's bridge renames them to the
-# ZED's topics below.
+# ZED's topics below.  12 Hz: the car's ZED publishes images and depth at
+# pub_frame_rate 12 (config/cfr_zed2i.yaml), and the obstacle racer is
+# trained on 12 Hz frames.
 SENSORS_CAMERA = """<sensor name="zed2i" type="rgbd_camera">
             <pose>0.315 0 0.20 0 0 0</pose>
             <always_on>1</always_on>
-            <update_rate>15</update_rate>
+            <update_rate>12</update_rate>
             <topic>/zed/gz/rgbd</topic>
             <camera>
               <horizontal_fov>1.91986</horizontal_fov>

@@ -7,12 +7,23 @@ on the Orin and in the simulator:
     /zed/zed_node/point_cloud/cloud_registered   PointCloud2, camera frame
     /zed/zed_node/pose           PoseStamped.  Read ONLY for pitch and roll
                                  (to level the cloud, as cloud_segmentation_node
-                                 does) and for yaw rate.  No position is used:
-                                 the policy has no map.
-    /arduino_bridge/status       ArduinoStatus, tachometer speed
-    /start_signal_detector/go    latched Bool, the run trigger
+                                 does) and for yaw rate, which it also
+                                 integrates into the heading since the start.
+                                 No position is used: the policy has no map.
+    /arduino_bridge/status       ArduinoStatus: tachometer speed, and the
+                                 Manual Start bit (manual_start), a run trigger
+    /start_signal_detector/go    latched Bool, the other run trigger
     /lap_counter/done            latched Bool, the end of the run
     /drive_cmd                   DriveCommand out, as rl/formulaOne sends it
+    /left_wall_follower/manual_go  latched Bool out on a manual start (the
+                                 Arduino bit or ~/manual_start), so
+                                 lap_counter arms as it does on the signal
+
+A run starts on whichever comes first: the detector seeing red turn green,
+or the Arduino's Manual Start bit going from 0 to 1 (README "Manual Start":
+start without the visual signal).  Only a rising edge counts -- a bit already
+set when the node comes up does not launch the car (sim_vehicle holds it at
+1), and it takes a fresh press.  arduino_manual_start:=false ignores it.
 
 The cloud goes through the compiled segmenter (cloud_segmentation.py, the one
 cloud_segmentation_node runs and the fixtures score), then
@@ -104,6 +115,8 @@ class ObstacleRacer(Node):
             "cloud_stride", 2
         )  # every other point, as the node's viewer copy
         self.declare_parameter("yaw_rate_filter", 0.5)
+        # Start on the Arduino's Manual Start bit as well as the signal.
+        self.declare_parameter("arduino_manual_start", True)
 
         self.cfg = yaml.safe_load(Path(self.param("config")).read_text())
         self.seg = _segmenter()
@@ -120,6 +133,9 @@ class ObstacleRacer(Node):
             )
         self.stack = O.Stack(1, O.frame_offsets(self.cfg), O.frame_dim(self.cfg))
         self.memory = O.Memory(1, self.cfg)
+        # Heading since the start box: every run starts there pointing down
+        # the lane, heading 0 in the course frame training uses.
+        self.heading = O.Heading(1, self.cfg)
         # True until the first tick of a run: the stack, the memory and the
         # prior then start from that frame, as an episode does in training.
         self.fresh = True
@@ -137,6 +153,7 @@ class ObstacleRacer(Node):
         self.go = False
         self.done = False
         self.started_at = None
+        self.prev_manual_bit = None  # first status seeds it: edges only
         self.prev_action = np.zeros((1, 2))
         self.prior = np.zeros(1)
 
@@ -155,6 +172,9 @@ class ObstacleRacer(Node):
         self.create_subscription(Bool, "/start_signal_detector/go", self.on_go, LATCHED)
         self.create_subscription(Bool, "/lap_counter/done", self.on_done, LATCHED)
         self.create_service(SetBool, "~/manual_start", self.on_manual)
+        self.manual_go = self.create_publisher(
+            Bool, "/left_wall_follower/manual_go", LATCHED
+        )
         self.drive = self.create_publisher(
             DriveCommand, "/drive_cmd", qos_profile_sensor_data
         )
@@ -225,13 +245,30 @@ class ObstacleRacer(Node):
 
     def on_status(self, msg):
         self.status = msg
+        pressed = bool(msg.link_ok and msg.manual_start)
+        rising = (
+            self.prev_manual_bit is not None and pressed and not self.prev_manual_bit
+        )
+        self.prev_manual_bit = pressed
+        if rising and self.param("arduino_manual_start") and not self.done:
+            self.begin("Arduino Manual Start")
+
+    def begin(self, source, manual=True):
+        """Start a run now, unless one is already under way."""
+        if self.go:
+            return
+        self.get_logger().info(f"{source} -- going")
+        self.go = True
+        self.done = False
+        self.started_at = self.now()
+        self.fresh = True
+        if manual:
+            # lap_counter arms on the detector's go or on this topic.
+            self.manual_go.publish(Bool(data=True))
 
     def on_go(self, msg):
-        if msg.data and not self.go:
-            self.get_logger().info("GREEN -- going")
-            self.started_at = self.now()
-            self.fresh = True
-        self.go = self.go or bool(msg.data)
+        if msg.data:
+            self.begin("GREEN", manual=False)
 
     def on_done(self, msg):
         if msg.data and not self.done:
@@ -239,10 +276,13 @@ class ObstacleRacer(Node):
         self.done = self.done or bool(msg.data)
 
     def on_manual(self, request, response):
-        self.go = bool(request.data)
-        self.done = False if request.data else self.done
-        self.started_at = self.now() if request.data else None
-        self.fresh = True
+        if request.data:
+            self.begin("manual start service")
+        else:
+            self.go = False
+            self.started_at = None
+            self.fresh = True
+            self.manual_go.publish(Bool(data=False))
         response.success = True
         response.message = "manual start" if request.data else "manual stop"
         return response
@@ -275,9 +315,13 @@ class ObstacleRacer(Node):
         fresh = np.array([self.fresh])
         if self.fresh:
             self.prev_action = np.zeros((1, 2))
+            self.heading.reset(np.array([0]), 0.0)
+            if self.policy is not None:
+                self.policy.reset(1)  # the LSTM's memory starts with the run
         raw = O.prior_steer(self.scan, self.gate, yaw_rate, self.cfg)
         self.prior = O.smooth_prior(self.prior, raw, fresh, self.cfg)
         memory = self.memory.update(speed_meas, fresh=fresh)
+        heading = self.heading.update(yaw_rate)
         frame = O.frame(
             self.scan,
             self.gate,
@@ -287,6 +331,7 @@ class ObstacleRacer(Node):
             self.prior,
             self.cfg,
             memory,
+            heading,
         )
         if self.fresh:
             self.stack.reset(np.array([0]), frame)

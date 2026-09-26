@@ -420,6 +420,47 @@ def memory_checks(cfg):
         out[19][1] > 0 and out[59][1] < out[49][1],
         f"{out[19][1]:+.3f} driving, {out[59][1]:+.3f} backing",
     )
+    head = O.Heading(1, cfg)
+    head.reset(np.array([0]), 0.0)
+    for _ in range(int(round(2.0 / dt))):
+        hs = head.update(np.array([math.pi / 2]))  # 90 deg/s for 2 s
+    failures += check(
+        "heading integrates the yaw rate and wraps",
+        abs(hs[0, 0]) < 1e-6 and abs(hs[0, 1] + 1.0) < 1e-6,
+        f"after 180 deg: sin {hs[0, 0]:+.4f} cos {hs[0, 1]:+.4f}",
+    )
+    return failures
+
+
+def camera_checks(cfg, model):
+    """The policy sees camera_hz frames, each latency_s old, held between."""
+    import env as env_module
+
+    failures = 0
+    if "camera_hz" not in cfg["sensor"]:
+        return failures
+    env = env_module.ObstacleEnv(cfg, model, 64, np.array([0]), seed=3)
+    env.reset()
+    held = env.scan_held.copy()
+    changed = 0
+    steps = 200
+    for _ in range(steps):
+        env.step(np.tile([0.0, 0.3], (env.n, 1)))
+        changed += (np.abs(env.scan_held - held).max(1) > 0).sum()
+        held = env.scan_held.copy()
+    rate = changed / env.n / (steps * env.dt)
+    want = float(cfg["sensor"]["camera_hz"])
+    failures += check(
+        "new scans reach the policy at the camera's rate",
+        rate <= want * 1.02 and rate >= want * 0.8,
+        f"{rate:.1f} Hz, camera {want:.0f} Hz",
+    )
+    lo, hi = env.lat_steps
+    failures += check(
+        "each run draws a latency inside latency_s",
+        env.cam_lat.min() >= lo and env.cam_lat.max() <= hi,
+        f"steps {env.cam_lat.min()}..{env.cam_lat.max()}, allowed {lo}..{hi}",
+    )
     return failures
 
 
@@ -787,6 +828,7 @@ def main() -> int:
     failures += contact_checks(cfg, model)
     print("observation memory and recovery")
     failures += memory_checks(cfg)
+    failures += camera_checks(cfg, model)
     failures += recovery_checks(cfg, model)
     print("hoops")
     failures += hoop_incentives(cfg, model)

@@ -3,9 +3,9 @@
 # the real node, and run gazebo_check.py against them.
 #
 #   ./validate.sh                                  # validate runs/v1/policy.npz
-#   ./validate.sh --policy runs/v2/policy.npz --starts 5
+#   ./validate.sh --policy runs/v2/policy.npz --starts 5 --timeout 150
 #   ./validate.sh --prior                          # the steering prior alone
-#   ./validate.sh --seg-gap                        # sensor model vs segmenter
+#   ./validate.sh --seg-gap [--poses 150]          # sensor model vs segmenter
 #   ./validate.sh --surfaces                       # plant vs Gazebo's body motion
 #
 # Run inside the sim container (sim-launch skill) with the workspace built:
@@ -23,12 +23,16 @@ MODE=validate
 DRIVER=policy
 STARTS=5
 SEEDS=""
+TIMEOUT=""
+POSES=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --policy) POLICY="$(realpath "$2")"; shift 2;;
     --prior) DRIVER=prior; shift;;
     --starts) STARTS="$2"; shift 2;;
     --seeds) SEEDS="$2"; shift 2;;
+    --timeout) TIMEOUT="$2"; shift 2;;
+    --poses) POSES="$2"; shift 2;;
     --seg-gap) MODE=seg-gap; shift;;
     --surfaces) MODE=surfaces; shift;;
     *) echo "unknown argument: $1"; exit 1;;
@@ -43,10 +47,12 @@ fi
 # interleave silently rather than failing.
 export ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-78}
 export GZ_PARTITION=${GZ_PARTITION:-obstacle_racer}
-[[ -f "$REPO/install/setup.bash" ]] || { echo "build the workspace first: colcon build"; exit 1; }
+# jetson/scripts/build.sh builds into $ROS2_WS (default ~/ros2_ws), not the repo.
+WS="${ROS2_WS:-$HOME/ros2_ws}"
+[[ -f "$WS/install/setup.bash" ]] || { echo "build the workspace first: jetson/scripts/build.sh"; exit 1; }
 set +u
 source /opt/ros/jazzy/setup.bash
-source "$REPO/install/setup.bash"
+source "$WS/install/setup.bash"
 set -u
 
 # The checker runs the numpy course model beside the real stack.
@@ -85,7 +91,9 @@ if [[ "$MODE" == "validate" ]]; then
     if ros2 service list 2>/dev/null | grep -q /obstacle_racer/manual_start; then echo " ok"; break; fi
     echo -n "."; sleep 1
   done
-  python3 gazebo_check.py validate --starts "$STARTS" ${SEEDS:+--seeds "$SEEDS"}
+  python3 gazebo_check.py validate --starts "$STARTS" ${SEEDS:+--seeds "$SEEDS"} ${TIMEOUT:+--timeout "$TIMEOUT"}
+elif [[ "$MODE" == "seg-gap" ]]; then
+  python3 gazebo_check.py seg-gap ${POSES:+--poses "$POSES"}
 else
   python3 gazebo_check.py "$MODE"
 fi

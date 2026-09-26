@@ -167,6 +167,27 @@ class ObstacleEnv:
         self.stack = O.Stack(n, O.frame_offsets(cfg), O.frame_dim(cfg))
         self.obs_dim = O.obs_dim(cfg)
         self.memory = O.Memory(n, cfg)
+        self.heading = O.Heading(n, cfg)
+        self.heading_bias = np.zeros(n)  # rad/s the heading drifts at
+        # The camera: the car's ZED publishes point clouds at 12 Hz
+        # (cfr_zed2i.yaml pub_frame_rate), and a cloud reaches the policy a
+        # segmentation later; the control loop runs at 20 Hz on whatever
+        # arrived last.  Scans are rendered every control step, kept for
+        # `latency` steps, and delivered only when a frame is due.
+        sc = cfg["sensor"]
+        self.cam_period = 1.0 / float(sc.get("camera_hz", e["control_hz"]))
+        lat = sc.get("latency_s", [0.0, 0.0])
+        self.lat_steps = (
+            int(round(float(lat[0]) / self.dt)),
+            int(round(float(lat[1]) / self.dt)),
+        )
+        depth = self.lat_steps[1] + 1
+        self.scan_hist = np.zeros((n, depth, int(sc["bins"])))
+        self.gate_hist = np.zeros((n, depth, 2 * S.GATE_FEATURES))
+        self.scan_held = np.zeros((n, int(sc["bins"])))
+        self.gate_held = np.zeros((n, 2 * S.GATE_FEATURES))
+        self.cam_phase = np.zeros(n)
+        self.cam_lat = np.zeros(n, np.int64)
         self.act_dim = 2
         z = np.zeros(n)
         self.t = z.copy()
@@ -467,7 +488,25 @@ class ObstacleEnv:
             self.speed_noise[idx] = 0.0
             self.dither_scale[idx] = 1.0
 
+        # Heading since the start box: the car's own estimate starts off by
+        # its placement error (and, dealt part way round, by what it would
+        # have drifted getting there), then drifts at a per-run bias.
+        hn = math.radians(float(self.cfg["env"].get("heading_init_noise_deg", 0.0)))
+        self.heading.reset(
+            idx, self.plant.state[idx, P.S_YAW] + self.rng.uniform(-hn, hn, len(idx))
+        )
+        hb = r.get("heading_bias", [0.0, 0.0]) if r["enabled"] else [0.0, 0.0]
+        self.heading_bias[idx] = self.rng.uniform(*hb, len(idx))
+
         scan, gate = self.sensor.read(self.plant.lay, self.plant.state, idx)
+        self.scan_hist[idx] = scan[:, None, :]
+        self.gate_hist[idx] = gate[:, None, :]
+        self.scan_held[idx] = scan
+        self.gate_held[idx] = gate
+        self.cam_phase[idx] = self.rng.uniform(0.0, self.cam_period, len(idx))
+        self.cam_lat[idx] = self.rng.integers(
+            self.lat_steps[0], self.lat_steps[1] + 1, len(idx)
+        )
         fresh = np.zeros(self.n, bool)
         fresh[idx] = True
         self.stack.reset(idx, self._frame(scan, gate, idx, fresh))
@@ -560,9 +599,36 @@ class ObstacleEnv:
         prior = O.smooth_prior(self.prior[idx], raw, first, self.cfg)
         self.prior[idx] = prior
         memory = self.memory.update(speed, idx, first)
+        heading = self.heading.update(yaw_rate + self.heading_bias[idx], idx)
         return O.frame(
-            scan, gate, speed, yaw_rate, self.prev_action[idx], prior, self.cfg, memory
+            scan,
+            gate,
+            speed,
+            yaw_rate,
+            self.prev_action[idx],
+            prior,
+            self.cfg,
+            memory,
+            heading,
         )
+
+    def _camera(self, scan, gate):
+        """What the policy sees this step: the last frame to have arrived.
+
+        A frame is due every cam_period; the one delivered was rendered
+        cam_lat control steps ago.  Between frames the last one is held.
+        """
+        self.scan_hist = np.roll(self.scan_hist, 1, axis=1)
+        self.gate_hist = np.roll(self.gate_hist, 1, axis=1)
+        self.scan_hist[:, 0] = scan
+        self.gate_hist[:, 0] = gate
+        self.cam_phase += self.dt
+        due = self.cam_phase >= self.cam_period
+        self.cam_phase[due] -= self.cam_period
+        rows = np.flatnonzero(due)
+        self.scan_held[rows] = self.scan_hist[rows, self.cam_lat[rows]]
+        self.gate_held[rows] = self.gate_hist[rows, self.cam_lat[rows]]
+        return self.scan_held.copy(), self.gate_held.copy()
 
     def _track(self, st, lay):
         """Privileged bookkeeping for a step: arc length round the loop, hoops.
@@ -724,7 +790,7 @@ class ObstacleEnv:
 
         terminated = finished | crash | hoop_missed | stopped | off_course
         truncated = ~terminated & timeout
-        scan, gate = self.sensor.read(lay, st)
+        scan, gate = self._camera(*self.sensor.read(lay, st))
         obs = self.stack.push(self._frame(scan, gate)).copy()
 
         infos = [{} for _ in range(self.n)]
