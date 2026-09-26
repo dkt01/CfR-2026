@@ -14,23 +14,17 @@ course:
 | Speed | `http://localhost:5173/` |
 | Obstacle | `http://localhost:5173/?course=obstacle` |
 
-Every topic name carries the world name, so the page has to be on the same
-course the simulation is running. The websocket server does not care which,
-so the wrong one still reports `Live simulation connected` -- it just draws a
-course whose robot never moves.
+Select the course running in Gazebo. A mismatched page can show "Live
+simulation connected" while its robot stays still because topic names include
+the world name.
 
-The obstacle course's meshes need a patch that `src/main.js` applies at
-startup: gzweb 3.0.2 cannot load a binary STL over HTTP and says nothing when
-it fails, so without it every mesh silently goes missing and only the
-collision primitives are drawn. The comment there has the details.
+`src/main.js` patches gzweb 3.0.2 to load binary STL meshes over HTTP; without
+it the obstacle meshes silently disappear.
 
 ## Dependency overrides
 
-gzweb 3.0.2 is the latest release and still asks for `protobufjs` 6,
-`fast-xml-parser` 4 and `three-nebula` 10, all three of which carry published
-advisories -- protobufjs 6 a critical one. Its bundle leaves those imports
-external rather than inlining them, so the `overrides` block in
-`package.json` is enough to make it resolve the patched majors instead:
+gzweb 3.0.2 requests dependency versions with published advisories. Its
+external imports allow `package.json` overrides to select newer versions:
 
 | Package | gzweb asks for | We resolve |
 | --- | --- | --- |
@@ -38,28 +32,23 @@ external rather than inlining them, so the `overrides` block in
 | `fast-xml-parser` | `^4.1.3` | `^5.11.1`, parses both world files byte-identically |
 | `three-nebula` | `^10.0.3` | `^11.1.2`, which dropped the vulnerable `uuid` dependency outright |
 
-Drop the whole block once gzweb bumps these itself; until then removing it
-brings the advisories back.
+Remove the overrides when gzweb updates its dependencies.
 
 ## Run
 
-For the three-lap wall follower, install viewer dependencies once, then start
-both the simulation and viewer in a ROS 2 environment:
+For the three-lap wall follower, install dependencies and start the simulation
+and viewer in a ROS 2 environment:
 
 ```bash
 cd web/gzweb-viewer && npm ci && cd ../..
 bash ./jetson/scripts/launch_wall_web.sh
 ```
 
-Open `http://localhost:5173/`. The **Set signal** button turns the simulated
-arm red or green and directly starts or stops the follower. A confirmed visual
-green signal also starts the follower on its own. The lap counter accepts
-either start and stops the run after three laps. This setup enables the Gazebo
-WebSocket server and camera rendering.
-Both `npm` and the built ROS 2 workspace must be available in the shell.
+Open `http://localhost:5173/`. **Set signal** starts or stops the follower;
+the lap counter stops it after three laps. `npm` and the built ROS 2 workspace
+must be available in the shell.
 
-
-In environment with [nvm](https://github.com/nvm-sh/nvm) installed:
+To run the viewer alone with [nvm](https://github.com/nvm-sh/nvm):
 
 ```bash
 nvm install 24
@@ -80,14 +69,10 @@ different machine.
 | The start signal's arms | the same stream -- they turn on a joint, so Gazebo reports them as a moving link |
 | Buckets and hoops | sampled from `pose/info` every 3 s over a connection of its own |
 
-That last one looks wasteful and is the only thing that works. Buckets and
-hoops are static models, which Gazebo leaves out of the dynamic pose stream
-altogether, and the websocket server latches what it sends on the whole-world
-topic when a connection subscribes -- a long-lived subscription reports the
-layout that was there when the page opened, for ever, however often it
-resubscribes. A connection opened fresh is always current. A layout only
-changes when somebody calls the randomiser, so arriving a few seconds later
-is not late.
+Buckets and hoops are absent from the dynamic pose stream. The websocket
+server latches the whole-world topic when a client subscribes, so a persistent
+connection would miss layout changes. A fresh connection every 3 s gets the
+current layout.
 
 ## Live Gazebo Transport Bridge
 

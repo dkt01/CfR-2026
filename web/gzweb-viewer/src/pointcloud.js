@@ -1,39 +1,9 @@
-// Live point cloud from the sim's ZED RGB-D sensor (the "zed2i" rgbd_camera
-// in jetson/cfr_arduino_bridge/launch/sensors_world.py), decoded straight off
-// the gz-transport wire and rendered as a THREE.Points object.  main.js
-// parents one of these to the "slash" model and cloud-view.js keeps a second
-// one in its own scene -- see createCloudBuffers below for why the decode is
-// not done twice.
-//
-// gz-sim's rgbd_camera puts points on the wire already in the body
-// convention (+x forward, +y left, +z up), not the optical convention (+z
-// forward, +x right, +y down) a raw depth image uses -- see the header of
-// rl/bale_follower/cloud_scan.py, which measured this directly off a live
-// cloud (x spanning 0.25-12.7 m, y/z near zero) after an earlier version
-// assumed optical and got an empty scan back for it. So no axis rotation is
-// needed here, only the translation: the sensor's own pose,
-// "0.315 0 0.20 0 0 0", is relative to the chassis link (which sits at the
-// model root with no pose of its own) and already carries zero rotation,
-// consistent with the cloud arriving pre-rotated into that same frame.
-//
-// "gz.msgs.PointCloudPacked" is decoded generically off whatever field
-// layout the message itself declares, rather than assuming fixed byte
-// offsets: the field list is small and this only runs a few times a second.
-// The ZED's actual layout (x/y/z/rgb, all FLOAT32, little-endian, 4-byte
-// aligned) does get a fast path, because that one runs 230400 times a frame
-// -- see chooseLayout.
-//
-// It is NOT decoded "the same way a ROS PointCloud2 would be", which is what
-// this comment used to claim and what readScalar used to do.  The two
-// messages look alike and their datatype enums are OFF BY ONE -- see
-// readScalar.  Reading a gz cloud with ROS numbering is silent and total:
-// every field here declares FLOAT32, which is 6 in gz, and 6 is UINT32 in
-// ROS, so the float bits get read as integers.  The sky's +Inf returns
-// (0x7F800000) then decode as the finite integer 2139095040 instead of
-// Infinity, so the non-finite guard below does not drop them, 230k points
-// land 2.1 billion metres away, and the real cloud is invisible inside a
-// bounding sphere that size.  RViz is unaffected because it reads the
-// ros_gz_bridge output, and the bridge renumbers the enum on the way past.
+// Decode Gazebo's ZED cloud once for both scene views. Points already use
+// body axes (+x forward, +y left, +z up), so only the camera offset applies.
+// Read the declared field layout, with a fast path for ZED's common layout.
+// Gazebo and ROS PointCloud2 datatype enums differ by one: Gazebo FLOAT32 is
+// 6, while ROS 6 is UINT32. Mixing them turns infinity into a finite distant
+// point and breaks the viewer's bounds (see readScalar).
 
 import * as THREE from "three";
 
@@ -41,16 +11,11 @@ const CAMERA_OFFSET = { x: 0.315, y: 0, z: 0.20 };
 const POINT_SIZE = 0.03;
 const DEFAULT_COLOR = new THREE.Color(0x63c2f0);
 
-// The ZED's returns are camera-exposed for the scene, not for being drawn as
-// unlit points against a near-black viewport, and the course's greys and
-// browns came out muddy.  This lifts them: a gamma curve rather than a flat
-// multiply, so shadowed returns open up while anything already near white
-// stays put instead of clipping.  1.0 would be the raw camera values.
+// Gamma lifts shadowed returns against the dark viewport without clipping
+// highlights. 1.0 would show raw camera colors.
 const COLOR_LIFT = 1.45;
 
-// Byte -> lifted 0..1 channel, precomputed.  A 256-entry lookup is not just
-// free here, it is cheaper than the divide it replaces, and this runs three
-// times for each of ~150k points a frame.
+// Precompute the byte conversion for ~150k points per frame.
 const BRIGHTNESS = new Float32Array(256);
 for (let i = 0; i < BRIGHTNESS.length; i += 1) {
   BRIGHTNESS[i] = Math.min(1, (i / 255) ** (1 / COLOR_LIFT));

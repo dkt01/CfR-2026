@@ -380,7 +380,6 @@ def bake(prims, grid: Grid, i_off: int, j_off: int, nx: int, ny: int) -> dict:
     O_hi = np.zeros((ny, nx, KO), np.float32)
     O_mu = np.ones((ny, nx, KO), np.float32)
     O_n = np.zeros((ny, nx), np.uint8)
-    # The ground plane, under everything.
     S_lo[:, :, 0] = -0.1
     S_hi[:, :, 0] = 0.0
     S_mu[:, :, 0] = world_module.TIRE_MU

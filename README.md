@@ -267,20 +267,14 @@ ros2 launch cfr_arduino_bridge speed_course.launch.py      # 135 ft x 47 ft oval
 ros2 launch cfr_arduino_bridge obstacle_course.launch.py   # 65 ft x 48 ft, 11 sections
 ```
 
-Both are built from the site-layout DXF, and the obstacle course's obstacles
-from the team's CAD. Both start on the same visual signal: it loads showing
-red, and `obstacle_randomizer_node` turns it to green at 90 degrees a second
-while the simulation runs -- along with the obstacle course's buckets and
-hoops -- so a layout can be re-drawn and a start signalled without a restart.
+Both courses come from the site-layout DXF; obstacle shapes come from the
+team's CAD. `obstacle_randomizer_node` can change layouts and turn the start
+signal green without restarting Gazebo.
 
-`start_signal_detector_node` watches the camera for that turn and latches it
-on `/start_signal_detector/go`, which is what an autonomous run waits on in
-place of the Arduino's Manual Start bit. It runs against the simulated camera
-with `sensors:=true` and against the ZED on the car. The course is outdoors
-and there will be people about in every color, so it finds the signal first
--- a place in the image that holds red long enough to be it, of about the size
-an arm is -- and only then waits for that place to turn green; `armed` on
-`/start_signal_detector/state` says whether it has.
+`start_signal_detector_node` first locates a stable red arm, then latches its
+turn to green on `/start_signal_detector/go`. This avoids treating unrelated
+green objects as the start signal. It uses the simulated camera with
+`sensors:=true` and the ZED on the car.
 
 See [jetson/README.md](jetson/README.md#gazebo-simulation) for the launch
 arguments, the randomizer's services, and how to regenerate the worlds and

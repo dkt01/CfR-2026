@@ -109,7 +109,6 @@ def ledControl(
         with robotStateMutex, inputStateMutex, controllerStateMutex:
             newLedState = compute_led_state(robotState, inputState, controllerState)
 
-        # Set LED illuminations based on LED state
         with ledStateMutex:
             ledState = newLedState
             for led_label in ledState.__dataclass_fields__.keys():

@@ -41,6 +41,11 @@ same files. Add or edit skills under `.agents/skills/` only. Symlinks need
 
 ## Conventions
 
+* Keep comments and docs concise. Explain why a choice or constraint exists,
+  especially when the code cannot show it. Remove narration of obvious code,
+  repeated instructions, stale history and duplicate explanations. Keep
+  protocol details, safety steps, measured results and useful troubleshooting
+  context; link to their source instead of copying them into file headers.
 * American spelling everywhere (color, meter, center, neighbor, gray) in code,
   comments, docs and UI. Leave pre-existing identifiers such as `HELIX_CENTRE`.
 * The repo relies on `core.autocrlf=input`. A CRLF working tree breaks

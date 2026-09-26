@@ -1,29 +1,8 @@
-// Converts geometry_msgs/Twist velocity commands from the autonomy stack into
-// the DriveCommand that arduino_bridge_node puts on the wire.  Speed passes
-// straight through as a velocity target for the Arduino's speed controller;
-// only steering needs a model.
-//
-// The Slash is an Ackermann platform, so the yaw rate in a Twist is turned into
-// a steering angle with the bicycle model:
-//
-//     delta = atan(wheelbase * yaw_rate / speed)
-//
-// That angle then has to become the normalized steering command on the wire,
-// and THAT is where this node used to be wrong.  It divided by a single
-// symmetric max_steering_angle, but the measured car is asymmetric -- 0.512
-// rad left against 0.382 rad right (vehicle.yaml steering.effective_angle_
-// table, and steering_angle_points below).  Dividing 0.20 rad by 0.40 gives a
-// command of 0.50, which the table renders as 0.256 rad: 28% MORE steering
-// than was asked for.  The same arithmetic under-steers right by 4.5%.  The
-// error is a constant fraction, so it does not wash out -- every left turn is
-// a third sharper than the planner intended, and the car walks left.
-//
-// So the table is INVERTED here instead: given a desired angle, interpolate
-// the command that produces it.  With no table configured the old symmetric
-// scaling is kept, so a stack that has not set the points behaves as before.
-//
-// Republished at a fixed rate so the bridge always has a fresh command, and
-// zeroed when the upstream planner goes quiet.
+// Convert Twist speed and yaw rate to a drive command. Steering uses
+// delta = atan(wheelbase * yaw_rate / speed), then inverts the measured
+// command-to-angle table. The car's left and right steering differ, so a
+// symmetric angle scale would bias turns. Without a table, use that scale
+// for compatibility. Republish at a fixed rate for the bridge watchdog.
 
 #include <algorithm>
 #include <chrono>

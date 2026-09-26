@@ -441,6 +441,7 @@ namespace cfr_arduino_bridge::segmentation {
       std::vector<int64_t> cell_of(count);
       Grid<double> lowest(rows, cols, kInf);
       Grid<double> highest(rows, cols, -kInf);
+      Mask bar_height(rows, cols, 0);
       Mask evidence(rows, cols, 0);
       for (size_t k = 0; k < count; ++k) {
         const int64_t cx = ix[k] - x0;
@@ -449,6 +450,7 @@ namespace cfr_arduino_bridge::segmentation {
         const double h = height[static_cast<size_t>(index[k])];
         lowest(cx, cy) = std::min(lowest(cx, cy), h);
         highest(cx, cy) = std::max(highest(cx, cy), h);
+        bar_height(cx, cy) |= h >= p.gate_min_top + 0.10;
         // Hanging needs the ground under it seen (column_low is -inf where it
         // was not); a far bucket whose foot hides behind a near one is not
         // hanging, it is merely half seen.  The last point in a cell decides.
@@ -458,8 +460,10 @@ namespace cfr_arduino_bridge::segmentation {
       Mask hanging(rows, cols, 0);
       for (size_t c = 0; c < lowest.cells.size(); ++c) {
         grounded.cells[c] = lowest.cells[c] <= p.foot_height;
-        hanging.cells[c] = std::isfinite(lowest.cells[c]) && !grounded.cells[c] && evidence.cells[c] &&
-                           highest.cells[c] <= p.gate_max_top;
+        // Build the gate from its high bar, not its lower curtain. Streamers
+        // can bow toward or away from the camera without thickening the bar.
+        hanging.cells[c] =
+            bar_height.cells[c] && !grounded.cells[c] && evidence.cells[c] && highest.cells[c] <= p.gate_max_top;
       }
       // Grounded runs no bigger than a post may be one.  (Longer ones are
       // walls: they may hold a gate up, but they are never part of it.)
@@ -660,12 +664,31 @@ namespace cfr_arduino_bridge::segmentation {
         if (top < p.gate_min_top) {
           continue;
         }
-        size_t curtain_cells = 0;
-        for (const int64_t c : cells) {
-          curtain_cells += lowest.cells[static_cast<size_t>(c)] < p.clearance;
+        // Count low hanging returns across the span, allowing each flexible
+        // streamer to move in plan independently of the rigid arch above it.
+        // Count distinct across-span cells so a single folded strip cannot
+        // masquerade as an entire curtain.
+        const size_t bins = static_cast<size_t>(std::ceil(span / g));
+        std::vector<uint8_t> curtain_bins(bins, 0);
+        for (size_t k = 0; k < count; ++k) {
+          const size_t at = static_cast<size_t>(index[k]);
+          const double h = height[at];
+          if (h <= p.foot_height || h >= p.clearance || column_low[at] <= p.foot_height) {
+            continue;
+          }
+          const double rx = level[3 * at] - center[0];
+          const double ry = level[3 * at + 1] - center[1];
+          const double along = rx * axis[0] + ry * axis[1];
+          const double across = rx * normal[0] + ry * normal[1];
+          if (along < u_lo || along > u_hi || std::abs(across) > p.gate_max_thickness + 0.2) {
+            continue;
+          }
+          const size_t b = std::min(static_cast<size_t>((along - u_lo) / g), bins - 1);
+          curtain_bins[b] = 1;
         }
-        const double curtain = static_cast<double>(curtain_cells) / static_cast<double>(m);
-        const uint8_t kind = curtain >= p.curtain_fraction ? kCarWash : kHoop;
+        const double curtain =
+            static_cast<double>(std::count(curtain_bins.begin(), curtain_bins.end(), 1)) / static_cast<double>(bins);
+        const uint8_t kind = span >= p.carwash_min_span || curtain >= p.curtain_fraction ? kCarWash : kHoop;
         // Unseen feet are only trusted for a curtain: two posts nobody saw do
         // not make a hoop.
         if ((ends[0] == kCut || ends[1] == kCut) && kind != kCarWash) {
@@ -722,6 +745,19 @@ namespace cfr_arduino_bridge::segmentation {
       return label == kObstacle || label == kOverhead;
     }
 
+    // The real wash uses lemon-yellow party streamers. Their color survives
+    // bends and tangles that make a point-cloud return look like a solid wall.
+    // Keep the test conservative: Gazebo shades straw bales to brown pixels
+    // with green/red near 0.82, while the yellow ribbons stay near 0.98.
+    // Washed-out colors also need enough chroma.
+    bool IsStreamerYellow(uint32_t rgb) {
+      const int red = (rgb >> 16) & 0xff;
+      const int green = (rgb >> 8) & 0xff;
+      const int blue = rgb & 0xff;
+      return red >= 50 && green >= 50 && 10 * green >= 9 * red && 5 * red >= 4 * green && green - blue >= 35 &&
+             4 * (green - blue) >= green;
+    }
+
     // The rest of a gate's bar, in its own thin footprint.
     //
     // The hanging run stops short of each post: the post hides the floor under
@@ -766,23 +802,30 @@ namespace cfr_arduino_bridge::segmentation {
                       const std::vector<int64_t>& valid,
                       const std::vector<double>& column_low,
                       const std::vector<uint8_t>& beside_ground,
+                      const uint32_t* rgb,
                       const Params& p,
                       Segmentation* out) {
       const double half = gate.span / 2 + p.gate_cell;
       for (const int64_t at : valid) {
         const size_t k = static_cast<size_t>(at);
-        if (!Claimable(out->labels[k])) {
+        const bool yellow = rgb && IsStreamerYellow(rgb[k]);
+        // A bent ribbon may have been mistaken for a gate foot earlier in
+        // this frame. Its yellow return must not keep that foot's blocking bit.
+        if (!Claimable(out->labels[k]) && !(yellow && out->labels[k] == kCarWash)) {
           continue;
         }
         const double rx = out->level[3 * k] - gate.center[0];
         const double ry = out->level[3 * k + 1] - gate.center[1];
         const double along = rx * gate.axis[0] + ry * gate.axis[1];
         const double across = rx * -gate.axis[1] + ry * gate.axis[0];
-        // Only what hangs: whatever stands inside or beside it -- its own
-        // uprights, the bale walls flush against them, a parked bucket --
-        // keeps the label it already has, and keeps blocking.
-        if (std::abs(along) <= half + p.gate_cell && std::abs(across) <= p.carwash_depth &&
-            out->height[k] <= p.gate_max_top && column_low[k] > p.foot_height && !beside_ground[k]) {
+        // Geometry alone keeps anything standing on the ground blocking.
+        // Registered yellow is allowed farther sideways, because separately
+        // attached, thin streamers can swing and tangle across the span.
+        const bool hanging =
+            std::abs(along) <= half + p.gate_cell && column_low[k] > p.foot_height && !beside_ground[k];
+        const bool streamer_color =
+            yellow && std::abs(along) <= gate.span / 2 + 0.425 && out->height[k] > p.ground_tolerance;
+        if (std::abs(across) <= p.carwash_depth && out->height[k] <= p.gate_max_top && (hanging || streamer_color)) {
           out->labels[k] = kCarWash;
           out->blocking[k] = 0;
         }
@@ -806,7 +849,8 @@ namespace cfr_arduino_bridge::segmentation {
     out[2] = m_[6] * x + m_[7] * y + m_[8] * z;
   }
 
-  void Segment(const double* xyz, size_t n, double pitch, double roll, const Params& p, Segmentation* out) {
+  void Segment(
+      const double* xyz, size_t n, double pitch, double roll, const Params& p, Segmentation* out, const uint32_t* rgb) {
     out->labels.assign(n, kUnknown);
     out->height.assign(n, kNan);
     out->blocking.assign(n, 0);
@@ -1076,7 +1120,7 @@ namespace cfr_arduino_bridge::segmentation {
       ClaimFootprint(gate, candidates, p, out);
       out->gates.push_back(gate);
       if (gate.kind == kCarWash) {
-        ClaimCarWash(gate, valid, column_low, beside_ground, p, out);
+        ClaimCarWash(gate, valid, column_low, beside_ground, rgb, p, out);
       }
     }
   }

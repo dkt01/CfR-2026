@@ -1,62 +1,32 @@
 # Bale-Following RL
 
-A reinforcement-learning policy that drives the simulated Slash around the
-speed course by reacting to the bales that line it. Trained with PPO against
-the existing Gazebo simulation, and runnable in-sim as a drop-in alternative
-to `path_follower_node`.
+A PPO policy that drives the simulated Slash around the speed course using
+bale observations. It can replace `path_follower_node` in simulation.
 
 ## How it plugs into the existing stack
 
-The policy publishes `geometry_msgs/Twist` on `/cmd_vel` -- exactly where
-`path_follower_node` publishes -- so the rest of the chain
-(`cmd_vel_to_drive_node` -> `sim_vehicle_node` -> Gazebo's `AckermannSteering`
-plugin) is untouched. Episode resets reuse `teleport_api.py`'s HTTP endpoint
-and the `/world/cfr_speed_course/control` WorldControl service that the
-browser viewer already uses for its reset button.
-
-No changes to the C++ nodes, `package.xml`, or the colcon build.
+The policy publishes `geometry_msgs/Twist` on `/cmd_vel`, using the existing
+drive chain. Episode resets use `teleport_api.py` and Gazebo WorldControl.
 
 ## Two things the simulation forces on this design
 
 **Pose comes from `/world/<world>/dynamic_pose/info`, not `/zed/zed_node/odom`.**
-The Ackermann plugin dead-reckons odometry from wheel rotation, so it ignores
-teleports completely -- after an episode reset it reports a pose with no
-relation to where the car actually is. `training.launch.py` bridges Gazebo's
-ground-truth pose instead. The bridge drops entity names, so the env reads
-index 0 of the pose array, which is the Slash: it is the only dynamic model
-in the world, and Gazebo publishes a model before its links.
+The Ackermann plugin's wheel odometry ignores teleports. After a reset,
+`training.launch.py` instead bridges Gazebo's ground-truth pose. The bridge
+drops entity names; index 0 is the Slash, the world's only dynamic model.
 
-**Episodes are paced against the wall clock, not stepped.** Driving Gazebo
-deterministically through WorldControl `multi_step` corrupts the server's
-heap (`malloc(): unaligned fastbin chunk detected`) and leaves the process
-alive with dead service threads -- every later service call times out. So the
-env sleeps between steps instead, which caps throughput at roughly
-`control_hz` steps per second. The one WorldControl call that remains is a
-single `pause: false` at startup: the headless server comes up paused even
-with `-r`, and while paused `/clock` never advances, so `cmd_vel_to_drive`
-treats every command as stale and holds the car at neutral.
+**Episodes follow wall time.** WorldControl `multi_step` has corrupted the
+Gazebo server heap in testing, so the environment sleeps between steps. It
+sends `pause: false` once at startup; otherwise `/clock` stays frozen and
+drive commands appear stale.
 
-## Observations are analytic, not from the ZED point cloud
+## Observations
 
-**The simulated ZED produces no depth data today.** `speed_course.sdf` has no
-`gz-sim-sensors-system` plugin and no `<sensor>` element -- the ZED2i on the
-vehicle is cosmetic geometry, deliberately left that way pending a working
-GPU-backed EGL/OpenGL context. `simulation.launch.py` bridges
-`/zed/zed_node/point_cloud/cloud_registered`, but nothing publishes it.
-
-So the "virtual lidar" observation is computed **analytically**: ray-cast from
-the car's odometry pose against the 202 bale boxes whose exact poses and
-dimensions are parsed straight out of the SDF. Same conceptual signal (range
-to nearest bale per angular bin), no rendering dependency, deterministic and
-fast. Collision detection works the same way -- the car's chassis footprint
-tested against bale footprints with a separating-axis check -- so no Gazebo
-contact sensor is needed either.
-
-This is a real sim-to-real gap, and it matters: **the policy is trained on
-ground-truth geometry, not noisy depth data.** Before this could run on the
-physical car, the observation source has to be swapped for something derived
-from the actual ZED point cloud, and the policy retrained or fine-tuned
-against it. That is not a small step.
+`config.yaml` selects `scan_source: cloud`, which projects the simulated ZED
+point cloud into range bins through the same scan code used on the car. The
+analytic option ray-casts against bale boxes parsed from the SDF; it is useful
+for comparisons but gives the policy exact geometry unavailable on the car.
+Collision checks use bale footprints without a Gazebo contact sensor.
 
 ## A second objective: the lap racer
 
@@ -299,14 +269,6 @@ rewards and detect collisions when the car inevitably hits a bale.
 
 ## Future work
 
-- **Real depth pipeline.** To make the simulated ZED actually produce a point
-  cloud: add a `gz-sim-sensors-system` world plugin with `<render_engine>ogre2`,
-  add an `rgbd_camera` sensor under the ZED2i link with ZED-like intrinsics
-  (~110 deg HFOV), and give Gazebo an EGL context (a real GPU, or `Xvfb` plus
-  software rasterization). Verify with
-  `ros2 topic hz /zed/zed_node/point_cloud/cloud_registered`. Then replace the
-  analytic lidar in `bale_geometry.py` with a point-cloud-to-range-bin
-  projector.
 - **Parallel environments.** Training runs a single environment because one
   Gazebo instance is the bottleneck. Going wider means N independent Gazebo
   instances on separate `GZ_PARTITION` / ROS domain IDs and teleport ports.
