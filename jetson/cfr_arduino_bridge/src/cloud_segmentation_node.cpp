@@ -1,27 +1,6 @@
-// Run cloud_segmentation on the live ZED cloud and republish it by class.
-//
-// Subscribes to the ZED's registered cloud and its pose, classifies every
-// point, and publishes the cloud again with each point's color set by its
-// class, so RViz and the browser viewer can show what the segmenter decided
-// rather than what the camera saw.  The pose is only read for its pitch and
-// roll -- on the car the ZED's map frame is gravity-aligned, in the sim the
-// bridged ground-truth pose stands in for it -- which is what the segmenter
-// needs to level the cloud.
-//
-// Colors: ground gray-green, obstacle red, hoop magenta, car wash cyan,
-// overhead blue; unknown points are left out.
-//
-// | Interface | Type | Direction |
-// | --------- | ---- | --------- |
-// | `cloud` | `sensor_msgs/PointCloud2` | subscribed |
-// | `pose` | `geometry_msgs/PoseStamped` | subscribed |
-// | `~/cloud` | `sensor_msgs/PointCloud2` | published, x/y/z/rgb |
-//
-// Parameters: `stride` thins what is published (not what is segmented) to
-// every stride-th row and column, because the browser draws it and a quarter
-// of 230k points is plenty to see.  Every cloud_segmentation::Params field is
-// a parameter too, under its own name, read at startup.  `cloud_reliable`
-// (default true) subscribes reliably; see CloudQoS.
+// Color the ZED cloud by segmentation class for RViz and the browser.
+// Pose supplies only pitch and roll to level the cloud. `stride` thins the
+// published cloud after classification, leaving segmentation unchanged.
 
 #include <algorithm>
 #include <cmath>

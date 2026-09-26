@@ -1,27 +1,7 @@
-// A small always-on chase view of the ZED cloud and the car that carries it.
-//
-// The main scene can show the cloud too, but only in "point cloud only" mode,
-// which hides the course to do it -- so you could see the cloud OR where the
-// car is, never both, and only while deliberately toggled.  This is the other
-// half: a second viewport that is always live, always framed on the vehicle,
-// and independent of whatever the main view is doing.
-//
-// It renders in the CAR'S OWN FRAME rather than in world coordinates, which is
-// what makes it cheap: gz-sim's rgbd_camera already publishes points in the
-// body convention (+x forward, +y left, +z up -- see pointcloud.js), so the
-// cloud goes in at the origin, the car goes in at the origin, and neither has
-// to be moved as the car drives.  The camera never moves either.  Nothing here
-// subscribes to a pose.
-//
-// Its own renderer and its own requestAnimationFrame loop, deliberately:
-// gzweb's AssetViewer owns the main canvas and its render loop, and borrowing
-// them would couple this to the internals of a dependency.
-//
-// That loop draws on demand rather than every vsync.  Nothing in this scene
-// moves on its own -- the camera is fixed, the car is a static likeness, and
-// the only thing that ever changes is the cloud, which arrives at about 4 Hz.
-// Redrawing 150k points 60 times a second to show 56 identical frames in a
-// row was most of this page's GPU time.
+// Always-on cloud view in the car's body frame. The cloud and car stay at the
+// origin, so this viewport needs no pose updates. It uses its own renderer
+// because gzweb owns the main canvas, and redraws only when a cloud changes
+// to avoid rendering identical point sets each frame.
 
 import * as THREE from "three";
 

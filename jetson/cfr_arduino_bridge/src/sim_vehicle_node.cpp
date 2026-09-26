@@ -1,37 +1,8 @@
-// Replaces the Arduino bridge for Gazebo runs. It accepts the same normalized
-// command and emits a Twist for Gazebo plus the status heartbeat expected by
-// monitoring tools. Gazebo remains source of odometry and collision physics.
-//
-// This node stands in for the WHOLE actuation chain -- the bridge's speed
-// controller, the Arduino, the ESC and the plant -- so what it has to reproduce
-// is the car's closed-loop response to a drive_cmd, not an idealisation of it.
-// Until the Session B/C runs it reproduced none of it: a nonzero target was
-// applied to the simulated speed instantly, in one tick.
-//
-// Four measured facts now shape the model (docs/characterization-results.md):
-//
-//   1. THE CAR HAS NO BRAKES.  Every non-zero brake limit tested (40/80/120 us)
-//      clamped to the same ~1436 us pulse, and every one stopped the car SLOWER
-//      than simply coasting -- the ESC reads that reverse-side pulse as reverse
-//      drive.  So deceleration toward a lower target is limited by coast drag,
-//      exactly as acceleration is limited by thrust.  On the car a 3.2 -> 0.8
-//      m/s command takes ~2.6 s; the old model did it in one tick.
-//   2. COAST DRAG IS 7-10x WHAT WAS ASSUMED.  decel = 0.606 + 0.130 v m/s^2,
-//      against the 0.1 forward / 0.3 reverse pair this node used to carry.  That
-//      pair was a command-side fudge for a Gazebo contact asymmetry; the real
-//      car is symmetric to 3.3%, so the fudge is gone and one curve replaces it.
-//   3. THE CAR UNDERSTEERS AND ITS STEERING IS ASYMMETRIC.  Left and right
-//      differ by ~34% at matched command, and the achieved radius grows ~14%
-//      between 0.7 and 2.9 m/s.  A single symmetric max_steering_angle and a
-//      pure kinematic yaw rate cannot express either.
-//   4. THE TACHOMETER IS COARSE AND GOES BLIND AT LOW SPEED.  It used to report
-//      a hard-coded rpm = 0 and throttle_us = 1500 no matter what the car was
-//      doing, so every sim run logged an empty speed channel while the car
-//      logged a thousand distinct values.  TachModel below is a transcription
-//      of the firmware's estimator, not an approximation of it.
-//
-// Everything here is a parameter, defaulted from config/vehicle.yaml through
-// config/arduino_bridge.yaml, so a re-run that moves a number moves the twin.
+// Substitute for the Arduino bridge and drivetrain in Gazebo. Model measured
+// coast drag, steering asymmetry and tachometer behavior instead of applying
+// speed commands instantly. Bench results and assumptions are in
+// docs/characterization-results.md; defaults come from config/vehicle.yaml
+// through config/arduino_bridge.yaml.
 
 #include <algorithm>
 #include <chrono>

@@ -1,51 +1,14 @@
-// Per-point classes for the ZED cloud: ground, obstacle, hoop, car wash,
-// overhead.
+// The obstacle course needs a local drivable surface: a fixed height band
+// would confuse ramps and dishes with walls, and hoops or car-wash ribbons
+// with solid obstacles. Level the cloud with the IMU, grow the surface from
+// under the car, then classify points relative to it. Gate geometry separates
+// hoops and car washes from walls; roof clearance separates overhead returns.
+// Only camera data and IMU attitude are used, so the same classifier runs on
+// the car and in Gazebo.
 //
-// rl/bale_follower/cloud_scan.py decides "obstacle or not" with one fixed
-// height band, which is enough on the Speed Course's flat floor and nowhere
-// else.  The Obstacle Course breaks it four ways:
-//
-//   * The ground is not flat.  The overpass ramp climbs 0.64 m in 3.3 m, so
-//     2 m up it the surface is higher than a straw bale is tall.  The helix
-//     descends, the bank rolls the car 9 degrees, the pothole board and gravel
-//     tray stand proud of the floor and are dished or littered on top.
-//   * Hoops are to be driven through, and seen from the car they are two
-//     posts and a bar at bale height.
-//   * The car wash is to be driven through although its ribbons render as a
-//     curtain from 0.12 m up to 0.54 m -- a wall, to a height band.
-//   * Some structure is overhead: the tunnel roof, the deck above it.
-//
-// So instead of one band, this
-//
-//   1. levels the cloud with the IMU's pitch and roll;
-//   2. grows the drivable surface outward from under the car's own wheels on
-//      a plan grid, accepting a cell when its lowest return continues the
-//      surface it borders (within a grade and a step -- ramps and dishes
-//      continue it, a bale face does not);
-//   3. measures every point's height above the surface under it: close to it
-//      is GROUND, below it is ground too (a lower level seen over an edge);
-//   4. calls a column OVERHEAD when nothing in it comes lower than the car's
-//      roof, and OBSTACLE otherwise;
-//   5. finds *gates* -- thin structures standing on two feet with the span
-//      between them open underneath -- and relabels them HOOP when the span
-//      is open to the car's height and CARWASH when it is hung with a curtain.
-//
-// Every step reads only the cloud, the camera's mounting, and the IMU's
-// gravity vector, so this runs unchanged on the robot.  Nothing reads sim pose
-// or the world file.
-//
-// Frames: points arrive in REP-103 body convention relative to the camera
-// (+x forward, +y left, +z up), which is what Gazebo's rgbd_camera and the ZED
-// wrapper's point_cloud/cloud_registered both publish.  Pitch is nose-down
-// positive and roll left-side-up positive, as cloud_scan takes them.
-//
-// This is the ONE implementation.  cloud_segmentation_node runs it on the car
-// and in Gazebo, and src/cloud_segmentation.py wraps the same shared library
-// through its C interface for test/test_cloud_segmentation.py and for any
-// training code that wants it -- so what is scored against the rendered
-// fixtures is exactly what drives.  It was ported from a numpy original step
-// for step, including the order its relaxations visit cells in, so the
-// fixture scores carried across unchanged.
+// Points use REP-103 body axes (+x forward, +y left, +z up); pitch is positive
+// nose-down and roll positive left-side-up. The C wrapper in
+// src/cloud_segmentation.py exposes this implementation to Python tests.
 
 #pragma once
 
