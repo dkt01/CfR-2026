@@ -132,9 +132,6 @@ let latestSlashPose;
 let followTargetOffset;
 let followCameraOffset;
 let updatingFollowView = false;
-// The heading the CAMERA is using, which lags the car's - see advanceFollowYaw.
-let followYaw;
-let followYawStamp;
 let simulationSocket;
 let worldControlType;
 let booleanType;
@@ -166,6 +163,7 @@ function showCourseOverview() {
   }
 
   scene.camera.position.set(...course.camera);
+  scene.camera.up.set(0, 0, 1);
   scene.controls.target.set(...course.target);
   scene.camera.lookAt(scene.controls.target);
   scene.controls.update();
@@ -179,49 +177,9 @@ function getSlashYaw(pose) {
   );
 }
 
-function rotateOffset(offset, yaw) {
-  const cosine = Math.cos(yaw);
-  const sine = Math.sin(yaw);
-  return {
-    x: offset.x * cosine - offset.y * sine,
-    y: offset.x * sine + offset.y * cosine,
-    z: offset.z,
-  };
-}
-
-// Follow position exactly but smooth and rate-limit orbit angle. This avoids
-// spinning the scene at the car's full yaw rate in hairpins. The selected
-// settings kept heading lag near 31 degrees on a scripted lap.
-const FOLLOW_YAW_TAU = 0.3;        // s, first-order lag on the camera heading
-const FOLLOW_YAW_MAX_RATE = 1.2;   // rad/s, hard cap on top of it
-
-function wrapToPi(angle) {
-  return Math.atan2(Math.sin(angle), Math.cos(angle));
-}
-
-function advanceFollowYaw(pose, now) {
-  const yaw = getSlashYaw(pose);
-  if (followYaw === undefined) {
-    followYaw = yaw;
-    followYawStamp = now;
-    return followYaw;
-  }
-  // Pose frames arrive irregularly - the websocket batches them and a hidden
-  // tab throttles rendering - so the step comes off the clock rather than
-  // being assumed constant, or the smoothing changes with the frame rate.
-  // Capped at half a second so a stalled stream catches up over a few frames
-  // instead of snapping.
-  const dt = Math.min(Math.max((now - followYawStamp) / 1000, 0), 0.5);
-  followYawStamp = now;
-  if (dt === 0) {
-    return followYaw;
-  }
-  // Shortest way round, so the camera does not unwind the long way when the
-  // car's heading crosses +/-pi. That crossing happens in every hairpin.
-  const step = wrapToPi(yaw - followYaw) * (1 - Math.exp(-dt / FOLLOW_YAW_TAU));
-  const limit = FOLLOW_YAW_MAX_RATE * dt;
-  followYaw = wrapToPi(followYaw + Math.max(-limit, Math.min(limit, step)));
-  return followYaw;
+function slashQuaternion(pose) {
+  const { x, y, z, w } = pose.orientation;
+  return new THREE.Quaternion(x, y, z, w).normalize();
 }
 
 function captureFollowView() {
@@ -230,23 +188,14 @@ function captureFollowView() {
     return;
   }
 
-  // The camera's own heading, not the car's: these offsets are applied in
-  // that frame, so capturing them in any other one rotates the view by the
-  // difference the moment the next pose lands.  They are the same number
-  // except while the smoothing is catching up - which is exactly when a
-  // hairpin is being driven, and so exactly when someone grabs the mouse.
-  const yaw = followYaw ?? getSlashYaw(latestSlashPose);
+  // Store mouse orbit and zoom in the car's frame so both survive a turn or
+  // a banked section without the view slipping away from the robot.
+  const inverse = slashQuaternion(latestSlashPose).invert();
+  const { x, y, z } = latestSlashPose.position;
+  const position = new THREE.Vector3(x, y, z);
   const target = scene.controls.target;
-  followTargetOffset = rotateOffset({
-    x: target.x - latestSlashPose.position.x,
-    y: target.y - latestSlashPose.position.y,
-    z: target.z - latestSlashPose.position.z,
-  }, -yaw);
-  followCameraOffset = rotateOffset({
-    x: scene.camera.position.x - target.x,
-    y: scene.camera.position.y - target.y,
-    z: scene.camera.position.z - target.z,
-  }, -yaw);
+  followTargetOffset = target.clone().sub(position).applyQuaternion(inverse);
+  followCameraOffset = scene.camera.position.clone().sub(target).applyQuaternion(inverse);
 }
 
 function startSlashFollowView(pose) {
@@ -255,27 +204,10 @@ function startSlashFollowView(pose) {
     return;
   }
 
-  const yaw = getSlashYaw(pose);
-  followYaw = yaw;
-  followYawStamp = performance.now();
-  const forwardX = Math.cos(yaw);
-  const forwardY = Math.sin(yaw);
-  followTargetOffset = { x: 0.5, y: 0, z: 0.15 };
-  followCameraOffset = { x: -3, y: 0, z: 3.85 };
-  updatingFollowView = true;
-  scene.camera.position.set(
-    pose.position.x - 2.5 * forwardX,
-    pose.position.y - 2.5 * forwardY,
-    pose.position.z + 4,
-  );
-  scene.controls.target.set(
-    pose.position.x + 0.5 * forwardX,
-    pose.position.y + 0.5 * forwardY,
-    pose.position.z + 0.15,
-  );
-  scene.camera.lookAt(scene.controls.target);
-  scene.controls.update();
-  updatingFollowView = false;
+  // A short, low chase view keeps the robot framed like the Gazebo videos.
+  followTargetOffset = new THREE.Vector3(1.25, 0, 0.2);
+  followCameraOffset = new THREE.Vector3(-3.25, 0, 0.95);
+  updateSlashFollowView(pose);
 }
 
 function updateSlashFollowView(pose) {
@@ -284,21 +216,13 @@ function updateSlashFollowView(pose) {
     return;
   }
 
-  const yaw = advanceFollowYaw(pose, performance.now());
-  const targetOffset = rotateOffset(followTargetOffset, yaw);
-  const cameraOffset = rotateOffset(followCameraOffset, yaw);
+  const rotation = slashQuaternion(pose);
+  const position = new THREE.Vector3(pose.position.x, pose.position.y, pose.position.z);
   const target = scene.controls.target;
   updatingFollowView = true;
-  target.set(
-    pose.position.x + targetOffset.x,
-    pose.position.y + targetOffset.y,
-    pose.position.z + targetOffset.z,
-  );
-  scene.camera.position.set(
-    target.x + cameraOffset.x,
-    target.y + cameraOffset.y,
-    target.z + cameraOffset.z,
-  );
+  target.copy(position).add(followTargetOffset.clone().applyQuaternion(rotation));
+  scene.camera.position.copy(target).add(followCameraOffset.clone().applyQuaternion(rotation));
+  scene.camera.up.set(0, 0, 1).applyQuaternion(rotation);
   scene.controls.update();
   updatingFollowView = false;
 }
@@ -567,7 +491,11 @@ function updatePoses(message) {
     scene.setPose(slash, slashPose.position, slashPose.orientation);
     ensurePointCloudAttached(scene, slash);
     if (followSlash) {
-      updateSlashFollowView(slashPose);
+      if (followTargetOffset) {
+        updateSlashFollowView(slashPose);
+      } else {
+        startSlashFollowView(slashPose);
+      }
     }
   }
 
@@ -896,16 +824,17 @@ followButton.addEventListener("click", () => {
   if (followSlash) {
     startSlashFollowView(latestSlashPose);
   } else {
-    // Dropped so the next follow starts from the car's real heading rather
-    // than from wherever the camera had lagged to when it was switched off.
-    followYaw = undefined;
+    const scene = viewer["scene"];
+    if (scene) {
+      scene.camera.up.set(0, 0, 1);
+      scene.controls.update();
+    }
   }
 });
 document.querySelector("#reset-view").addEventListener("click", () => {
   followSlash = false;
   followTargetOffset = undefined;
   followCameraOffset = undefined;
-  followYaw = undefined;
   followButton.textContent = "Follow robot";
   showCourseOverview();
 });
