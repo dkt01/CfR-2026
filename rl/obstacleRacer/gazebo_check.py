@@ -178,8 +178,9 @@ class Sim(Node):
         self.get_logger().info(res.message)
 
     def teleport(self, x, y, heading, z=0.0):
+        """Heading in radians; teleport_api takes degrees."""
         body = json.dumps(
-            {"x": x, "y": y, "heading": heading, "z": max(0.0, z)}
+            {"x": x, "y": y, "heading": math.degrees(heading), "z": max(0.0, z)}
         ).encode()
         req = urllib.request.Request(
             TELEPORT_URL, body, {"Content-Type": "application/json"}
@@ -188,6 +189,48 @@ class Sim(Node):
             answer = json.loads(reply.read())
         if not answer.get("success"):
             raise RuntimeError(f"teleport failed: {answer}")
+
+    def place(self, x, y, heading, z=0.0, tries=4):
+        """Teleport and wait until the car is really there and at rest.
+
+        set_pose moves the model but keeps its velocity and the controller's
+        target, and the pose stream can lag it: without this wait a pass logs
+        the end of the previous one, or starts from wherever the car rolled.
+        """
+        for _ in range(tries):
+            t0 = self.now()
+            while self.now() - t0 < 1.0:  # coast to a stop where it is
+                self.command(0.0, 0.0)
+                self.spin_for(0.05)
+            try:
+                self.teleport(x, y, heading, z)
+            except Exception as error:  # noqa: BLE001 -- HTTPError, timeout
+                self.get_logger().warn(
+                    f"teleport to ({x:.2f}, {y:.2f}) failed: {error}"
+                )
+                continue
+            still_since = None
+            last = None
+            t0 = self.now()
+            while self.now() - t0 < 4.0:
+                self.command(0.0, 0.0)
+                self.spin_for(0.05)
+                _, px, py, _, pyaw, _, _ = self.pose
+                near = math.hypot(px - x, py - y) < 0.15 and abs(
+                    math.remainder(pyaw - heading, math.tau)
+                ) < math.radians(8)
+                moved = (
+                    last is not None and math.hypot(px - last[0], py - last[1]) > 0.003
+                )
+                last = (px, py)
+                if near and not moved:
+                    still_since = still_since if still_since is not None else self.now()
+                    if self.now() - still_since >= 0.5:
+                        return True
+                else:
+                    still_since = None
+        self.get_logger().warn(f"car did not settle at ({x:.2f}, {y:.2f})")
+        return False
 
     def command(self, steering, velocity):
         msg = DriveCommand()
@@ -266,8 +309,8 @@ def seg_gap(sim, args):
             x += rng.uniform(-0.15, 0.15)
             y += rng.uniform(-0.15, 0.15)
             yaw += math.radians(rng.uniform(-15, 15))
-            sim.teleport(x, y, yaw, z)
-            sim.spin_for(1.0)
+            if not sim.place(x, y, yaw, z, tries=2):
+                continue
             cloud = sim.fresh_cloud()
             _, gx, gy, gz, gyaw, gpitch, groll = sim.pose
             pts = point_cloud2.read_points_numpy(
@@ -374,9 +417,9 @@ def surfaces(sim, args):
     results = []
     for name, (x, y, z, yaw), steer, speeds in PASSES:
         for v in speeds:
-            sim.command(0.0, 0.0)
-            sim.teleport(x, y, yaw, z)
-            sim.spin_for(1.5)
+            if not sim.place(x, y, yaw, z):
+                print(f"  {name} @ {v}: car did not settle at the start -- skipped")
+                continue
             sim.pose_log = []
             t0 = sim.now()
             while sim.now() - t0 < duration:
@@ -402,7 +445,7 @@ def surfaces(sim, args):
                 np.zeros(1),
             )
             steps = int(duration * float(cfg["env"]["control_hz"]))
-            mt, mp, mr, mz = [], [], [], []
+            mt, mp, mr, mz, mxy, myaw, mv = [], [], [], [], [], [], []
             for i in range(steps):
                 pl.step(np.array([steer]), np.array([v]), int(cfg["env"]["substeps"]))
                 s = pl.state[0]
@@ -410,10 +453,27 @@ def surfaces(sim, args):
                 mp.append(-s[P.S_PITCH])  # nose-down +, as the pose reports it
                 mr.append(s[P.S_ROLL])
                 mz.append(s[P.S_Z])
+                mxy.append((s[P.S_X], s[P.S_Y]))
+                myaw.append(s[P.S_YAW])
+                mv.append(s[P.S_V])
             mt = np.array(mt)
             gp = np.interp(mt, sim_t, track[:, 5])
             gr = np.interp(mt, sim_t, track[:, 6])
             gz = np.interp(mt, sim_t, track[:, 3])
+            # Planar: does the plant go where Gazebo's car goes, as fast?
+            gx = np.interp(mt, sim_t, track[:, 1])
+            gy = np.interp(mt, sim_t, track[:, 2])
+            gyaw = np.interp(mt, sim_t, np.unwrap(track[:, 4]))
+            gv_raw = np.hypot(
+                np.gradient(track[:, 1], sim_t), np.gradient(track[:, 2], sim_t)
+            )
+            gv = np.interp(mt, sim_t, np.convolve(gv_raw, np.ones(5) / 5, "same"))
+            mxy = np.array(mxy)
+            pos_err = np.hypot(gx - mxy[:, 0], gy - mxy[:, 1])
+            yaw_err = np.degrees(np.abs(gyaw - np.unwrap(myaw)))
+            rms_v = float(np.sqrt(np.mean((gv - np.array(mv)) ** 2)))
+            dist_g = float(np.sum(np.hypot(np.diff(gx), np.diff(gy))))
+            dist_m = float(np.sum(np.hypot(*np.diff(mxy, axis=0).T)))
             rms_p = math.degrees(np.sqrt(np.mean((gp - np.array(mp)) ** 2)))
             rms_r = math.degrees(np.sqrt(np.mean((gr - np.array(mr)) ** 2)))
             rms_z = float(np.sqrt(np.mean((gz - np.array(mz)) ** 2)))
@@ -428,17 +488,36 @@ def surfaces(sim, args):
                     rms_roll_deg=rms_r,
                     rms_z_m=rms_z,
                     peak_lag_s=lag,
+                    rms_speed=rms_v,
+                    end_pos_err_m=float(pos_err[-1]),
+                    max_pos_err_m=float(pos_err.max()),
+                    end_yaw_err_deg=float(yaw_err[-1]),
+                    dist_gazebo_m=dist_g,
+                    dist_model_m=dist_m,
                     gazebo=dict(
                         t=sim_t.tolist(),
                         pitch=track[:, 5].tolist(),
                         roll=track[:, 6].tolist(),
                         z=track[:, 3].tolist(),
+                        x=track[:, 1].tolist(),
+                        y=track[:, 2].tolist(),
+                        yaw=track[:, 4].tolist(),
                     ),
-                    model=dict(t=mt.tolist(), pitch=mp, roll=mr, z=mz),
+                    model=dict(
+                        t=mt.tolist(),
+                        pitch=mp,
+                        roll=mr,
+                        z=mz,
+                        x=mxy[:, 0].tolist(),
+                        y=mxy[:, 1].tolist(),
+                        yaw=myaw,
+                        v=mv,
+                    ),
                 )
             )
             print(
-                f"  {name:22s} {v:.0f} m/s: rms pitch {rms_p:4.2f} deg  roll {rms_r:4.2f} deg  z {100 * rms_z:4.1f} cm  peak lag {1000 * lag:+5.0f} ms",
+                f"  {name:22s} {v:.0f} m/s: rms pitch {rms_p:4.2f} deg  roll {rms_r:4.2f} deg  z {100 * rms_z:4.1f} cm  peak lag {1000 * lag:+5.0f} ms  "
+                f"| speed rms {rms_v:4.2f} m/s  dist {dist_g:4.1f}/{dist_m:4.1f} m  end pos err {pos_err[-1]:4.2f} m  yaw err {yaw_err[-1]:4.1f} deg",
                 flush=True,
             )
     OUT.mkdir(parents=True, exist_ok=True)
@@ -479,8 +558,7 @@ def validate(sim, args):
             x = -0.70 + rng.uniform(-0.1, 0.1)
             y = rng.uniform(-0.1, 0.1)
             yaw = math.radians(rng.uniform(-5, 5))
-            sim.teleport(x, y, yaw, 0.0)
-            sim.spin_for(1.5)
+            sim.place(x, y, yaw, 0.0)
             sim.call(Trigger, "/hoop_monitor/reset", Trigger.Request())
             sim.call(Trigger, "/lap_counter/reset", Trigger.Request())
             sim.done = False

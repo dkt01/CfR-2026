@@ -543,7 +543,7 @@ class CourseModel:
         else:
             self.static = bake(static, self.grid, 0, 0, nx, ny)
             np.savez_compressed(path, **self.static)
-        windows = []
+        self._tiler = _Tiler(self.static, self.wi, self.wj, self.wnx, self.wny)
         for seed, layout in zip(self.seeds, self.layouts):
             # Keyed on the layout itself, not just its seed: the same seed
             # means a different course whenever the draw gains an element
@@ -554,15 +554,19 @@ class CourseModel:
             ).hexdigest()[:8]
             wpath = CACHE / f"window_{key}_{seed}_{content}.npz"
             if wpath.exists() and not rebuild:
-                windows.append(dict(np.load(wpath)))
+                self._tiler.add(dict(np.load(wpath)))
                 continue
             laid = world_module.apply_layout(base, layout, spec)
             inside = [p for p in laid.prims if self._near_window(p)]
             win = bake(inside, self.grid, self.wi, self.wj, self.wnx, self.wny)
             np.savez_compressed(wpath, **win)
-            windows.append(win)
-        self.window = {f: np.stack([w[f] for w in windows]) for f in FIELDS}
+            self._tiler.add(win)
+        self.window, self.tile_map = self._tiler.finish()
         self.spec = spec
+
+    def dense_window(self, lay: int) -> dict:
+        """Layout `lay`'s window as whole (wny, wnx, ...) arrays."""
+        return self._tiler.dense(self.window, self.tile_map, lay)
 
     def _cache_key(self) -> str:
         h = hashlib.sha1()
@@ -608,35 +612,114 @@ class CourseModel:
         arrays by value, and at thirty-odd arrays that copy cost more than the
         lookup it was carrying.
         """
-        s, w, G = self.static, self.window, self.G
-        support = (G, s["S_hi"], s["S_mu"], s["S_n"], w["S_hi"], w["S_mu"], w["S_n"])
-        obstacles = (G, s["O_lo"], s["O_hi"], s["O_n"], w["O_lo"], w["O_hi"], w["O_n"])
-        layers = (G, s["E_top"], s["E_n"], w["E_top"], w["E_n"])
-        solid = (G, s["V_lo"], s["V_hi"], s["V_n"], w["V_lo"], w["V_hi"], w["V_n"])
-        wash = (G, s["C_lo"], s["C_hi"], s["C_n"], w["C_lo"], w["C_hi"], w["C_n"])
+        s, w, G, T = self.static, self.window, self.G, self.tile_map
+        support = (G, s["S_hi"], s["S_mu"], s["S_n"], w["S_hi"], w["S_mu"], w["S_n"], T)
+        obstacles = (
+            G,
+            s["O_lo"],
+            s["O_hi"],
+            s["O_n"],
+            w["O_lo"],
+            w["O_hi"],
+            w["O_n"],
+            T,
+        )
+        layers = (G, s["E_top"], s["E_n"], w["E_top"], w["E_n"], T)
+        solid = (G, s["V_lo"], s["V_hi"], s["V_n"], w["V_lo"], w["V_hi"], w["V_n"], T)
+        wash = (G, s["C_lo"], s["C_hi"], s["C_n"], w["C_lo"], w["C_hi"], w["C_n"], T)
         return support, obstacles, (layers, solid, wash)
+
+
+# Window cells are kept in TILE x TILE tiles, and only the tiles where a
+# layout differs from the static grid: the movable models cover a few percent
+# of the window, and a whole window per layout (66 MB) capped v5 at ten
+# training courses.  A tile a layout leaves as the static grid has it maps to
+# -1 and is read from the static grid.
+TILE = 16
+
+
+class _Tiler:
+    def __init__(self, static, wi, wj, wnx, wny):
+        self.ty = -(-wny // TILE)
+        self.tx = -(-wnx // TILE)
+        self.shape = (wny, wnx)
+        self.base = {
+            f: self._tiles(static[f][wj : wj + wny, wi : wi + wnx]) for f in FIELDS
+        }
+        self.maps = []
+        self.parts = {f: [] for f in FIELDS}
+        self.count = 0
+
+    def _tiles(self, a):
+        """(wny, wnx, ...) -> (ty, tx, TILE, TILE, ...), zero-padded."""
+        pad = [(0, self.ty * TILE - a.shape[0]), (0, self.tx * TILE - a.shape[1])]
+        a = np.pad(a, pad + [(0, 0)] * (a.ndim - 2))
+        a = a.reshape(self.ty, TILE, self.tx, TILE, *a.shape[2:])
+        return np.ascontiguousarray(np.moveaxis(a, 2, 1))
+
+    def add(self, win):
+        tiles = {f: self._tiles(win[f]) for f in FIELDS}
+        same = np.ones((self.ty, self.tx), bool)
+        for f in FIELDS:
+            eq = tiles[f] == self.base[f]
+            same &= eq.reshape(self.ty, self.tx, -1).all(-1)
+        tmap = np.full((self.ty, self.tx), -1, np.int32)
+        keep = np.argwhere(~same)
+        for f in FIELDS:
+            self.parts[f].append(tiles[f][keep[:, 0], keep[:, 1]])
+        tmap[keep[:, 0], keep[:, 1]] = self.count + np.arange(len(keep))
+        self.count += len(keep)
+        self.maps.append(tmap)
+
+    def finish(self):
+        # At least one tile, so the arrays keep their rank with none kept.
+        tiles = {
+            f: np.concatenate(
+                self.parts[f]
+                + [np.zeros((1,) + self.base[f].shape[2:], self.base[f].dtype)]
+            )
+            for f in FIELDS
+        }
+        return tiles, np.stack(self.maps)
+
+    def dense(self, tiles, tile_map, lay):
+        out = {}
+        for f in FIELDS:
+            a = self.base[f].copy()
+            own = tile_map[lay] >= 0
+            a[own] = tiles[f][tile_map[lay][own]]
+            a = np.moveaxis(a, 1, 2).reshape(
+                self.ty * TILE, self.tx * TILE, *a.shape[4:]
+            )
+            out[f] = a[: self.shape[0], : self.shape[1]]
+        return out
 
 
 # ------------------------------------------------------------------ queries
 #
 # SUP, OBS and the sensor tuples come from CourseModel.tables(); each starts
 # with the grid vector G
-# (x0, y0, nx, ny, window i0, window j0, window nx, window ny).  `lay`
+# (x0, y0, nx, ny, window i0, window j0, window nx, window ny), then the
+# static arrays, then the window's tile arrays, then the tile map.  `lay`
 # indexes the model's layout list.
 
 
 @nb.njit(cache=True, inline="always")
-def _locate(G, x, y):
-    """(in_window, row, col) of the cell holding (x, y); col -1 if off-grid."""
+def _locate(G, T, lay, x, y):
+    """(in_window, tile, row, col) of the cell holding (x, y); col -1 if
+    off-grid.  In the window, row and col are within the layout's tile;
+    elsewhere they index the static grid."""
     i = int(math.floor((x - G[0]) / RES))
     j = int(math.floor((y - G[1]) / RES))
     if i < 0 or j < 0 or i >= G[2] or j >= G[3]:
-        return False, 0, -1
+        return False, 0, 0, -1
     wi = i - int(G[4])
     wj = j - int(G[5])
     if 0 <= wi < G[6] and 0 <= wj < G[7]:
-        return True, wj, wi
-    return False, j, i
+        t = T[lay, wj // TILE, wi // TILE]
+        if t >= 0:
+            return True, t, wj % TILE, wi % TILE
+    return False, 0, j, i
 
 
 @nb.njit(cache=True, inline="always")
@@ -646,18 +729,18 @@ def support_below(SUP, lay, x, y, zprobe):
     Off the grid is open floor.  A top above zprobe is not road to a wheel at
     that height -- it is a wall to it, or a deck over it.
     """
-    win, r, c = _locate(SUP[0], x, y)
+    win, t, r, c = _locate(SUP[0], SUP[7], lay, x, y)
     best = -1e9
     best_mu = 1.0
     if c < 0:
         return 0.0, 1.0
     if win:
         hi, mu, n = SUP[4], SUP[5], SUP[6]
-        for m in range(n[lay, r, c]):
-            top = hi[lay, r, c, m]
+        for m in range(n[t, r, c]):
+            top = hi[t, r, c, m]
             if top <= zprobe and top > best:
                 best = top
-                best_mu = mu[lay, r, c, m]
+                best_mu = mu[t, r, c, m]
     else:
         hi, mu, n = SUP[1], SUP[2], SUP[3]
         for m in range(n[r, c]):
@@ -713,13 +796,13 @@ def support_smooth(SUP, lay, x, y, zprobe):
 @nb.njit(cache=True, inline="always")
 def obstacle_overlap(OBS, lay, x, y, zlo, zhi):
     """Whether any obstacle collision at (x, y) overlaps [zlo, zhi]."""
-    win, r, c = _locate(OBS[0], x, y)
+    win, t, r, c = _locate(OBS[0], OBS[7], lay, x, y)
     if c < 0:
         return False
     if win:
         lo, hi, n = OBS[4], OBS[5], OBS[6]
-        for m in range(n[lay, r, c]):
-            if lo[lay, r, c, m] <= zhi and hi[lay, r, c, m] >= zlo:
+        for m in range(n[t, r, c]):
+            if lo[t, r, c, m] <= zhi and hi[t, r, c, m] >= zlo:
                 return True
     else:
         lo, hi, n = OBS[1], OBS[2], OBS[3]
@@ -732,18 +815,18 @@ def obstacle_overlap(OBS, lay, x, y, zlo, zhi):
 @nb.njit(cache=True, inline="always")
 def nearest_layer(LAY, lay, x, y, zref):
     """Top of the exposed layer at (x, y) nearest zref, or -1e9 if none."""
-    win, r, c = _locate(LAY[0], x, y)
+    win, t, r, c = _locate(LAY[0], LAY[5], lay, x, y)
     if c < 0:
         return 0.0
     best = -1e9
     best_d = 1e9
     if win:
         top, n = LAY[3], LAY[4]
-        for m in range(n[lay, r, c]):
-            d = abs(top[lay, r, c, m] - zref)
+        for m in range(n[t, r, c]):
+            d = abs(top[t, r, c, m] - zref)
             if d < best_d:
                 best_d = d
-                best = top[lay, r, c, m]
+                best = top[t, r, c, m]
     else:
         top, n = LAY[1], LAY[2]
         for m in range(n[r, c]):
@@ -763,16 +846,16 @@ def visual_band(VIS, lay, x, y, ref):
     CLEARANCE above it, blocks.  Below the surface is ground (a lower level
     seen over an edge); starting above the clearance is overhead.
     """
-    win, r, c = _locate(VIS[0], x, y)
+    win, t, r, c = _locate(VIS[0], VIS[7], lay, x, y)
     lo_out = 1.0
     hi_out = -1.0
     if c < 0:
         return lo_out, hi_out
     if win:
         lo, hi, n = VIS[4], VIS[5], VIS[6]
-        for m in range(n[lay, r, c]):
-            a = lo[lay, r, c, m]
-            b = hi[lay, r, c, m]
+        for m in range(n[t, r, c]):
+            a = lo[t, r, c, m]
+            b = hi[t, r, c, m]
             if b > ref + GROUND_TOLERANCE and a < ref + CLEARANCE:
                 if hi_out < lo_out:
                     lo_out, hi_out = max(a, ref), b

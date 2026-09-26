@@ -41,12 +41,10 @@ BALE_WIDTH = 18 * INCH
 BALE_HEIGHT = 14 * INCH
 BALE_Z = BALE_HEIGHT / 2
 
-# Straw bales are soft and grab the car rather than let it slide past.
-# Well above the wheel-floor grip (mu 1.0-1.2 -- see the wheel and floor
-# collisions in speed_course.sdf) so a car pressed into a bale wall can't
-# out-drive the friction and stalls instead of sliding along it.  Matches
-# BALE_FRICTION in generate_obstacle_course.py.
-BALE_FRICTION = 50
+# Straw on a rubber tire: the car scrubs along a bale wall rather than
+# climbing it.  At 50 a driven tire brushing a bale climbed it and rolled the
+# car (see BALE_FRICTION in generate_obstacle_course.py, which this matches).
+BALE_FRICTION = 0.5
 FOOT = 0.3048
 PACKAGE = Path(__file__).parents[1] / "cfr_arduino_bridge"
 WORLD_FILE = PACKAGE / "worlds/speed_course.sdf"

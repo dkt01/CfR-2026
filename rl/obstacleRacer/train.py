@@ -6,14 +6,14 @@
     python3 train.py --dir runs/smoke --steps 1000000 --eval-every 250000
 
 Every evaluation drives deterministic episodes from the start box (+/-0.1 m,
-+/-5 deg, from rest) on the ten TRAINING layouts and on the four HELD-OUT
++/-5 deg, from rest) on ten of the TRAINING layouts and on the four HELD-OUT
 ones, plus a per-obstacle check on the held-out layouts (dealt 2 m before
 each obstacle: does the car get through it?), and appends a record to
 <dir>/history.json -- the file the rl-train skill's tui.py watches.  The
 record also carries, from the training rollouts, how often each obstacle was
 met and failed at.  The best model is the one that finishes the most
 held-out runs, then scores best on held-out progress and obstacles cleared,
-then laps quickest: a policy that only knows its ten courses is not the one
+then laps quickest: a policy that only knows its training courses is not the one
 to take to the event.
 """
 
@@ -33,7 +33,8 @@ import course_model
 import layouts
 import reward
 from env import ObstacleEnv
-from ppo_policy import SquashedMeanPolicy
+import ppo_policy
+from ppo_policy import Driver, SquashedMeanPolicy
 
 HERE = Path(__file__).resolve().parent
 
@@ -93,16 +94,22 @@ def sb3_adapter(env, reward_scale=1.0):
     return Adapter(env)
 
 
-def evaluate(env, predict, per_layout):
-    """Deterministic start-box episodes, `per_layout` on each of env's layouts."""
+def evaluate(env, driver, per_layout):
+    """Deterministic start-box episodes, `per_layout` on each of env's layouts.
+
+    `driver(n)` makes a fresh ppo_policy.Driver (or anything with the same
+    call and `ended`) for the env's n cars.
+    """
     want = per_layout * len(env.layout_ids)
     # One car per episode slot, layouts dealt round-robin so every layout
     # gets its share regardless of how fast its episodes end.
     env.layout_ids_cycle = np.tile(env.layout_ids, per_layout)
     obs = env.reset()
+    predict = driver(env.n)
     out = []
     for _ in range(int(env.cfg["env"]["episode_s"] * env.cfg["env"]["control_hz"]) + 5):
         obs, _, term, trunc, info = env.step(predict(obs))
+        predict.ended(term | trunc)
         out += [i for i in info if i]
         if len(out) >= want:
             break
@@ -112,11 +119,17 @@ def evaluate(env, predict, per_layout):
 RECOVERED_M = 2.0  # a stuck start that got this far along has backed out
 SECTION_BACKOFF_M = 2.0
 SECTION_PAST_M = 1.5  # past the obstacle's end: a hoop missed is due by 1 m
-SECTION_TIME_S = 30.0
+# v5's 30 s failed Wide Section runs that got through, slowly, after it:
+# the section is 6-8 m of bales to find a way through.
+SECTION_TIME_S = 60.0
 
 
-def section_eval(env, predict, per_layout):
+def section_eval(env, driver, per_layout):
     """Per obstacle: dealt SECTION_BACKOFF_M before it, does the car get past?
+
+    Never dealt behind the end of the obstacle before (env.section_floor), so
+    each rate is that obstacle alone; before v5 at 22M, the buckets' and the
+    hoops' rates also charged the Wide Section's and the buckets' failures.
 
     One car per (layout, obstacle, repeat).  A car clears the obstacle once it
     has driven SECTION_PAST_M beyond the obstacle's end; an episode ending
@@ -133,15 +146,19 @@ def section_eval(env, predict, per_layout):
     lays = np.array([p[0] for p in plan])
     zones = np.array([p[1] for p in plan])
     env.forced_lay = lays
-    env.forced_s = np.array(
-        [env.section_s[lay][z][0] - SECTION_BACKOFF_M for lay, z in plan]
-    )
+    starts = [
+        env.section_target(lay, z, SECTION_BACKOFF_M, any_hoop=False) for lay, z in plan
+    ]
+    env.forced_s = np.array([s for s, _ in starts])
+    env.forced_floor = np.array([f for _, f in starts])
     obs = env.reset()
+    predict = driver(env.n)
     ends = np.array([env.section_s[lay][z][1] for lay, z in plan])
     need = np.mod(ends - env.s_start, env.loop[lays]) + SECTION_PAST_M
     cleared = np.full(env.n, np.nan)
     for _ in range(int(SECTION_TIME_S * float(env.cfg["env"]["control_hz"]))):
-        obs, _, _, _, info = env.step(predict(obs))
+        obs, _, term, trunc, info = env.step(predict(obs))
+        predict.ended(term | trunc)
         open_ = np.isnan(cleared)
         cleared[open_ & (env.dist >= need)] = 1.0
         for i in np.flatnonzero(open_):
@@ -237,6 +254,14 @@ def main():
     from stable_baselines3 import PPO
     from stable_baselines3.common.callbacks import BaseCallback
 
+    recurrent = bool(yaml.safe_load(args.config.read_text())["train"].get("recurrent"))
+    if recurrent:
+        from sb3_contrib import RecurrentPPO as Algo
+
+        policy_class = ppo_policy.SquashedMeanLstmPolicy
+    else:
+        Algo, policy_class = PPO, SquashedMeanPolicy
+
     cfg = yaml.safe_load(args.config.read_text())
     tcfg = cfg["train"]
     # The reward is checked against the config this run actually uses, not
@@ -259,8 +284,16 @@ def main():
         float(tcfg["reward_scale"]),
     )
     per = int(tcfg["eval_episodes_per_layout"])
+    # Every training layout is trained on; the start-box check drives the
+    # first ten (layouts.TRAIN_EVAL_SEEDS) so it costs what it did in v5.
+    train_eval_ids = np.arange(len(layouts.TRAIN_EVAL_SEEDS))
     eval_train = EvalEnv(
-        cfg, model_, per * len(train_ids), train_ids, seed=10_001, start_box_only=True
+        cfg,
+        model_,
+        per * len(train_eval_ids),
+        train_eval_ids,
+        seed=10_001,
+        start_box_only=True,
     )
     eval_held = EvalEnv(
         cfg, model_, per * len(held_ids), held_ids, seed=10_002, start_box_only=True
@@ -289,8 +322,15 @@ def main():
             log_std_range=tuple(tcfg["log_std_range"]),
         ),
     )
+    if recurrent:
+        # One LSTM for the actor and one for the critic, as sb3-contrib
+        # defaults; gradients run back through each n_steps rollout.
+        kwargs["policy_kwargs"].update(
+            lstm_hidden_size=int(tcfg["lstm_hidden_size"]),
+            n_lstm_layers=int(tcfg.get("n_lstm_layers", 1)),
+        )
     if args.resume:
-        model = PPO.load(args.resume, env=train_env, device="cpu")
+        model = Algo.load(args.resume, env=train_env, device="cpu")
         # PPO.load restores the checkpoint's own hyperparameters; re-apply
         # the config's, out loud, so a resume runs what config.yaml says.
         for name in (
@@ -309,7 +349,7 @@ def main():
         model.lr_schedule = sched if callable(sched) else (lambda _: sched)
         print(f"resumed from {args.resume} at {model.num_timesteps:,} steps")
     else:
-        model = PPO(SquashedMeanPolicy, train_env, **kwargs)
+        model = Algo(policy_class, train_env, **kwargs)
 
     history_path = args.dir / "history.json"
     history = (
@@ -325,12 +365,12 @@ def main():
     rollout_stats = {"ep_rew": [], "outcomes": Counter(), "stuck": [0, 0]}
 
     def evaluate_now(label):
-        def predict(obs):
-            return model.predict(obs, deterministic=True)[0]
+        def driver(n):
+            return Driver(model, n)
 
-        tr = summarize(evaluate(eval_train, predict, per))
-        he = summarize(evaluate(eval_held, predict, per))
-        he["sections"] = section_eval(eval_sections, predict, sec_per)
+        tr = summarize(evaluate(eval_train, driver, per))
+        he = summarize(evaluate(eval_held, driver, per))
+        he["sections"] = section_eval(eval_sections, driver, sec_per)
         inner = train_env.inner
         met = {
             inner.zone_names[z]: [

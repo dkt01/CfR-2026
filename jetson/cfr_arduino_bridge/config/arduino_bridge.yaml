@@ -108,6 +108,7 @@ sim_vehicle:
     coast_f1: 0.47                # N/(m/s)
     coast_f2: 0.0                 # N/(m/s)^2, below this test's resolution
     max_acceleration: 3.0         # m/s^2, p90 of achieved accel below 2.5 m/s
+    speed_slew_rate: 2.0          # m/s per second: arduino_bridge's, above
     # THE CAR HAS NO BRAKES.  Every non-zero brake limit tested stopped it
     # SLOWER than coasting, because the ESC reads the reverse-side pulse as
     # reverse drive.  Zero here means deceleration is coast-limited, which is

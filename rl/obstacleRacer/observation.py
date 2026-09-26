@@ -8,9 +8,11 @@ course attempt built 44 values per frame in training and 38 on the car.
 Everything in here must be computable on the car: numpy only, and only from
 the segmented ZED cloud (scan + gates, as `cloud_segmentation.py`'s
 `scan_from_segmentation` and `Segmentation.gates` give them), the wheel speed
-the Arduino reports, and the yaw rate.  No pose, no map, no centerline.
+the Arduino reports, and the yaw rate (integrated, it is the heading
+feature).  No position, no map, no centerline.
 
-Per frame (FRAME_DIM = 49, or 52 with env.memory_features):
+Per frame (FRAME_DIM = 49, +3 with env.memory_features, +2 with
+env.heading_feature):
 
     scan      36  nearest blocking return per bearing bin / max_range,
                   bin 0 rightmost (scan_from_segmentation's order)
@@ -25,6 +27,9 @@ Per frame (FRAME_DIM = 49, or 52 with env.memory_features):
     memory     3  with env.memory_features (Memory, below): time the tach has
                   read stopped / 3 s, the tach speed averaged over ~2 s / v_cap,
                   and the direction the controller last reported (+1 / -1)
+    heading    2  with env.heading_feature (Heading, below): sin and cos of
+                  the heading since the start box, integrated from the
+                  measured yaw rate -- which way is "down the course"
 
 Frames are stacked newest first: env.frame_offsets control steps back (v5:
 0, 2, 10, 20 -- now, 0.1, 0.5 and 1.0 s ago), or the last env.frame_stack
@@ -43,6 +48,7 @@ SCAN_BINS = 36
 GATE_DIM = 8
 FRAME_DIM = SCAN_BINS + GATE_DIM + 5
 MEMORY_DIM = 3
+HEADING_DIM = 2
 STOP_CAP_S = 3.0  # Memory's stopped time saturates here
 TACH_FLOOR = 0.30  # m/s: ArduinoStatus.speed cannot resolve below this
 YAW_RATE_SCALE = 3.0
@@ -193,7 +199,12 @@ def smooth_prior(previous, raw, fresh, cfg):
 
 def frame_dim(cfg):
     """Values per frame under this config."""
-    return FRAME_DIM + (MEMORY_DIM if cfg["env"].get("memory_features") else 0)
+    e = cfg["env"]
+    return (
+        FRAME_DIM
+        + (MEMORY_DIM if e.get("memory_features") else 0)
+        + (HEADING_DIM if e.get("heading_feature") else 0)
+    )
 
 
 def frame_offsets(cfg):
@@ -208,11 +219,22 @@ def obs_dim(cfg):
     return frame_dim(cfg) * len(frame_offsets(cfg))
 
 
-def frame(scan, gate, speed_meas, yaw_rate_meas, prev_action, prior, cfg, memory=None):
+def frame(
+    scan,
+    gate,
+    speed_meas,
+    yaw_rate_meas,
+    prev_action,
+    prior,
+    cfg,
+    memory=None,
+    heading=None,
+):
     """One frame of the observation, (B, frame_dim(cfg)) float32.
 
     `memory` is Memory.update's (B, 3), required when the config turns
-    memory_features on and ignored otherwise.
+    memory_features on, and `heading` is Heading.update's (B, 2), required
+    when it turns heading_feature on; each is ignored otherwise.
     """
     s = cfg["sensor"]
     v_cap = float(cfg["env"]["v_cap"])
@@ -228,7 +250,43 @@ def frame(scan, gate, speed_meas, yaw_rate_meas, prev_action, prior, cfg, memory
         if memory is None:
             raise ValueError("memory_features is on: pass Memory.update's output")
         parts.append(np.asarray(memory))
+    if cfg["env"].get("heading_feature"):
+        if heading is None:
+            raise ValueError("heading_feature is on: pass Heading.update's output")
+        parts.append(np.asarray(heading))
     return np.concatenate(parts, axis=1).astype(np.float32)
+
+
+class Heading:
+    """Heading since the start box, dead-reckoned from the measured yaw rate.
+
+    The course is fixed; only its obstacles move.  Knowing which way is
+    north tells the policy where the Wide Section's exit is when the camera
+    cannot see it (v5/v6 circled there for 60 s), and it is realizable: the
+    car starts every run in the start box pointing down the lane (heading 0
+    in the course frame, +/-5 deg as placed) and integrates the same yaw rate
+    the observation already carries.
+
+    Training reproduces the car's error: the estimate starts off by the
+    placement error, and integrates the noisy, biased yaw rate the policy
+    sees, so it drifts as the real one would.
+    """
+
+    def __init__(self, n, cfg):
+        self.dt = 1.0 / float(cfg["env"]["control_hz"])
+        self.heading = np.zeros(n)
+
+    def reset(self, idx, value):
+        self.heading[idx] = value
+
+    def update(self, yaw_rate_meas, idx=None):
+        """Integrate one step for cars `idx` (all by default); returns (k, 2)."""
+        if idx is None:
+            idx = np.arange(len(self.heading))
+        h = self.heading[idx] + np.asarray(yaw_rate_meas, np.float64) * self.dt
+        h = np.remainder(h + math.pi, 2 * math.pi) - math.pi
+        self.heading[idx] = h
+        return np.stack([np.sin(h), np.cos(h)], axis=1)
 
 
 class Memory:

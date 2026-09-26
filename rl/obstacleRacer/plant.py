@@ -522,11 +522,10 @@ def per_layout(model, part):
     part(fields) turns a dict of course_model grids into the array wanted; it
     is applied to the static grid, and each layout's window is pasted over.
     """
-    s, w = model.static, model.window
-    base = part(s)
+    base = part(model.static)
     wj, wi = model.wj, model.wi
-    for L in range(w["E_n"].shape[0]):
-        win = part({k: v[L] for k, v in w.items()})
+    for L in range(len(model.seeds)):
+        win = part(model.dense_window(L))
         out = base.copy()
         out[wj : wj + win.shape[0], wi : wi + win.shape[1]] = win
         yield out
@@ -560,7 +559,7 @@ def _outline_hits(OBS, L, s, grow, spacing):
     G = OBS[0]
     ci = int(math.floor((s[S_X] - G[0]) / course_model.RES))
     cj = int(math.floor((s[S_Y] - G[1]) / course_model.RES))
-    FAR = OBS[7]
+    FAR = OBS[8]
     if 0 <= ci < FAR.shape[2] and 0 <= cj < FAR.shape[1]:
         if (
             FAR[L, cj, ci] * course_model.RES

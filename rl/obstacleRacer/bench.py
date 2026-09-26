@@ -72,12 +72,12 @@ def main():
     timed(env_module.O, "prior_steer", "prior")
 
     if args.policy:
-        from stable_baselines3 import PPO
+        import ppo_policy
 
-        policy = PPO.load(args.policy, device="cpu")
+        driver = ppo_policy.Driver(ppo_policy.load(args.policy, device="cpu"), args.n)
 
         def act(obs, k):
-            return policy.predict(obs, deterministic=True)[0]
+            return driver(obs)
     else:
         rng = np.random.default_rng(1)
         actions = rng.uniform(-1.0, 1.0, (args.warmup + args.steps, args.n, 2))

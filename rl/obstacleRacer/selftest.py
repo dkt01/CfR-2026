@@ -420,6 +420,47 @@ def memory_checks(cfg):
         out[19][1] > 0 and out[59][1] < out[49][1],
         f"{out[19][1]:+.3f} driving, {out[59][1]:+.3f} backing",
     )
+    head = O.Heading(1, cfg)
+    head.reset(np.array([0]), 0.0)
+    for _ in range(int(round(2.0 / dt))):
+        hs = head.update(np.array([math.pi / 2]))  # 90 deg/s for 2 s
+    failures += check(
+        "heading integrates the yaw rate and wraps",
+        abs(hs[0, 0]) < 1e-6 and abs(hs[0, 1] + 1.0) < 1e-6,
+        f"after 180 deg: sin {hs[0, 0]:+.4f} cos {hs[0, 1]:+.4f}",
+    )
+    return failures
+
+
+def camera_checks(cfg, model):
+    """The policy sees camera_hz frames, each latency_s old, held between."""
+    import env as env_module
+
+    failures = 0
+    if "camera_hz" not in cfg["sensor"]:
+        return failures
+    env = env_module.ObstacleEnv(cfg, model, 64, np.array([0]), seed=3)
+    env.reset()
+    held = env.scan_held.copy()
+    changed = 0
+    steps = 200
+    for _ in range(steps):
+        env.step(np.tile([0.0, 0.3], (env.n, 1)))
+        changed += (np.abs(env.scan_held - held).max(1) > 0).sum()
+        held = env.scan_held.copy()
+    rate = changed / env.n / (steps * env.dt)
+    want = float(cfg["sensor"]["camera_hz"])
+    failures += check(
+        "new scans reach the policy at the camera's rate",
+        rate <= want * 1.02 and rate >= want * 0.8,
+        f"{rate:.1f} Hz, camera {want:.0f} Hz",
+    )
+    lo, hi = env.lat_steps
+    failures += check(
+        "each run draws a latency inside latency_s",
+        env.cam_lat.min() >= lo and env.cam_lat.max() <= hi,
+        f"steps {env.cam_lat.min()}..{env.cam_lat.max()}, allowed {lo}..{hi}",
+    )
     return failures
 
 
@@ -579,6 +620,36 @@ def coverage_checks(cfg, model):
     )
     env.practice_met[:] = 0.0
     env.practice_fail[:] = 0.0
+    # A section start for an obstacle is not inside another one: v5 dealt
+    # its bucket starts inside the Wide Section and its hoop starts inside
+    # the buckets, so neither got practiced until what came before was.
+    # Both the training deal (any hoop) and the eval deal (2 m back).
+    strays, hoops_seen = Counter(), set()
+    hoops = env.zone_names.index("hoops")
+    for k in range(len(env.section_s)):
+        for z in env.section_s[k]:
+            for trial in range(40):
+                any_hoop = trial % 2 == 0
+                back = None if any_hoop else 2.0
+                target, floor = env.section_target(k, z, back, any_hoop=any_hoop)
+                s0 = env.snap(k, target, floor)
+                i = env.lines.index_at(np.array([k]), np.array([s0]))[0]
+                at = int(env.zone_of[k, i])
+                if at in env.section_s[k] and at != z:
+                    strays[f"{env.zone_names[z]} in {env.zone_names[at]}"] += 1
+                if z == hoops and any_hoop:
+                    ahead = env.hoop_s[k] - s0
+                    hoops_seen.add(int(np.argmin(np.where(ahead >= 0, ahead, np.inf))))
+    failures += check(
+        "section starts land outside every other obstacle",
+        not strays,
+        str(dict(strays)),
+    )
+    failures += check(
+        "hoop section starts go before each of the three hoops",
+        len(hoops_seen) == 3,
+        f"nearest hoops {sorted(hoops_seen)}",
+    )
     # An obstacle is where the car drives through it, not every point inside
     # its 2D outline: each is one unbroken stretch of the line, and where the
     # deck crosses over the tunnel the label follows the line's height.
@@ -757,6 +828,7 @@ def main() -> int:
     failures += contact_checks(cfg, model)
     print("observation memory and recovery")
     failures += memory_checks(cfg)
+    failures += camera_checks(cfg, model)
     failures += recovery_checks(cfg, model)
     print("hoops")
     failures += hoop_incentives(cfg, model)

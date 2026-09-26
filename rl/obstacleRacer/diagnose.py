@@ -48,7 +48,7 @@ def main():
     seeds = layouts.TRAIN_SEEDS + layouts.HELDOUT_SEEDS
     model = course_model.CourseModel(seeds)
     ids = (
-        np.arange(len(layouts.TRAIN_SEEDS))
+        np.arange(len(layouts.TRAIN_EVAL_SEEDS))
         if args.train
         else np.arange(len(layouts.TRAIN_SEEDS), len(seeds))
     )
@@ -60,10 +60,9 @@ def main():
     if args.prior:
         predict = lambda obs: env.scripted_action()  # noqa: E731
     else:
-        from stable_baselines3 import PPO
+        import ppo_policy
 
-        policy = PPO.load(args.model, device="cpu")
-        predict = lambda obs: policy.predict(obs, deterministic=True)[0]  # noqa: E731
+        predict = ppo_policy.Driver(ppo_policy.load(args.model, device="cpu"), env.n)
 
     obs = env.reset()
     n = env.n
@@ -76,6 +75,8 @@ def main():
         prior = env.prior.copy()
         steer, vcmd = O.action_to_command(np.clip(a, -1, 1), prior, cfg)
         obs, _, term, trunc, info = env.step(a)
+        if hasattr(predict, "ended"):
+            predict.ended(term | trunc)
         st = env.plant.state
         clear = P.body_clearance(env.plant.OBS, env.plant.lay, st, CLEARANCE_RINGS)
         for i in range(n):

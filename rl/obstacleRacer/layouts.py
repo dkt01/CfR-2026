@@ -7,9 +7,11 @@ Wide Section's bales stand -- drawn by
 the node's own ROS-free draw module, so "seed 104" means the same course in
 the numpy trainer, in Gazebo validation and in the node's log line.
 
-Ten seeds are trained on.  Four more are held out, one per entrance slot,
-and only ever evaluated, so a policy that has memorized its ten courses
+Two hundred seeds are trained on.  Four more are held out, one per entrance
+slot, and only ever evaluated, so a policy that has memorized its courses
 rather than learned to drive shows up as a gap between the two finish rates.
+v5 trained on ten: it learned those ten Wide Section bale arrangements by
+heart (0-20% through them) and got through the held-out ones 1 time in 111.
 
     python3 layouts.py            # (re)write layouts/seed_*.json
     python3 layouts.py --check    # fail if the files disagree with the draw
@@ -31,7 +33,10 @@ PACKAGE = REPO / "jetson" / "cfr_arduino_bridge"
 LAYOUT_YAML = PACKAGE / "config" / "obstacle_course_layout.yaml"
 LAYOUT_DIR = HERE / "layouts"
 
-TRAIN_SEEDS = list(range(101, 111))
+TRAIN_SEEDS = list(range(101, 111)) + list(range(1001, 1191))
+# The training layouts evaluated from the start box each time: v5's ten, so
+# the train-side numbers stay comparable across runs.
+TRAIN_EVAL_SEEDS = TRAIN_SEEDS[:10]
 # One per gap slot, so held-out finish rate covers every entrance.
 HELDOUT_SEEDS = [201, 202, 208, 218]
 
