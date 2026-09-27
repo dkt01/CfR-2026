@@ -1,10 +1,12 @@
 import { AssetViewer } from "gzweb";
-import { parse } from "protobufjs";
+import { Enum, parse } from "protobufjs";
 import * as THREE from "three";
 import { createSpeedometer } from "./speedometer.js";
 import { createSteeringDial, WHEELBASE, MIN_SPEED_FOR_STEERING } from "./steering-dial.js";
 import { createCloudView } from "./cloud-view.js";
 import { createCloudBuffers, createPointCloud } from "./pointcloud.js";
+import { createDepthView } from "./depth-view.js";
+import { installInstancedBales, setStrandsVisible } from "./bales.js";
 import "./style.css";
 
 const status = document.querySelector("#viewer-status");
@@ -42,7 +44,7 @@ const absolute = (url) => new URL(url, document.baseURI).href;
 // The parser matches mesh and albedo-map URIs against this list by filename,
 // so include assets from both worlds even though only one is active at a time.
 const assetUrls = [
-  ...Object.values(import.meta.glob("../../../jetson/cfr_arduino_bridge/meshes/*.stl", {
+  ...Object.values(import.meta.glob("../../../jetson/cfr_arduino_bridge/meshes/*.{stl,obj}", {
     eager: true,
     query: "?url",
     import: "default",
@@ -76,6 +78,22 @@ const cmdVelTopic = "/sim/cmd_vel";
 // Likewise unnamespaced; only published with `sensors:=true` at launch, so
 // the point-cloud-view toggle simply shows nothing without it.
 const pointCloudTopic = "/zed/gz/rgbd/points";
+// The rgbd_camera's depth image and intrinsics -- what the bridge hands the
+// formulaTwo node as /zed/zed_node/depth/depth_registered.
+const depthImageTopic = "/zed/gz/rgbd/depth_image";
+const depthInfoTopic = "/zed/gz/rgbd/camera_info";
+// 0.9 MB a frame at 15 Hz is more than the page needs.  The websocket server
+// throttles the topic for its browser clients; the ROS bridge is a separate
+// Gazebo subscriber and still gets every frame.
+const DEPTH_VIEW_HZ = 5;
+const PIXEL_FORMAT_TYPE = Object.fromEntries(
+  [
+    "UNKNOWN_PIXEL_FORMAT", "L_INT8", "L_INT16", "RGB_INT8", "RGBA_INT8", "BGRA_INT8",
+    "RGB_INT16", "RGB_INT32", "BGR_INT8", "BGR_INT16", "BGR_INT32", "R_FLOAT16",
+    "RGB_FLOAT16", "R_FLOAT32", "RGB_FLOAT32", "BAYER_RGGB8", "BAYER_BGGR8",
+    "BAYER_GBRG8", "BAYER_GRBG8",
+  ].map((name, value) => [name, value]),
+);
 // The same cloud after cloud_segmentation_node, each point colored by the
 // class it was given (legend in index.html).  Bridged ROS -> gz by
 // simulation.launch.py, again only with `sensors:=true`.
@@ -109,6 +127,11 @@ const cloudView = createCloudView(document.querySelector("#cloud-view"));
 const pointCloudButton = document.querySelector("#point-cloud-view");
 const segmentationButton = document.querySelector("#segmentation-view");
 const segmentationLegend = document.querySelector("#segmentation-legend");
+const depthButton = document.querySelector("#depth-view");
+const depthWrap = document.querySelector("#depth-view-wrap");
+const depthView = createDepthView(depthWrap);
+let depthViewEnabled = false;
+let depthSilenceTimer = 0;
 // Which of the two clouds the views draw.  The other one is ignored rather
 // than unsubscribed; the segmented one is only subscribed on first use.
 let segmentationMode = false;
@@ -140,6 +163,8 @@ let worldControlType;
 let booleanType;
 let cmdVelType;
 let pointCloudType;
+let imageType;
+let cameraInfoType;
 let teleportPreview;
 // Parsed once from the live connection's dictionary, and used by the layout
 // samples as well, which is why it is not local to connectPoseStream.
@@ -149,6 +174,24 @@ let pointCloudSubscribed = false;
 let pointCloudViewEnabled = false;
 document.title = `CfR ${course.title} Viewer`;
 document.querySelector("header h1").textContent = course.title;
+// A link to each course.  Reloading is the switch: every topic name carries
+// the world, so the page has to start over on the other course -- and it only
+// comes alive if that is the course the simulation is running.
+for (const [key, { title }] of Object.entries(courses)) {
+  const link = document.createElement("a");
+  const url = new URL(window.location.href);
+  if (key === "speed") {
+    url.searchParams.delete("course");
+  } else {
+    url.searchParams.set("course", key);
+  }
+  link.href = url.pathname + url.search;
+  link.textContent = title;
+  if (courses[key] === course) {
+    link.setAttribute("aria-current", "page");
+  }
+  document.querySelector("#course-links").append(link);
+}
 document
   .querySelector("#gz-scene")
   .setAttribute("aria-label", `Gazebo ${course.title.toLowerCase()}`);
@@ -189,7 +232,16 @@ function rotateOffset(offset, yaw) {
   };
 }
 
-// HOW FAST THE CAMERA IS ALLOWED TO SWING AROUND THE CAR.
+// HOW FAST THE CAMERA SWINGS AROUND THE CAR.
+//
+// It used to lag on purpose (tau 0.30 s, capped at 1.2 rad/s; the reasoning
+// is kept below).  But the car yaws at up to 1.67 rad/s, faster than that
+// cap, so through a long hairpin the lag kept growing -- the camera ended up
+// side-on and outside the turn, where the bale wall hides the car -- and a
+// mouse drag was stored as the new angle, so one nudge left it watching from
+// the side for good.  Now it rides the car's back: a short lag only to take
+// the pose stream's jitter out, no cap, and the follow offset is kept directly
+// behind whatever the mouse does (see captureFollowView).
 //
 // The follow camera used to be bolted rigidly to the car's heading, which is
 // fine on a straight and unwatchable in a hairpin.  Measured over a scripted
@@ -213,8 +265,10 @@ function rotateOffset(offset, yaw) {
 // 31 degrees still reads as a chase view, and outside the turn is where you
 // want to watch an apex from anyway.  Past about 50 the car is being watched
 // side-on and it stops looking like following at all.
-const FOLLOW_YAW_TAU = 0.3;        // s, first-order lag on the camera heading
-const FOLLOW_YAW_MAX_RATE = 1.2;   // rad/s, hard cap on top of it
+// Measured the old way, this rides ~8 deg behind the car's heading at its
+// 1.67 rad/s peak -- behind it, not beside it.
+const FOLLOW_YAW_TAU = 0.08;       // s, first-order lag on the camera heading
+const FOLLOW_YAW_MAX_RATE = Infinity;
 
 function wrapToPi(angle) {
   return Math.atan2(Math.sin(angle), Math.cos(angle));
@@ -258,16 +312,25 @@ function captureFollowView() {
   // hairpin is being driven, and so exactly when someone grabs the mouse.
   const yaw = followYaw ?? getSlashYaw(latestSlashPose);
   const target = scene.controls.target;
-  followTargetOffset = rotateOffset({
+  const targetOffset = rotateOffset({
     x: target.x - latestSlashPose.position.x,
     y: target.y - latestSlashPose.position.y,
     z: target.z - latestSlashPose.position.z,
   }, -yaw);
-  followCameraOffset = rotateOffset({
+  const cameraOffset = rotateOffset({
     x: scene.camera.position.x - target.x,
     y: scene.camera.position.y - target.y,
     z: scene.camera.position.z - target.z,
   }, -yaw);
+  // Zoom and tilt are the user's to change; which SIDE the camera is on is
+  // not.  Keep the aim point on the car's centerline, ahead of it, and put
+  // the camera straight behind it at the distance and height the mouse left.
+  followTargetOffset = { x: Math.max(0, targetOffset.x), y: 0, z: targetOffset.z };
+  followCameraOffset = {
+    x: -Math.max(0.5, Math.hypot(cameraOffset.x, cameraOffset.y)),
+    y: 0,
+    z: Math.max(0.3, cameraOffset.z),
+  };
 }
 
 function startSlashFollowView(pose) {
@@ -792,6 +855,14 @@ function connectPoseStream() {
       booleanType = root.lookupType("gz.msgs.Boolean");
       cmdVelType = root.lookupType("gz.msgs.Twist");
       pointCloudType = root.lookupType("gz.msgs.PointCloudPacked");
+      // The server's bundle has gz.msgs.Image but not the PixelFormatType
+      // enum it refers to (its own .proto), so without this every depth
+      // frame throws on decode.  Values from gz-msgs10 image.proto.
+      if (!root.lookup("gz.msgs.PixelFormatType")) {
+        root.lookup("gz.msgs").add(new Enum("PixelFormatType", PIXEL_FORMAT_TYPE));
+      }
+      imageType = root.lookupType("gz.msgs.Image");
+      cameraInfoType = root.lookupType("gz.msgs.CameraInfo");
       socket.send(`sub,${poseTopic},,`);
       socket.send(`sub,${cmdVelTopic},,`);
       // Subscribed here rather than when point-cloud-view is toggled, because
@@ -827,6 +898,10 @@ function connectPoseStream() {
       // which is only guaranteed to have finished by the time this fires.
       pointCloudButton.disabled = false;
       segmentationButton.disabled = false;
+      depthButton.disabled = false;
+      if (depthViewEnabled) {
+        subscribeDepth(true);
+      }
       positionInputs.forEach((input) => { input.disabled = false; });
       return;
     }
@@ -848,6 +923,23 @@ function connectPoseStream() {
     }
     if (message.topic === cmdVelTopic) {
       updateCommandedSteering(cmdVelType.decode(message.payload));
+      return;
+    }
+    if (message.topic === depthInfoTopic) {
+      depthView.setInfo(cameraInfoType.decode(message.payload));
+      return;
+    }
+    if (message.topic === depthImageTopic) {
+      if (depthViewEnabled) {
+        clearTimeout(depthSilenceTimer);
+        // Said on the panel: an exception here would otherwise vanish into
+        // the websocket handler and leave the panel waiting forever.
+        try {
+          depthView.draw(imageType.decode(message.payload), latestSlashPose);
+        } catch (error) {
+          depthView.setHint(`Depth frame arrived but could not be drawn: ${error.message}`);
+        }
+      }
       return;
     }
     const cloudTopic = segmentationMode ? segmentedTopic : pointCloudTopic;
@@ -909,6 +1001,44 @@ function patchStlLoader(scene) {
 }
 
 patchStlLoader(viewer["scene"]);
+// The straw bales are drawn instanced (bales.js), not by gzweb, which made a
+// mesh, a material and a texture upload per bale -- see that file.
+// ?bales=gzweb draws them the old way, for comparison.
+if (new URLSearchParams(window.location.search).get("bales") !== "gzweb") {
+  installInstancedBales(viewer, worldUrl, assetUrls);
+}
+if (import.meta.env.DEV) {
+  window.cfrViewer = viewer; // for poking at the scene from the console
+}
+
+// "Loose straw": the strands around each bale, in this view only -- the
+// simulator's camera sees them unless it was launched with strands:=false.
+// Remembered per browser; storage can be missing or refuse, which just means
+// the default (shown).
+const strandsCheckbox = document.querySelector("#show-strands");
+const STRANDS_KEY = "cfr-gzweb-show-strands";
+try {
+  strandsCheckbox.checked = window.localStorage.getItem(STRANDS_KEY) !== "false";
+} catch {
+  strandsCheckbox.checked = true;
+}
+const applyStrands = () => {
+  setStrandsVisible(viewer, strandsCheckbox.checked);
+  try {
+    window.localStorage.setItem(STRANDS_KEY, String(strandsCheckbox.checked));
+  } catch {
+    // Not remembered; still applied.
+  }
+};
+strandsCheckbox.addEventListener("change", applyStrands);
+applyStrands();
+// gzweb adds its own strand visuals (the movable bales) once the world has
+// loaded, after the line above ran.
+viewer.resourceLoaded$.subscribe((loaded) => {
+  if (loaded) {
+    setStrandsVisible(viewer, strandsCheckbox.checked);
+  }
+});
 viewer.renderFromFiles([worldUrl, ...assetUrls]);
 window.addEventListener("resize", () => viewer.resize());
 followButton.addEventListener("click", () => {
@@ -940,6 +1070,37 @@ segmentationButton.addEventListener("click", () => {
   }
   segmentationButton.textContent = segmentationMode ? "Color by camera" : "Color by class";
   segmentationLegend.hidden = !segmentationMode;
+});
+// Subscribed only while shown: it is the heaviest stream on the page.
+function subscribeDepth(on) {
+  if (simulationSocket?.readyState !== WebSocket.OPEN) {
+    return;
+  }
+  if (on) {
+    simulationSocket.send(`sub,${depthInfoTopic},,`);
+    simulationSocket.send(`throttle,${depthInfoTopic},na,1`);
+    simulationSocket.send(`sub,${depthImageTopic},,`);
+    simulationSocket.send(`throttle,${depthImageTopic},na,${DEPTH_VIEW_HZ}`);
+    clearTimeout(depthSilenceTimer);
+    depthSilenceTimer = setTimeout(() => {
+      depthView.setHint(
+        `No depth image on ${depthImageTopic} -- relaunch the simulation with sensors:=true`,
+      );
+    }, POINT_CLOUD_SILENCE_MS);
+  } else {
+    simulationSocket.send(`unsub,${depthImageTopic},,`);
+    simulationSocket.send(`unsub,${depthInfoTopic},,`);
+    clearTimeout(depthSilenceTimer);
+  }
+}
+depthButton.addEventListener("click", () => {
+  depthViewEnabled = !depthViewEnabled;
+  depthWrap.hidden = !depthViewEnabled;
+  depthButton.textContent = depthViewEnabled ? "Hide depth" : "Policy depth";
+  subscribeDepth(depthViewEnabled);
+  if (depthViewEnabled) {
+    depthWrap.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
 });
 pointCloudButton.addEventListener("click", () => {
   setPointCloudView(!pointCloudViewEnabled);

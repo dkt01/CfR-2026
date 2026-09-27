@@ -34,6 +34,15 @@ spatial mapping runs for the drive and the finished map -- one fused cloud of
 the whole course -- is saved in the bag at the end; see MAP_RUN_PERIOD_S.
 --no-map turns that off, --cloud-hz N records the live cloud as well.
 
+The depth image is thinned the same way, for the same reason (640x360
+float32 is ~0.9 MB a frame, 11-14 MB/s at the ZED's 12-15 Hz), but the ZED's
+depth rate cannot be turned down: formulaTwo drives on every frame.  So this
+node subscribes to it best-effort -- it can never hold up the driver's
+reliable subscription -- keeps one frame every 1/--depth-hz seconds (default
+2 Hz), and republishes it as 16-bit millimeters on DEPTH_TOPIC, PNG-compressed
+when OpenCV is there.  That, not the ZED topic, is what goes in the bag, with
+the depth camera_info so the Run Lab can place the driver's sampling grid.
+
 Why a regex rather than --topics: rosbag2 discovers topics as they appear, and
 a regex is the one filter whose meaning is the same in every Jazzy release.
 """
@@ -58,7 +67,13 @@ from pathlib import Path
 import rclpy
 import yaml
 from rclpy.node import Node
-from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
+from rclpy.qos import (
+    DurabilityPolicy,
+    HistoryPolicy,
+    QoSProfile,
+    ReliabilityPolicy,
+    qos_profile_sensor_data,
+)
 from rclpy.signals import SignalHandlerOptions
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -91,6 +106,9 @@ RECORD_TOPICS = [
     ZED + r"/rgb/color/rect/camera_info",
     ZED + r"/rgb/color/rect/image/compressed",
     ZED + r"/left/camera_info",
+    ZED + r"/depth/camera_info",
+    ZED + r"/left/image_rect_color/camera_info",  # Gazebo's, for its depth too
+    r"/run_recorder/depth(/compressed)?",  # the thinned depth, see the docstring
     # Gazebo's stand-ins for the ZED, so a simulated run is analysable too.
     ZED + r"/left/image_rect_color",
 ]
@@ -99,6 +117,8 @@ IMAGE_TOPICS = [
     ZED + r"/left/image_rect_color",
 ]
 CLOUD_TOPIC = ZED + r"/point_cloud/cloud_registered"
+DEPTH_SOURCE = ZED + "/depth/depth_registered"  # the car's and Gazebo's (bridged)
+DEPTH_TOPIC = "/run_recorder/depth"  # + "/compressed" when PNG-encoded
 FUSED_TOPIC = ZED + "/mapping/fused_cloud"
 # The ZED's spatial map is published whole, every time: each message is the
 # entire map so far, so recording it at the wrapper's 1 Hz default is a
@@ -196,6 +216,7 @@ class Recorder(Node):
             "min_clearance": None,
             "race_time": None,
             "finished": False,
+            "depth_frames": 0,
         }
 
         # Cheap subscriptions only: the live status file is what the Run Lab
@@ -222,6 +243,34 @@ class Recorder(Node):
             _msg("std_msgs.msg", "Bool"), "/lap_counter/done", self.on_done, latched
         )
         self.create_timer(2.0, self.write_status)
+
+        self.depth_last = None
+        self.depth_pub = None
+        if args.depth_hz > 0:
+            try:
+                import cv2  # noqa: F401 -- only for PNG; raw Image without it
+
+                self.depth_png = True
+                self.depth_pub = self.create_publisher(
+                    _msg("sensor_msgs.msg", "CompressedImage"),
+                    DEPTH_TOPIC + "/compressed",
+                    10,
+                )
+            except ImportError:
+                self.depth_png = False
+                self.depth_pub = self.create_publisher(
+                    _msg("sensor_msgs.msg", "Image"), DEPTH_TOPIC, 10
+                )
+            self.create_subscription(
+                _msg("sensor_msgs.msg", "Image"),
+                DEPTH_SOURCE,
+                self.on_depth,
+                QoSProfile(
+                    depth=1,
+                    reliability=ReliabilityPolicy.BEST_EFFORT,
+                    history=HistoryPolicy.KEEP_LAST,
+                ),
+            )
 
     # ---------------------------------------------------------------- live
 
@@ -253,6 +302,52 @@ class Recorder(Node):
     def on_done(self, msg):
         if msg.data:
             self.live["finished"] = True
+
+    def on_depth(self, msg):
+        """Keep one depth frame per 1/--depth-hz s, as 16UC1 millimeters."""
+        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        if self.depth_last is not None and 0 <= stamp - self.depth_last < (
+            1.0 / self.args.depth_hz - 0.02
+        ):
+            return
+        import numpy as np
+
+        if msg.encoding == "32FC1":
+            rows = np.frombuffer(msg.data, dtype=np.float32).reshape(
+                msg.height, msg.step // 4
+            )
+            with np.errstate(invalid="ignore"):
+                mm = np.nan_to_num(rows[:, : msg.width] * 1000.0, nan=0.0, posinf=0.0)
+                mm = np.clip(mm, 0, 65535).astype(np.uint16)
+        elif msg.encoding in ("16UC1", "mono16"):
+            mm = np.frombuffer(msg.data, dtype=np.uint16).reshape(
+                msg.height, msg.step // 2
+            )[:, : msg.width]
+        else:
+            return
+        if msg.is_bigendian != (sys.byteorder == "big"):
+            mm = mm.byteswap()
+        self.depth_last = stamp
+        if self.depth_png:
+            import cv2
+
+            ok, png = cv2.imencode(".png", np.ascontiguousarray(mm))
+            if not ok:
+                return
+            out = _msg("sensor_msgs.msg", "CompressedImage")()
+            out.header = msg.header
+            out.format = "16UC1; png"
+            out.data = png.tobytes()
+        else:
+            out = _msg("sensor_msgs.msg", "Image")()
+            out.header = msg.header
+            out.height, out.width = mm.shape
+            out.encoding = "16UC1"
+            out.is_bigendian = sys.byteorder == "big"
+            out.step = 2 * out.width
+            out.data = np.ascontiguousarray(mm).tobytes()
+        self.depth_pub.publish(out)
+        self.live["depth_frames"] += 1
 
     def write_status(self):
         status = {
@@ -435,6 +530,12 @@ class Recorder(Node):
             start_new_session=True,
         )
         self.log(f"ros2 bag record (pid {self.bag.pid}) -> {self.run_dir / 'bag'}")
+        if args.depth_hz > 0:
+            self.log(
+                f"depth {DEPTH_SOURCE} -> {DEPTH_TOPIC}"
+                f"{'/compressed (PNG)' if self.depth_png else ' (raw, no OpenCV)'}"
+                f" at {args.depth_hz:g} Hz"
+            )
 
         if shutil.which("tegrastats"):
             self.tegrastats = subprocess.Popen(
@@ -452,6 +553,8 @@ class Recorder(Node):
             topics = [t for t in topics if t not in IMAGE_TOPICS]
         if self.args.cloud_hz <= 0 or self.cloud_dropped:
             topics = [t for t in topics if t != CLOUD_TOPIC]
+        if self.args.depth_hz <= 0:
+            topics = [t for t in topics if not t.startswith("/run_recorder/depth")]
         topics += [re.escape(t) for t in self.args.extra_topic]
         return topics
 
@@ -660,6 +763,12 @@ def main():
         "--no-images", action="store_true", help="skip the camera stream"
     )
     parser.add_argument(
+        "--depth-hz",
+        type=float,
+        default=2.0,
+        help="depth frames a second into the bag, as 16-bit mm; 0 = none",
+    )
+    parser.add_argument(
         "--jpeg-quality",
         type=int,
         default=50,
@@ -734,6 +843,7 @@ def main():
             "cloud_hz": args.cloud_hz,
             "cloud_any_rate": args.cloud_any_rate,
             "images": not args.no_images,
+            "depth_hz": args.depth_hz,
             "map": args.map,
             "svo": args.svo,
             "area_memory": not args.no_area,

@@ -4,7 +4,7 @@
 
 The default policy is the top-level policy.npz + config.yaml when they exist
 (a tree synced to the Orin by jetson/scripts/syncSoftware.sh), and
-bestModel/f2_v2_40M/ otherwise (the repo).
+bestModel/f2_v3_59M/ otherwise (the repo).
 
 Brings up only the driver and, optionally, RViz.  It assumes something else is
 already publishing the pose, the tachometer and the ZED depth image, and
@@ -40,7 +40,7 @@ HERE = Path(__file__).resolve().parent
 # A synced Orin tree (jetson/scripts/syncSoftware.sh) has the chosen policy
 # and ITS config at the top level and no bestModel/; the repo has bestModel/.
 DEPLOYED = HERE / "policy.npz"
-POLICY_DIR = HERE if DEPLOYED.exists() else HERE / "bestModel/f2_v2_40M"
+POLICY_DIR = HERE if DEPLOYED.exists() else HERE / "bestModel/f2_v3_59M"
 SIM_CAMERA_INFO = "/zed/zed_node/left/image_rect_color/camera_info"
 CAR_CAMERA_INFO = "/zed/zed_node/depth/camera_info"
 

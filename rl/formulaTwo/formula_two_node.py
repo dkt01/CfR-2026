@@ -113,7 +113,7 @@ class FormulaTwo(Node):
         deployed = HERE / "policy.npz"  # a synced Orin tree; see the launch file
         self.declare_parameter(
             "policy",
-            str(deployed if deployed.exists() else HERE / "bestModel/f2_v2_40M/policy.npz"),
+            str(deployed if deployed.exists() else HERE / "bestModel/f2_v3_59M/policy.npz"),
         )
         # "baseline" runs the scripted driver from baseline.py instead of a
         # network.  It takes the same observation and emits the same action,

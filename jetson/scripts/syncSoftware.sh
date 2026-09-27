@@ -37,7 +37,7 @@ ROS_DISTRO_NAME="${ORIN_ROS_DISTRO:-jazzy}"
 # The policy each driver races with.  Taken from rl/<driver>/bestModel/<run>/,
 # which is committed, or failing that from rl/<driver>/runs/<run>/.
 F1_RUN="${F1_RUN:-v12}"
-F2_RUN="${F2_RUN:-f2_v2_40M}"
+F2_RUN="${F2_RUN:-f2_v3_59M}"
 SYNC_F1=true
 SYNC_F2=true
 # The obstacle racer's policy, from rl/obstacleRacer/runs/<run>/ (policy.npz,
@@ -95,7 +95,7 @@ Options:
   -w, --ws DIR      colcon workspace on Orin (env ORIN_WS, default: ~/ros2_ws)
   -p, --policy RUN  formulaOne policy to deploy (env F1_RUN, default: v12)
       --f2-policy RUN
-                    formulaTwo policy to deploy (env F2_RUN, default: f2_v2_40M)
+                    formulaTwo policy to deploy (env F2_RUN, default: f2_v3_59M)
       --no-f1       Do not sync formulaOne or its policy
       --no-f2       Do not sync formulaTwo or its policy
   -r, --racer-policy RUN

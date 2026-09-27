@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Watch the formulaTwo policy drive the real Gazebo course, with RViz up.
 #
-#   ./validate.sh                                    # bestModel/f2_v2_40M
+#   ./validate.sh                                    # bestModel/f2_v3_59M
 #   ./validate.sh --policy runs/f2_v2/policy.npz
 #   ./validate.sh --check 300                        # unattended PASS/FAIL
 #   ./validate.sh --gui                              # Gazebo's own window too
@@ -39,7 +39,7 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 REPO=$(cd ../.. && pwd)
 
-POLICY="$PWD/bestModel/f2_v2_40M/policy.npz"
+POLICY="$PWD/bestModel/f2_v3_59M/policy.npz"
 LAPS=$(python3 -c "import yaml;print(yaml.safe_load(open('config.yaml'))['env']['laps'])")
 GUI=false; RVIZ=true; DRIVER=policy; LOOPBACK=false; SPEED=1.0; WEB=true
 MANUAL_START=false
@@ -114,9 +114,34 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # --no-daemon: the ros2 daemon keeps reporting nodes after they have died.
-if timeout 12 ros2 node list --no-daemon 2>/dev/null | grep -q -E 'sim_vehicle|ros_loopback'; then
+# A run that just finished can still be shutting down (its cleanup sends
+# SIGINT, waits 3 s, then SIGKILL), so give a stale stack a few seconds to
+# vanish before refusing -- back-to-back runs otherwise race it.
+running=true
+for _ in 1 2 3; do
+  if timeout 12 ros2 node list --no-daemon 2>/dev/null | grep -q -E 'sim_vehicle|ros_loopback'; then
+    sleep 5
+  else
+    running=false; break
+  fi
+done
+if [[ "$running" == "true" ]]; then
   echo "A simulation is already running on ROS_DOMAIN_ID=$ROS_DOMAIN_ID."
   echo "Stop it first, or use a different domain:  ROS_DOMAIN_ID=81 $0 ..."
+  exit 1
+fi
+
+pose_publishers() {
+  timeout 10 ros2 topic info /zed/zed_node/pose 2>/dev/null | sed -n 's/^Publisher count: *//p' || true
+}
+# TWO GAZEBO SERVERS ON ONE DOMAIN put two cars on the one pose topic.  Seen
+# 2026-09-26: an orphaned server's upside-down car interleaved with the live
+# one, the driver latched its start anchor on the wrong car, and the verdict
+# was garbage.  Nothing may publish the pose before we start anything.
+pubs=$(pose_publishers)
+if [[ -n "$pubs" && "$pubs" != 0 ]]; then
+  echo "Something already publishes /zed/zed_node/pose on ROS_DOMAIN_ID=$ROS_DOMAIN_ID ($pubs publisher(s))."
+  echo "An orphaned simulator?  Check:  pgrep -af 'gz sim'  -- or use another domain."
   exit 1
 fi
 
@@ -167,6 +192,11 @@ wait_topic() {  # topic, label, seconds
   return 1
 }
 wait_topic /zed/zed_node/pose "the pose stream" 60 || exit 1
+pubs=$(pose_publishers)
+if [[ "$pubs" != 1 ]]; then
+  echo "/zed/zed_node/pose has ${pubs:-?} publishers, not 1 -- two simulators on one domain.  Aborting."
+  exit 1
+fi
 if [[ "$DRIVER" == "policy" ]]; then
   # The rendered camera takes longer to come up than the pose, and the driver
   # will (correctly) refuse to move until it does.  Say so here rather than
@@ -275,7 +305,10 @@ if ct is not None:
     print(f"  contact        first at station {m.get('first_contact_station', 0):.1f} m: {order}")
 if m.get("max_abs_roll_deg", 0) > 30:
     print(f"  ROLLED OVER    max |roll| {m['max_abs_roll_deg']:.0f} deg -- tripped by a bale")
-ok = bool(finished) and stopped and not lost and clr is not None and contact == 0
+if m.get("pose_jumps", 0) or m.get("clock_reversals", 0):
+    print(f"  CONTAMINATED   {m.get('pose_jumps', 0)} pose jumps, {m.get('clock_reversals', 0)} clock reversals -- two simulators; this run proves nothing")
+ok = (bool(finished) and stopped and not lost and clr is not None and contact == 0
+      and not m.get("pose_jumps", 0) and not m.get("clock_reversals", 0))
 sys.exit(0 if ok else 1)
 EOF
 }

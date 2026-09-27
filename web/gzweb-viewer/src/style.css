@@ -47,6 +47,87 @@ p {
     margin: 0;
 }
 
+/* A checkbox among the footer's buttons. */
+.toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font: 14px/1.2 ui-monospace, monospace;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.toggle input {
+    width: 16px;
+    height: 16px;
+    accent-color: #a33a18;
+}
+
+/* The header: title left, course switch centered, status right. */
+header {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+}
+
+header .status {
+    justify-self: end;
+}
+
+.brand {
+    margin: 0 0 4px;
+    color: #a33a18;
+    font: 700 18px/1.2 ui-monospace, monospace;
+    letter-spacing: 0.02em;
+}
+
+/* The course switch: two options, the current one filled. */
+.course-links {
+    display: inline-flex;
+    border: 2px solid #17242a;
+    border-radius: 999px;
+    overflow: hidden;
+    font: 700 14px/1 ui-monospace, monospace;
+}
+
+.course-links a {
+    padding: 9px 18px;
+    color: #17242a;
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.course-links a + a {
+    border-left: 2px solid #17242a;
+}
+
+.course-links a:hover {
+    background: rgba(23, 36, 42, 0.08);
+}
+
+.course-links a[aria-current="page"] {
+    background: #17242a;
+    color: #f4f1e8;
+    pointer-events: none;
+}
+
+.course-links a:focus-visible {
+    outline: 3px solid #a33a18;
+    outline-offset: -3px;
+}
+
+@media (max-width: 760px) {
+    header {
+        grid-template-columns: 1fr;
+        justify-items: start;
+        gap: 10px;
+    }
+
+    header .status {
+        justify-self: start;
+    }
+
+}
+
 .scene-wrap {
     position: relative;
     min-height: 0;
@@ -413,4 +494,78 @@ button:hover {
   margin-right: 0.35rem;
   border-radius: 2px;
   vertical-align: -0.05rem;
+}
+
+/* formulaTwo's view of the simulated depth: the image with its sampling grid,
+   and the 64-beam scan from above.  Hidden until "Policy depth" is on. */
+.depth-view-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    margin-top: 1.25rem;
+}
+
+.depth-view-wrap[hidden] {
+    display: none;
+}
+
+.depth-view-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 1rem;
+}
+
+.depth-view-panes {
+    display: grid;
+    grid-template-columns: minmax(0, 16fr) minmax(0, 9fr);
+    gap: 0.6rem;
+}
+
+.depth-pane {
+    position: relative;
+    border-radius: 12px;
+    overflow: hidden;
+    background: #11191d;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.depth-pane canvas {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+.depth-pane .cloud-view-hint[hidden] {
+    display: none;
+}
+
+.depth-stats {
+    font: 12px/1.4 ui-monospace, monospace;
+}
+
+@media (max-width: 760px) {
+    .depth-view-panes {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Phones.  Last in the file so these win over the base rules above.  The
+   header stacks, and the scene row would shrink under the 188 px dials,
+   which then spilled up over the header -- let the page scroll instead.
+   The buttons wrap rather than run off the side. */
+@media (max-width: 760px) {
+    main {
+        height: auto;
+        min-height: 100vh;
+    }
+
+    .scene-wrap {
+        min-height: 420px;
+    }
+
+    .viewer-controls {
+        flex-wrap: wrap;
+        justify-content: flex-end;
+    }
 }

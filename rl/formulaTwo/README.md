@@ -12,7 +12,42 @@ course and the camera are not the ones in the simulator.
 | Coast-feasible bound | 27.8 s/lap |
 | Scripted baseline, nominal car | 3 laps every time, 30.5 s/lap, 5.8 cm clearance |
 
-## Result: `bestModel/f2_v2_40M/policy.npz`
+## Current model: `bestModel/f2_v3_59M/policy.npz`
+
+f2_v2_40M fine-tuned for 19M more steps on **v12's speed floor**
+(`floor_drag_scale: 1.0`), with the drag randomization narrowed (lowest drag
+0.90) so that floor stays reachable. Learning rate 1.5e-4. Chosen from the
+late checkpoints on Gazebo first, offline second.
+
+Offline, 3 laps and at rest, each car counted once
+(`bestModel/f2_v3_59M/graded_eval.txt`):
+
+| randomization | finish | flying laps | worst clearance |
+|---|---|---|---|
+| none | **100%** | 33.35 / 33.36 s | +8.1 cm |
+| 25% | **100%** | 33.43 s | +0.3 cm (10th pct +5.0) |
+| 50% | 78% | 33.59 s | |
+| 75% | 48% | 33.73 s | |
+| full | 10% | 33.78 s | |
+
+Against f2_v2_40M: about 2 s/lap faster, at the same or better finish rates
+everywhere.
+
+**Gazebo (`validate.sh --check`): 3 laps and a stop** — 34.20 / 33.20 /
+33.25 s — with no rollover and no depth loss, but **one graze at station
+83 m**. So it is a strict FAIL. Of the late checkpoints only 59M and 47M
+finished; 54M, 55M and 60M hit a bale and rolled.
+
+The trace (`run_monitor.py` now logs one) shows why. Out of the hairpin
+before the finish line, Gazebo's car runs 0.25 m wide (the model says 0.07)
+and then **weaves down the straight with growing amplitude** (−0.12 → +0.29 m)
+at 4.4–4.6 m/s instead of 5.0. Offline the same policy holds ±0.07 m. Gazebo's
+car is less damped at speed than `plant.py`, and the weave costs both
+clearance and the ~1.8 s/lap it still loses to v12 there. **Next: fit the
+plant to that weave** (replay recorded `/drive_cmd` through `plant.py`), as
+formulaOne did for the chassis lag, and retrain.
+
+## Earlier result: `bestModel/f2_v2_40M/policy.npz`
 
 Offline, 3 laps **and at rest**, from the grid. Each car counts once. "Randomization"
 is the strength of every randomized range at once: plant, bales, pose and
@@ -168,7 +203,7 @@ ends at rest. `finish` counts only runs that finish at rest.
 ```bash
 python3 selftest.py                          # ~3 min: world, camera, v12 match, feasibility
 ./train.sh --dir runs/f2_v1                  # self-test, train, export, score
-python3 evaluate.py bestModel/f2_v2_40M/policy.npz --plot report.png   # graded rows by default
+python3 evaluate.py bestModel/f2_v3_59M/policy.npz --plot report.png   # graded rows by default
 python3 evaluate.py ../formulaOne/bestModel/v12/policy.npz   # v12 on the same course, map only
 ```
 
@@ -288,7 +323,7 @@ depth blip (the hold engages, the run continues), no depth ever, and the
 **Onto the Orin.** `jetson/scripts/syncSoftware.sh` deploys both drivers:
 
 ```bash
-jetson/scripts/syncSoftware.sh --build                          # v12 + f2_v2_40M
+jetson/scripts/syncSoftware.sh --build                          # v12 + f2_v3_59M
 jetson/scripts/syncSoftware.sh --build --f2-policy <run>        # another formulaTwo run
 jetson/scripts/syncSoftware.sh --build --no-f1                  # formulaTwo only
 ```

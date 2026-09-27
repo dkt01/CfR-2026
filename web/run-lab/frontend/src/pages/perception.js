@@ -1,6 +1,7 @@
-// The ZED: how good the pose was -- the driver's only input.  The clouds and
-// the map they build are viewed in Rerun (Replay page); this page judges the
-// localisation.
+// The ZED: how good the pose was, and (formulaTwo) the depth the driver saw.
+// The clouds and the map they build are viewed in Rerun (Replay page); this
+// page judges the localisation, and shows the depth frames with the driver's
+// sampling grid and scan (server/depthview.py) in an embedded Rerun view.
 
 import { h, card, tile, fmt, kv, statusBadge, icon } from "../ui.js";
 import { timeChart, lapBands } from "../charts.js";
@@ -22,6 +23,7 @@ export default async function perceptionPage(root, { run, summary, series }) {
         tile("Driver vs analyser", fmt(loc.driver_vs_analyser_m, 3), "m", null, "max disagreement on position"),
         tile("ZED map", per.fused_points ? per.fused_points.toLocaleString() : "—", per.fused_points ? "pts" : "", null, "the finished spatial map, saved at the end of the run"),
         tile("Cloud frames", per.clouds ?? 0, "", null, per.map_points ? `accumulated into ${per.map_points.toLocaleString()} pts` : "live cloud, off by default"),
+        tile("Depth frames", per.depth_frames ?? "—", "", null, per.driver_scans ? `${per.driver_scans.toLocaleString()} driver scans` : "recorded at 2 Hz"),
     );
 
     const notes = [];
@@ -39,11 +41,12 @@ export default async function perceptionPage(root, { run, summary, series }) {
           )
         : h("div", { class: "muted small" }, "No /pose/status in this bag.");
 
-    root.append(
+    // Element.append() writes a null as the text "null"; h() skips them.
+    root.append(h("div", {},
         h(
             "div",
             { class: "page-head" },
-            h("div", {}, h("h2", {}, "ZED & localisation"), h("p", {}, "The driver has no camera input: it drives the map against the ZED's pose.  If the pose is wrong, every clearance and every decision downstream is confidently wrong.  Check this page before trusting a clearance.")),
+            h("div", {}, h("h2", {}, "ZED & localisation"), h("p", {}, "Every driver drives the map against the ZED's pose; formulaTwo also reads the depth image.  If the pose is wrong, every clearance and every decision downstream is confidently wrong.  Check this page before trusting a clearance.")),
             h("span", { class: "spacer" }),
             h("a", { class: "btn primary", href: `#/run/${encodeURIComponent(run)}/replay` }, icon("cube"), "Clouds & map in Rerun"),
         ),
@@ -73,6 +76,37 @@ export default async function perceptionPage(root, { run, summary, series }) {
             if (hasPose && current) charts.push(new RerunView(holder, { run, view: "pose2d", height: 460, stamp: (summary.meta || {}).processed_utc || "" }));
             return section;
         })(),
+        (() => {
+            const holder = h("div");
+            const version = (summary.meta || {}).version || 0;
+            const has = per.depth_frames || per.driver_scans;
+            const body =
+                version < 7
+                    ? h("div", { class: "note warn" }, "This run was analyzed before depth existed.  Re-process it (Runs list → Re-process) to draw it.")
+                    : !has
+                      ? h("div", { class: "muted small" }, "No depth in this bag and no formulaTwo scan in the telemetry.  record_run.py keeps 2 depth frames a second from now on (--depth-hz; 0 turns it off).")
+                      : holder;
+            const sub = [
+                per.depth_frames ? `${per.depth_frames} frames` : "no depth frames",
+                per.driver_scans ? "driver scan from telemetry" : null,
+                per.grid_config && per.grid_config !== "run" ? `grid: ${per.grid_config} config` : null,
+            ]
+                .filter(Boolean)
+                .join(" · ");
+            const section = h(
+                "section",
+                { class: "card", style: { marginTop: "16px" } },
+                h(
+                    "div",
+                    { class: "card-head", title: "Left: the recorded ZED depth (turbo, 0.3-10 m) with formulaTwo's sampling grid on it -- gray sampled, green inside the 0.07-0.33 m height band, orange the nearest in-band pixel of each column, which is that column's beam.  Right: the 64-beam virtual LiDAR from above, forward up: blue what the driver acted on (its observation), orange the same scan recomputed from the recorded frame; red stubs are invalid columns." },
+                    h("h3", {}, "Depth & the driver's scan"),
+                    h("span", { class: "sub" }, sub),
+                ),
+                h("div", { class: "card-body flush", style: { paddingTop: "10px" } }, body),
+            );
+            if (version >= 7 && has) charts.push(new RerunView(holder, { run, view: "depth", height: 420, stamp: (summary.meta || {}).processed_utc || "" }));
+            return section;
+        })(),
         notes.length ? h("div", { class: "stack", style: { marginTop: "12px", gap: "8px" } }, notes) : null,
         h(
             "div",
@@ -99,6 +133,6 @@ export default async function perceptionPage(root, { run, summary, series }) {
             card("Pose age at the driver", "how stale the pose was when the policy acted on it", (() => { const b = h("div"); charts.push(timeChart(b, series, [{ key: "pose_age", label: "pose age", color: "--series-1" }], { unit: "s", bands: lapBands(summary), height: 200, digits: 3 })); return b; })()),
             card("Position: analyser vs driver", "the driver's belief against the analysis's track frame", (() => { const b = h("div"); charts.push(timeChart(b, series, [{ key: "tel_x", label: "driver x", color: "--series-2" }, { key: "x", label: "analyser x", color: "--series-1" }], { unit: "m", bands: lapBands(summary), height: 200 })); return b; })()),
         ),
-    );
+    ));
     return () => charts.forEach((c) => c && c.destroy());
 }

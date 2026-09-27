@@ -153,7 +153,7 @@ def common(name, r, cfg):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--policy", type=Path, default=HERE / "bestModel/f2_v2_40M/policy.npz")
+    ap.add_argument("--policy", type=Path, default=HERE / "bestModel/f2_v3_59M/policy.npz")
     ap.add_argument("--only", default="drive,stop,nan,blip,none,map")
     ap.add_argument("--domain", type=int, default=78)
     args = ap.parse_args()

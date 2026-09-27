@@ -1,0 +1,8 @@
+== 59M
+  laps           34.20 / 33.20 / 33.25
+  race           100.65 s
+  min clearance  -0.005 m at station 19.1 m (chassis + tyres, ground truth)
+  grazing        511 of 3332 pose samples inside the graze band
+  depth          1 hold(s), never lost
+  contact        first at station 83.0 m: contact without depth loss
+FAIL.  Where it got to:

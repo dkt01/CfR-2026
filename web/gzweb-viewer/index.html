@@ -11,9 +11,10 @@
     <main>
         <header>
             <div>
-                <p class="eyebrow">Command for Racing</p>
+                <p class="brand">Command for Racing (CfR)</p>
                 <h1>Speed Course</h1>
             </div>
+            <nav id="course-links" class="course-links" aria-label="Course"></nav>
             <div class="status"><span></span>
                 <p id="viewer-status">Loading course</p>
             </div>
@@ -32,6 +33,8 @@
                 <button id="reset-slash" type="button" disabled>Reset robot</button>
                 <button id="point-cloud-view" type="button" disabled>Point cloud only</button>
                 <button id="segmentation-view" type="button" disabled>Color by class</button>
+                <button id="depth-view" type="button" disabled>Policy depth</button>
+                <label class="toggle"><input id="show-strands" type="checkbox" checked> Loose straw</label>
             </div>
         </footer>
         <section class="teleport-controls" aria-labelledby="teleport-heading">
@@ -64,6 +67,32 @@
                 <li><span style="background: rgb(245 94 245)"></span>Hoop</li>
                 <li><span style="background: rgb(71 230 237)"></span>Car wash</li>
                 <li><span style="background: rgb(105 143 255)"></span>Overhead</li>
+            </ul>
+        </section>
+        <section id="depth-view-wrap" class="depth-view-wrap" aria-labelledby="depth-view-heading" hidden>
+            <div class="depth-view-head">
+                <div>
+                    <p class="eyebrow">formulaTwo input</p>
+                    <h2 id="depth-view-heading">Simulated depth, as the policy sees it</h2>
+                </div>
+                <button id="depth-mode" type="button">Policy grid</button>
+            </div>
+            <div class="depth-view-panes">
+                <div class="depth-pane">
+                    <canvas id="depth-image" width="640" height="360"></canvas>
+                    <p id="depth-hint" class="cloud-view-hint">Waiting for the first depth frame</p>
+                </div>
+                <div class="depth-pane">
+                    <canvas id="depth-scan"></canvas>
+                </div>
+            </div>
+            <p id="depth-stats" class="depth-stats"></p>
+            <ul class="segmentation-legend">
+                <li><span style="background: rgb(235 235 230)"></span>Sampled pixel</li>
+                <li><span style="background: #1baf7a"></span>In the 0.07-0.33 m band</li>
+                <li><span style="border: 2px solid #eb6834; background: none"></span>Column's beam</li>
+                <li><span style="background: #d03b3b"></span>Invalid beam</li>
+                <li>Depth and beams: red near, blue far (log range, as encoded)</li>
             </ul>
         </section>
     </main>

@@ -22,6 +22,10 @@ Entity layout (Z up, metres, track frame):
                               no car makes; pose2d/car the pose over time.
                               Only the "pose2d" layout shows them.
     camera                    EncodedImage frames
+    depth/image, depth/grid   the recorded ZED depth, the driver's sampling
+                              grid over it (depthview.py)
+    scan/driver, scan/depth   the virtual-LiDAR scan top-down: what the
+                              driver acted on, and what the frame gives
     metrics/<group>/<name>    Scalars; one TimeSeriesView per group
     events, rosout            TextLog
 
@@ -37,8 +41,11 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
+import io
+
 import numpy as np
 import rerun as rr
+from PIL import Image
 import rerun.blueprint as rrb
 
 TIMELINE = "run"
@@ -132,10 +139,10 @@ class RunRecording:
         self.rec = rr.RecordingStream(APP_ID, recording_id=run_name)
         self.rec.save(str(self.path))
 
-    def layout(self, camera_size=None):
+    def layout(self, camera_size=None, depth_size=None):
         """The saved blueprint.  Sent once the camera's frame size is known
         (the 2D view is pinned to it), before any bulk data is written."""
-        self.rec.send_blueprint(blueprint(camera_size))
+        self.rec.send_blueprint(blueprint(camera_size, depth_size=depth_size))
 
     def at(self, t):
         self.rec.set_time(TIMELINE, duration=float(t))
@@ -454,8 +461,107 @@ class RunRecording:
         self.at(t)
         self.rec.log("camera", rr.EncodedImage(contents=jpeg, media_type="image/jpeg"))
 
+    # ------------------------------------------------------------- depth
+    # Top-down 2D: screen x = -y, screen y = -x, so forward is up and left is
+    # left in Rerun's y-down 2D views.
 
-def blueprint(camera_size=None, *, follow=False):
+    @staticmethod
+    def _screen(xy):
+        xy = np.asarray(xy, dtype=float)
+        return np.column_stack([-xy[:, 1], -xy[:, 0]])
+
+    def depth_static(self, cam):
+        """The car and range rings, under the scan."""
+        body = np.array(
+            [[cam.x, 0.15], [cam.x, -0.15], [cam.x - 0.55, -0.15], [cam.x - 0.55, 0.15], [cam.x, 0.15]]
+        )
+        self.rec.log(
+            "scan/car",
+            rr.LineStrips2D([self._screen(body)], colors=[GREY], radii=0.02),
+            static=True,
+        )
+        th = np.linspace(-np.pi / 2, np.pi / 2, 61)
+        rings = [
+            self._screen(np.column_stack([cam.x + r * np.cos(th), r * np.sin(th)]))
+            for r in (1.0, 2.0, 5.0, cam.scan_max)
+        ]
+        self.rec.log(
+            "scan/rings",
+            rr.LineStrips2D(
+                rings, colors=[(200, 200, 195)], radii=0.01, labels=["1 m", "2 m", "5 m", f"{cam.scan_max:g} m"]
+            ),
+            static=True,
+        )
+
+    def depth_scan(self, which, t, start, end, invalid):
+        """One scan's beams; invalid columns red, the rest by source."""
+        self.at(t)
+        base = SERIES[0] if which == "driver" else SERIES[1]
+        colors = [STATUS["bad"] if bad else base for bad in invalid]
+        strips = [self._screen(np.array([a, b])) for a, b in zip(start, end)]
+        self.rec.log(
+            f"scan/{which}",
+            rr.LineStrips2D(strips, colors=colors, radii=0.012 if which == "driver" else 0.02),
+        )
+
+    def depth_frame(self, t, depth, uu, vv, ok, keep, beam):
+        """The depth image (meters, NaN where none), and the driver's grid on it.
+
+        Logged small: at most DEPTH_VIEW_WIDTH px wide, whole centimeters, as
+        a PNG.  The car's ZED publishes 1280x720, and logged raw each frame was
+        1.8 MB -- 90% of a 400 MB recording, which pushed the embedded viewer
+        past its memory budget, and it evicts what was logged FIRST: the
+        camera frames, which went blank.  As a 640 px cm PNG a frame is ~40 KB.
+        The scan (depthview.py) is computed from the full frame before this.
+        """
+        self.at(t)
+        step = depth_step(depth.shape[1])
+        cm = np.nan_to_num(depth[::step, ::step] * 100.0, nan=0.0)
+        buf = io.BytesIO()
+        Image.fromarray(np.round(cm).clip(0, 65535).astype(np.uint16)).save(buf, "PNG")
+        self.rec.log(
+            "depth/image",
+            rr.EncodedDepthImage(
+                buf.getvalue(),
+                media_type="image/png",
+                meter=100.0,
+                colormap="turbo",
+                depth_range=[30.0, 1000.0],
+            ),
+        )
+        # The grid's pixels, in the shrunk image's coordinates.
+        uu = (uu + 0.5) / step - 0.5
+        vv = (vv + 0.5) / step - 0.5
+        cols = np.arange(uu.shape[1])
+        picked = np.zeros_like(ok)
+        hit = beam >= 0
+        picked[beam[hit], cols[hit]] = True
+        sel = ok & ~keep
+        pts = [np.column_stack([uu[sel], vv[sel]]) + 0.5]
+        colors = [np.tile(np.array(GREY, np.uint8), (int(sel.sum()), 1))]
+        radii = [np.full(int(sel.sum()), 1.2)]
+        for mask, color, radius in (
+            (ok & keep & ~picked, STATUS["good"], 1.8),
+            (ok & picked, SERIES[1], 3.2),
+        ):
+            pts.append(np.column_stack([uu[mask], vv[mask]]) + 0.5)
+            colors.append(np.tile(np.array(color, np.uint8), (int(mask.sum()), 1)))
+            radii.append(np.full(int(mask.sum()), radius))
+        self.rec.log(
+            "depth/grid",
+            rr.Points2D(np.concatenate(pts), colors=np.concatenate(colors), radii=np.concatenate(radii)),
+        )
+
+
+DEPTH_VIEW_WIDTH = 640
+
+
+def depth_step(width):
+    """Pixel stride that brings a depth frame to <= DEPTH_VIEW_WIDTH wide."""
+    return max(1, -(-int(width) // DEPTH_VIEW_WIDTH))
+
+
+def blueprint(camera_size=None, *, follow=False, depth_size=None):
     """The layout.  ``follow`` opens on the view that rides with the car
     instead of the fixed view of the whole course; both are tabs either way."""
     course = rrb.Spatial3DView(
@@ -500,7 +606,10 @@ def blueprint(camera_size=None, *, follow=False):
                 row_shares=[3, 2],
             ),
             rrb.Vertical(
-                rrb.Spatial2DView(origin="camera", name="Camera", visual_bounds=bounds),
+                rrb.Tabs(
+                    rrb.Spatial2DView(origin="camera", name="Camera", visual_bounds=bounds),
+                    *(_depth_views(depth_size) if depth_size else []),
+                ),
                 rrb.TimeSeriesView(
                     origin="metrics/clearance", name=GROUP_TITLES["clearance"]
                 ),
@@ -514,6 +623,32 @@ def blueprint(camera_size=None, *, follow=False):
         ),
         # Paused: the Run Lab's timeline decides where to look first.  Just
         # the play bar -- the Run Lab's own timeline sits under the viewer.
+        rrb.TimePanel(timeline=TIMELINE, state="collapsed", play_state="paused"),
+        collapse_panels=True,
+    )
+
+
+def _depth_views(depth_size=None):
+    """The depth image with the grid, and the scan from above."""
+    bounds = (
+        rrb.VisualBounds2D(x_range=[0, depth_size[0]], y_range=[0, depth_size[1]])
+        if depth_size
+        else None
+    )
+    return [
+        rrb.Spatial2DView(origin="depth", name="Depth + driver grid", visual_bounds=bounds),
+        rrb.Spatial2DView(
+            origin="scan",
+            name="Scan, top-down (blue: driver, orange: from the frame)",
+            visual_bounds=rrb.VisualBounds2D(x_range=[-7.0, 7.0], y_range=[-10.5, 0.8]),
+        ),
+    ]
+
+
+def depth_blueprint(depth_size=None):
+    """The ZED page's depth card: image and grid beside the scan."""
+    return rrb.Blueprint(
+        rrb.Horizontal(*_depth_views(depth_size), column_shares=[3, 2]),
         rrb.TimePanel(timeline=TIMELINE, state="collapsed", play_state="paused"),
         collapse_panels=True,
     )

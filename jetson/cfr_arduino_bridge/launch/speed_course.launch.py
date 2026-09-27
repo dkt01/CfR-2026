@@ -20,6 +20,12 @@ def generate_launch_description():
 
     passthrough = [
         DeclareLaunchArgument(
+            "strands",
+            default_value="true",
+            description="Draw the loose straw around the bales; false leaves the "
+            "textured bales only, so the rendered depth sees just their faces",
+        ),
+        DeclareLaunchArgument(
             "sensors",
             default_value="false",
             description="Render the ZED RGB-D pair; needs a render context",
@@ -51,6 +57,7 @@ def generate_launch_description():
             "path_follower": LaunchConfiguration("path_follower"),
             "cmd_vel_to_drive": LaunchConfiguration("cmd_vel_to_drive"),
             "sensors": LaunchConfiguration("sensors"),
+            "strands": LaunchConfiguration("strands"),
             "world_name": "cfr_speed_course",
             "randomizer": "true",
             "laps": "3",

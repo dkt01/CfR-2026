@@ -127,14 +127,21 @@ set -u
 if [[ "${skip_checks}" != true ]]; then
   echo "preflight..."
   fail=false
-  # --no-daemon: the daemon keeps reporting nodes that have died.
-  nodes="$(timeout 15 ros2 node list --no-daemon 2>/dev/null || true)"
-  if ! grep -q arduino_bridge <<<"${nodes}"; then
-    echo "  FAIL  arduino_bridge is not running -- start ~/software/scripts/launch.sh --no-cmd-vel"
-    fail=true
+  # The bridge by its status topic, not by `ros2 node list --no-daemon`:
+  # that takes one discovery snapshot and returns before the graph is known.
+  # On the Orin, with the bridge up, three calls in a row saw 0, 3 and 6
+  # nodes, and only the last had arduino_bridge in it.  A message on
+  # /arduino_bridge/status is proof it is up and talking to the Arduino.
+  if timeout 8 ros2 topic echo /arduino_bridge/status --once --field mode >/dev/null 2>&1; then
+    echo "  ok    arduino_bridge is running (/arduino_bridge/status is live)"
   else
-    echo "  ok    arduino_bridge is running"
+    echo "  FAIL  no /arduino_bridge/status -- start ~/software/scripts/launch.sh --no-cmd-vel"
+    fail=true
   fi
+  # Best effort only, for the same reason: the /drive_cmd publisher check
+  # below is what actually catches a second driver.  --no-daemon because the
+  # daemon keeps reporting nodes that have died.
+  nodes="$(timeout 15 ros2 node list --no-daemon 2>/dev/null || true)"
   if grep -q -E '(formula_(one|two)|obstacle_racer)$' <<<"${nodes}"; then
     echo "  FAIL  an RL driver is already running -- one driver at a time"
     fail=true

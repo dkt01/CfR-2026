@@ -348,9 +348,14 @@ def recording_blueprint(name: str, follow: bool = False, view: str = "replay"):
         ys = [v for v in series["columns"].get("y_map", []) if v is not None]
         extent = [min(xs), max(xs), min(ys), max(ys)] if xs and ys else None
         bp = rerun_export.pose2d_blueprint(extent)
+    elif view == "depth":
+        bp = rerun_export.depth_blueprint((summary.get("perception") or {}).get("depth_size"))
     else:
+        per = summary.get("perception") or {}
         bp = rerun_export.blueprint(
-            (summary.get("perception") or {}).get("camera_size"), follow=follow
+            per.get("camera_size"),
+            follow=follow,
+            depth_size=per.get("depth_size") if per.get("depth_frames") else None,
         )
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "layout.rbl"
