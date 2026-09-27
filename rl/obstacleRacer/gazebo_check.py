@@ -291,7 +291,7 @@ def seg_gap(sim, args):
         cfg["sensor"][k] = 0.0
     seeds = layouts.HELDOUT_SEEDS + layouts.TRAIN_SEEDS[:2]
     model = course_model.CourseModel(seeds)
-    lines = centerline_module.Centerlines(model.layouts)
+    lines = centerline_module.Centerlines(model.layouts, model=model)
     sen = S.Sensor(cfg, model, 1, np.random.default_rng(0))
     rng = np.random.default_rng(args.seed)
     zones, per_layout = env_module.zone_labels(lines.lines)

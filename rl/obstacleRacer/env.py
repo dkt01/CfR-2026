@@ -105,7 +105,10 @@ def zone_labels(lines):
     the one at the line's height wins (ELEVATED_REGIONS), and an obstacle
     the line has left is never re-entered: each is driven once a lap, so a
     later point inside its outline is the floor under it (past the tunnel,
-    under the ramp), not the obstacle again.
+    under the ramp), not the obstacle again.  Stepping out of a region and
+    back in with no other region between is still that region: the Wide
+    Section's outline is notched round its bales' nominal places, and a line
+    planned round a layout's bales goes through the notches.
     """
     regions = _regions()
     names = ["start"]
@@ -114,6 +117,7 @@ def zone_labels(lines):
         labels = np.zeros(len(line.points), np.int64)
         current = "start"
         left = set()
+        last_in = 0
         for i, (x, y, z) in enumerate(line.points):
             hits = [
                 h for h in regions.classify(float(x), float(y)) if h.name not in left
@@ -125,8 +129,11 @@ def zone_labels(lines):
             if hits:
                 if hits[0].name != current and current != "start":
                     left.add(current)
+                elif hits[0].name == current and last_in < i - 1:
+                    labels[last_in + 1 : i] = names.index(current)
                 current = hits[0].name
                 name = current
+                last_in = i
             else:
                 name = current if current == "start" else f"after_{current}"
             if name not in names:
@@ -154,7 +161,7 @@ class ObstacleEnv:
             self.cfg = cfg
         self.plant = P.Plant(cfg, model, n, self.rng)
         self.sensor = S.Sensor(cfg, model, n, self.rng)
-        self.lines = centerline_module.Centerlines(model.layouts)
+        self.lines = centerline_module.Centerlines(model.layouts, model=model)
         self.zone_names, zl = zone_labels(self.lines.lines)
         self.zone_of = np.zeros(self.lines.points.shape[:2], np.int64)
         for k, labels in enumerate(zl):

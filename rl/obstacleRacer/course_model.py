@@ -919,7 +919,7 @@ def render(model: CourseModel, lay: int, path: Path):
         vmax=1,
         alpha=0.9,
     )
-    cl = centerline.Centerline(model.layouts[lay])
+    cl = centerline.Centerline(model.layouts[lay], model=model, lay=lay)
     ax.plot(cl.points[:, 0], cl.points[:, 1], "w-", lw=0.8)
     ax.set_title(
         f"seed {model.seeds[lay]}: support top (color), obstacles (red), centerline"

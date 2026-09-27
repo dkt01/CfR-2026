@@ -340,7 +340,7 @@ def contact_checks(cfg, model):
     failures = 0
     import centerline as centerline_module
 
-    line = centerline_module.Centerlines(model.layouts).lines[0]
+    line = centerline_module.Centerlines(model.layouts, model=model).lines[0]
     x, y, _, yaw = line.pose_at(18.0)
     head_on = (x, y, yaw + math.pi / 2, 1.0)
     glance = (x, y, yaw + math.radians(12), 2.0)

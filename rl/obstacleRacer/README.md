@@ -49,7 +49,10 @@ PPO sees rewards times `train.reward_scale` (0.1): unscaled, v3's value net
 saturated in its first 2M steps and never learned.
 
 The reward is privileged, computed in simulation only (`reward.py`):
-- progress along a hand-placed centerline, per layout
+- progress along a line planned per layout (`line_plan.py`): round that
+  layout's buckets and bales with the most clearance it can keep, square
+  through each hoop's center (v7 stalled in the Wide Section where the old
+  hand-placed line ran through a bale, as it did in 84% of layouts)
 - a time cost
 - a bonus for each hoop and for finishing, and a potential-based nudge
   toward each hoop's center over the last 2.5 m before it (it hands back
@@ -201,7 +204,7 @@ Other checks:
 | Command | Checks |
 |---|---|
 | `python3 reward.py` | Episode-level incentives |
-| `python3 centerline.py` | Every layout's line is clear of the walls |
+| `python3 centerline.py` | Every layout's planned line clears every obstacle and keeps the route's order |
 | `python3 layouts.py --check` | Exported layouts match the randomizer |
 | `python3 bench.py --policy runs/v5/best_model.zip` | Env steps/s and where a step's time goes; `--save`/`--check` for a speedup that must change nothing |
 | `python3 bench_ppo.py runs/v7/best_model.zip` | Time recurrent PPO updates on one real rollout with the default and tuned CPU settings; leaves the checkpoint untouched |
