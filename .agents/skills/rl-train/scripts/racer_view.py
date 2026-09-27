@@ -81,10 +81,15 @@ def render(run_dir: Path, ui, patience, min_evals, threshold) -> str:
 
     steps, target = last["steps"], last.get("target") or last["steps"]
     lines.append(f"steps   {ui.bar(steps / max(target, 1))}  {steps:,} / {target:,}")
-    if len(records) >= 2 and records[-1]["wall"] > records[0]["wall"]:
-        rate = (records[-1]["steps"] - records[0]["steps"]) / (
-            records[-1]["wall"] - records[0]["wall"]
-        )
+    # `wall` restarts at 0 in each trainer process, so a resumed run's rate
+    # must come only from the current process's records, not from step 0.
+    seg = records[-1:]
+    for r in reversed(records[:-1]):
+        if r.get("pid") != seg[0].get("pid") or r["wall"] >= seg[0]["wall"]:
+            break
+        seg.insert(0, r)
+    if len(seg) >= 2 and seg[-1]["wall"] > seg[0]["wall"]:
+        rate = (seg[-1]["steps"] - seg[0]["steps"]) / (seg[-1]["wall"] - seg[0]["wall"])
         eta = (target - steps) / rate if rate > 0 else None
         lines.append(
             f"rate    {rate:,.0f} steps/s   eta {ui.format_age(int(eta)) if eta else '?'}"
@@ -129,13 +134,17 @@ def render(run_dir: Path, ui, patience, min_evals, threshold) -> str:
     lines.append(f"{ui.BOLD}how held-out runs end{ui.RESET}")
     for cause, count in list(last["heldout"]["ends"].items())[:8]:
         lines.append(f"  {count:4d}  {cause}")
-    lines.append(
-        "  by layout: "
-        + "  ".join(
-            f"{seed}:{100 * v:.0f}%"
-            for seed, v in last["heldout"]["finish_by_seed"].items()
+    by_seed = last["heldout"]["finish_by_seed"]
+    if len(by_seed) <= 8:
+        lines.append(
+            "  by layout: "
+            + "  ".join(f"{seed}:{100 * v:.0f}%" for seed, v in by_seed.items())
         )
-    )
+    else:
+        lines.append(
+            f"  finished at least once on {sum(v > 0 for v in by_seed.values())}"
+            f" of {len(by_seed)} held-out layouts"
+        )
     rollout = last.get("rollout") or {}
     if rollout.get("ep_rew_mean") is not None:
         lines.append(
@@ -161,11 +170,13 @@ def render(run_dir: Path, ui, patience, min_evals, threshold) -> str:
     zones = rollout.get("zones") or {}
     practice = rollout.get("practice") or {}
     if sections:
+        # Widths come from the longest name, so wide_open_region fits too.
+        w = max(len("obstacles") - 2, *(len(n) for n in sections))
         lines.append(
-            f"{ui.BOLD}obstacles{ui.RESET}        held-out clear   trend        "
-            "training met / failed   practice"
+            f"{ui.BOLD}{'obstacles':<{w + 2}}{ui.RESET} {'held-out clear':>14}  "
+            f"{'trend':<12}  {'training met':>12} / {'failed':<6}  {'practice':>8}"
         )
-        for name, rate in sections.items():
+        for row, (name, rate) in enumerate(sections.items()):
             trend = [
                 r["heldout"]["sections"].get(name, 0.0)
                 for r in records
@@ -173,10 +184,15 @@ def render(run_dir: Path, ui, patience, min_evals, threshold) -> str:
             ]
             met, failed = zones.get(name, [0, 0])
             tint = ui.GREEN if rate >= 0.8 else ui.YELLOW if rate >= 0.4 else ui.RED
+            pct = f"{100 * rate:.0f}%"
+            prac = f"{100 * practice[name]:.0f}%" if name in practice else ""
+            # Alternate gray and white so neighboring rows' bars stay apart.
+            spark = f"{ui.sparkline(trend[-12:], 0.0, 1.0):<12}"
+            spark = ui.color(spark, ui.GRAY if row % 2 else ui.WHITE)
             lines.append(
-                f"  {name:15s} {ui.color(f'{100 * rate:5.0f}%', tint)}          "
-                f"{ui.sparkline(trend[-12:]):12s} {met:7d} / {failed:<6d}  "
-                + (f"{100 * practice[name]:4.0f}%" if name in practice else "")
+                f"  {name:<{w}} {ui.color(f'{pct:>14}', tint)}  "
+                f"{spark}  {met:>12} / {failed:<6}  "
+                f"{prac:>8}"
             )
         lines.append("")
 

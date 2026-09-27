@@ -26,6 +26,8 @@ scripts. Read the matching one before doing the task by hand:
 * `rl-train` -- start, watch and stop PPO training runs
 * `rl-reward` -- review and change reward shaping, with a before/after probe
 * `obstacle-course-regions` -- map (x, y) points to named obstacles
+* `driver-video` -- film a driver on either course, under Gazebo physics or
+  as a numpy-sim replay
 
 `.claude/skills` is a symlink to `.agents/skills`, so Claude Code reads the
 same files. Add or edit skills under `.agents/skills/` only. Symlinks need

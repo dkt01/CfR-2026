@@ -52,13 +52,35 @@ BALE_LENGTH = 36 * INCH
 BALE_WIDTH = 18 * INCH
 BALE_HEIGHT = 14 * INCH
 
-# Straw bales are soft and grab the car rather than let it slide past, unlike
-# the MDF/plywood ramp, tunnel, and banked-turn walls (left at the engine's
-# default friction) that a car can reasonably scrape against.  Matched to the
-# floor's own grip (see the floor collision's <mu>50</mu> below) so a car
-# pressed into a bale wall can't out-drive the friction and stalls instead of
-# sliding along it.
-BALE_FRICTION = 50
+# Straw on a rubber tire: it should drag on a car that scrubs along a bale
+# wall, without letting a tire that catches a bale at a shallow angle climb
+# it.  One isotropic mu could not do both -- pushed up to 50 to make a car
+# pressed into a bale stall, the wheels (driven at their commanded speed
+# whatever the load, AckermannSteering) climbed any bale a tire, which stands
+# 12 mm proud of the body, brushed, and rolled the car, at 1.5 m/s and 6 deg.
+# 0.5 stopped the climbing but also capped the drag, since it applied the same
+# ceiling to both.
+#
+# A "friction cone" -- ODE's `fdir1`/`mu`/`mu2` split, box() below -- separates
+# them: BALE_FRICTION_CLIMB is `mu` along the bale's own vertical (the
+# direction a tire climbs in, unchanged from the proven-safe 0.5), and
+# BALE_FRICTION_ALONG is `mu2` across it (the direction a car scrubbing along
+# the wall slides in). Gazebo combines a contact's mu as the lower of the two
+# surfaces' in each direction, and the tires are mu 1 (see mu_lateral in
+# vehicle.yaml), so 1.0 is already the most drag the wall can add -- as much
+# as the tires can grip, same as the old 50 was meant to give, without
+# raising the climb-direction mu that caused it.
+BALE_FRICTION_CLIMB = 0.5
+BALE_FRICTION_ALONG = 1.0
+
+# The MDF/plywood ramp, tunnel, and banked-turn walls: smoother than straw, so
+# both directions of their friction cone sit below the bale's.  Left at the
+# engine's default (mu 1, isotropic) before, a plywood wall was actually
+# grippier than a bale in the climb direction -- backwards for a smooth board
+# next to loose straw -- and had no cap whatsoever on climbing a wall hit at
+# an angle.
+PLYWOOD_FRICTION_CLIMB = 0.3
+PLYWOOD_FRICTION_ALONG = 0.6
 
 # The start/finish line, and the centerline of the 32 in wide start lane, in
 # DXF feet.  The world origin sits here with +x pointing the way the car
@@ -354,7 +376,7 @@ def box(
     colour: str,
     collide: bool = True,
     visual: bool = True,
-    friction: float | None = None,
+    friction: float | tuple[float, float] | None = None,
 ) -> str:
     """One box on an existing link, as a collision, a visual, or both.
 
@@ -362,6 +384,15 @@ def box(
     primitive standing in for the mesh's shape is there to be collided with,
     and drawing it as well puts an untextured box in front of the mesh -- on
     the start signal that was enough to hide the arms completely.
+
+    `friction` is one number for an isotropic surface, or a `(climb, along)`
+    pair for a wall's friction cone: `climb` (`mu`) applies along the box's
+    own local +z -- the direction a tire rides up the wall in -- and `along`
+    (`mu2`) applies across it -- the direction a car scrubbing along the wall
+    slides in.  `fdir1` is written in that same local frame, so the box's own
+    `pose` rotation (a wall's yaw, or a ramp rail's shallow pitch) carries
+    `climb`'s direction to "up the wall" rather than always straight up.  See
+    BALE_FRICTION_CLIMB/_ALONG for why the two are split.
     """
     pose_text = " ".join(f"{value:.4f}" for value in pose)
     size_text = " ".join(f"{value:.4f}" for value in size)
@@ -370,9 +401,13 @@ def box(
     if collide:
         surface = ""
         if friction is not None:
+            climb, along = (
+                friction if isinstance(friction, tuple) else (friction, friction)
+            )
+            fdir1 = "<fdir1>0 0 1</fdir1>" if isinstance(friction, tuple) else ""
             surface = (
-                f"<surface><friction><ode><mu>{friction}</mu><mu2>{friction}</mu2></ode>"
-                f"<bullet><friction>{friction}</friction><friction2>{friction}</friction2>"
+                f"<surface><friction><ode><mu>{climb}</mu><mu2>{along}</mu2>{fdir1}</ode>"
+                f"<bullet><friction>{climb}</friction><friction2>{along}</friction2>"
                 "</bullet></friction></surface>"
             )
         out += (
@@ -450,7 +485,7 @@ def straw_bale(name: str, pose: tuple, look: int) -> str:
             pose,
             (BALE_LENGTH, BALE_WIDTH, BALE_HEIGHT),
             STRAW,
-            friction=BALE_FRICTION,
+            friction=(BALE_FRICTION_CLIMB, BALE_FRICTION_ALONG),
             visual=False,
         )
         + bale_visuals(name, pose_text, look, STRANDS)
@@ -865,6 +900,7 @@ def build_bridge() -> str:
             ),
             (run / math.cos(slope), 0.05, RAIL_HEIGHT),
             BATTLESHIP_GRAY,
+            friction=(PLYWOOD_FRICTION_CLIMB, PLYWOOD_FRICTION_ALONG),
         )
 
     deck_x, deck_y = rect_centre(BRIDGE_DECK)
@@ -891,6 +927,7 @@ def build_bridge() -> str:
             ),
             (deck_width, 0.05, RAIL_HEIGHT),
             BATTLESHIP_GRAY,
+            friction=(PLYWOOD_FRICTION_CLIMB, PLYWOOD_FRICTION_ALONG),
         )
     return (
         "    <!-- 20% ramp up to a flat bridge deck, 25 in above the floor. -->\n"
@@ -918,6 +955,7 @@ def build_tunnel() -> str:
             (0.05, length, height),
             BATTLESHIP_GRAY,
             visual=False,
+            friction=(PLYWOOD_FRICTION_CLIMB, PLYWOOD_FRICTION_ALONG),
         )
     return (
         "    <!-- Tunnel: closed on top and sides, and it carries the bridge deck. -->\n"
@@ -991,6 +1029,7 @@ def build_helix() -> str:
                 ),
                 (chord, 0.05, RAIL_HEIGHT),
                 BATTLESHIP_GRAY,
+                friction=(PLYWOOD_FRICTION_CLIMB, PLYWOOD_FRICTION_ALONG),
             )
     return (
         "    <!-- Helical ramp down: 4 ft centerline radius, 41.5 in wide, 11% grade. -->\n"
@@ -1031,6 +1070,7 @@ def build_bank() -> str:
             (size_x, size_y, BANK_WALL_HEIGHT),
             BATTLESHIP_GRAY,
             visual=False,
+            friction=(PLYWOOD_FRICTION_CLIMB, PLYWOOD_FRICTION_ALONG),
         )
     return (
         "    <!-- 8.5 degree banked turn, 48 in by 128 in, walled on three sides. -->\n"

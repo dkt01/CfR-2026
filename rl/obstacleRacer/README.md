@@ -15,6 +15,10 @@ It gets only what the car can measure:
 - (v5) three memory values from the tachometer alone: how long it has read
   stopped, its speed averaged over about 2 s, and the direction the
   controller last reported
+- (v7) its heading since the start box, integrated from the yaw rate, as sin
+  and cos. The course is fixed, so this says where the Wide Section's exit
+  is when the camera can't see it. Training starts the estimate off by up to
+  5 degrees and drifts it at a random bias, as the car's would.
 
 v5 stacks frames from now, 0.1, 0.5 and 1.0 s ago (`env.frame_offsets`); v4
 stacked the last two. A second of history covers what the 110 degree camera
@@ -23,8 +27,19 @@ past them. `observation.py` builds all of it, for both training and
 `obstacle_racer_node.py` on the car, which starts its stack and memory fresh
 on the start signal as an episode does.
 
+v7's policy is recurrent (`train.recurrent`, sb3-contrib RecurrentPPO): an
+LSTM sits between the observation and the MLP and carries its memory for the
+whole run, so the policy can remember an exit or a hoop post long after the
+frame stack has dropped it. `policy.py` runs the LSTM in numpy, and the node
+resets its state on the start signal.
+
+The scans reach it as the car's do: a new frame at the ZED's 12 Hz, each
+50-100 ms old, held between frames (`sensor.camera_hz`, `sensor.latency_s`).
+
 It gives a `DriveCommand`:
-- steering = a map-free follow-the-gap prior + the policy's residual (full authority)
+- steering = a map-free follow-the-gap prior + twice the policy's residual, so
+  the policy can steer full lock to full lock whatever the prior says (v7's
+  residual of 1 left it half the wheel when the prior sat at full lock)
 - speed from -1 to 3.5 m/s. The car has no brakes, so speed is limited by
   sight distance.
 
@@ -36,7 +51,10 @@ PPO sees rewards times `train.reward_scale` (0.1): unscaled, v3's value net
 saturated in its first 2M steps and never learned.
 
 The reward is privileged, computed in simulation only (`reward.py`):
-- progress along a hand-placed centerline, per layout
+- progress along a line planned per layout (`line_plan.py`): round that
+  layout's buckets and bales with the most clearance it can keep, square
+  through each hoop's center (v7 stalled in the Wide Section where the old
+  hand-placed line ran through a bale, as it did in 84% of layouts)
 - a time cost
 - a bonus for each hoop and for finishing, and a potential-based nudge
   toward each hoop's center over the last 2.5 m before it (it hands back
@@ -49,7 +67,10 @@ The reward is privileged, computed in simulation only (`reward.py`):
   `reward.pinned`, set so that the wait plus the penalty never costs more
   than a hard hit. A share of starts (`env.stuck_start_prob`) put the car
   back exactly where a recent run ended pinned, stopped, to practice backing
-  out; the TUI shows how many of those drive on
+  out; the TUI shows how many of those drive on. A pinned spot is kept only
+  if the car rests clear with a straight 10 cm path back or on (a car
+  wedged between two obstacles can hit one whichever way it moves), and a
+  stuck start that settles into what it hit is re-dealt
 - costs for grazing obstacles, steering chatter and speed-command chatter.
   These are charged on the sampled action, exploration noise included, so
   `reward.py` checks that noise at the starting std costs under half the time
@@ -91,7 +112,12 @@ controller's direction, as `ArduinoStatus.speed` is.
 
 A car that touches an obstacle is put back where it was clear and slides
 along it, keeping the share of its speed the slide carries; head-on, it
-stops and has to back off.
+stops and has to back off. The body outline is checked every 1 cm, under the
+2 cm grid, so an obstacle's corner cannot slip in between two points. A car
+already overlapping something (a slope's settling can tilt one in) may move
+so long as it goes no deeper, so it can always back out; judged strictly
+from clear, such a car froze, and about a fifth of v8's stuck starts could
+not move at all.
 
 `sensor.py` ray-marches the visual grid from wherever the body put the camera,
 following the surface out from under the car the way the segmenter does.
@@ -101,8 +127,12 @@ result, which `bench.py --check` confirms.
 
 ## Layouts and starts
 
-Training uses 10 randomizer seeds (101–110). Four more seeds (201, 202, 208,
-218) are held out, one per entrance slot. They come from
+Training uses 200 randomizer seeds (101–110, then 1001–1190); the start-box
+check each evaluation drives the first ten. Four more seeds (201, 202, 208,
+218) are held out, one per entrance slot. v5 trained on ten and learned
+those ten Wide Section bale arrangements by heart, so v6 uses 200. Each
+layout's grid is kept only where it differs from the static course, in
+16-cell tiles: about 5 MB a layout instead of 66. They come from
 `obstacle_randomizer_node`'s own draw (`obstacle_layout_draw.py`), so a seed
 means the same course in Gazebo.  A layout is the buckets, the hoops, the
 open bucket-section entrance and, since v5, the Wide Section's seven bales,
@@ -138,7 +168,7 @@ point it started from (from the start box, that is over the timing line).
 
 ```bash
 uv venv --python 3.12 .venv
-uv pip install --python .venv/Scripts/python.exe numpy scipy pyyaml matplotlib gymnasium stable-baselines3 numba torch
+uv pip install --python .venv/Scripts/python.exe numpy scipy pyyaml matplotlib gymnasium stable-baselines3 sb3-contrib numba torch
 .venv/Scripts/python.exe selftest.py
 .venv/Scripts/python.exe train.py --dir runs/v1
 ../../.agents/skills/rl-train/scripts/rl.sh tui --dir rl/obstacleRacer/runs/v1
@@ -154,7 +184,7 @@ In the sim container, with the workspace built:
 ```
 
 To watch a run the way it happens on race day (the driver waits for the start
-signal and takes the throttle off when lap_counter reports the lap):
+signal and takes the throttle off when lap_counter reports the laps):
 
 ```bash
 # Gazebo: course, ZED, start signal detector, lap counter (1 lap), driver
@@ -163,17 +193,29 @@ LIBGL_ALWAYS_SOFTWARE=1 ros2 launch rl/obstacleRacer/obstacle_racer_sim.launch.p
 # or turn the signal green yourself:
 ros2 service call /obstacle_randomizer/start_signal std_srvs/srv/SetBool "{data: true}"
 
-# Send it to the Orin: the code to ~/software/obstacleRacer, and runs/v4's
-# policy.npz (export_policy.py first) and config.yaml to its top level
-jetson/scripts/syncSoftware.sh --racer-policy v4 --build
+# Send it to the Orin: the code to ~/software/obstacleRacer, and the race
+# policy's policy.npz and config.yaml to its top level.  The race policy is
+# committed in bestModel/v8/ and is the sync's default; --racer-policy RUN
+# sends another from bestModel/RUN or runs/RUN (export_policy.py first)
+jetson/scripts/syncSoftware.sh --build
 
 # The car, with ~/software/scripts/launch.sh --no-cmd-vel already up and the
-# E-Stop in hand: start signal detector, lap counter, driver, recorder
-ros2 launch ~/software/obstacleRacer/obstacle_racer_car.launch.py speed_scale:=0.3
+# E-Stop in hand: start signal detector, lap counter (2 laps), driver, recorder
+~/software/scripts/launchObstacleRacer.sh            # speed_scale 0.3 by default
 ```
 
-Without `--racer-policy` the sync sends the code and the tree's config.yaml
-only, which is enough for `driver:=prior`.
+`--racer-policy ''` sends the code and the tree's config.yaml only, which is
+enough for `driver:=prior`, and leaves the policy on the Orin alone.
+
+The car goes on whichever comes first: the start signal turning green, or the
+Arduino's Manual Start bit rising from 0 to 1 (a bit already set when the
+driver starts does not count). lap_counter arms on either, and the driver
+takes the throttle off when it latches done after `laps` laps (2, the
+Obstacle Course's). `check_car_chain.py` checks that chain with no car:
+bring up `obstacle_racer_car.launch.py record:=false` in a built workspace,
+then run it with `--start visual` and again with `--start manual`; it plays
+the bridge, the ZED and the start signal, and moves a synthetic pose round a
+loop only while the driver commands a speed.
 
 `obstacle_racer.launch.py` is the driver alone, for validate.sh.  The car
 launch records with `--cloud-hz 0`: record_run.py otherwise drops the ZED cloud
@@ -184,6 +226,7 @@ Other checks:
 | Command | Checks |
 |---|---|
 | `python3 reward.py` | Episode-level incentives |
-| `python3 centerline.py` | Every layout's line is clear of the walls |
+| `python3 centerline.py` | Every layout's planned line clears every obstacle and keeps the route's order |
 | `python3 layouts.py --check` | Exported layouts match the randomizer |
 | `python3 bench.py --policy runs/v5/best_model.zip` | Env steps/s and where a step's time goes; `--save`/`--check` for a speedup that must change nothing |
+| `python3 bench_ppo.py runs/v7/best_model.zip` | Time recurrent PPO updates on one real rollout with the default and tuned CPU settings; leaves the checkpoint untouched |

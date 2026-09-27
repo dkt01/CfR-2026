@@ -1,6 +1,6 @@
 """Run the obstacle racer against whatever stack is already up.
 
-    ros2 launch rl/obstacleRacer/obstacle_racer.launch.py policy:=runs/v1/policy.npz
+    ros2 launch rl/obstacleRacer/obstacle_racer.launch.py policy:=bestModel/v8/policy.npz
 
 Brings up only the driver.  It assumes something else is publishing the ZED
 cloud and pose and consuming /drive_cmd: `obstacle_course.launch.py
@@ -20,7 +20,7 @@ HERE = Path(__file__).resolve().parent
 
 def generate_launch_description():
     args = [
-        DeclareLaunchArgument("policy", default_value=str(HERE / "runs/v1/policy.npz")),
+        DeclareLaunchArgument("policy", default_value=str(HERE / "policy.npz")),
         DeclareLaunchArgument("config", default_value=str(HERE / "config.yaml")),
         DeclareLaunchArgument(
             "driver", default_value="policy", description="policy | prior"

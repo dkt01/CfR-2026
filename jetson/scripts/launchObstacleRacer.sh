@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #
-# Launch the obstacleRacer driver on the car (Obstacle Course, one lap), at a
+# Launch the obstacleRacer driver on the car (Obstacle Course, two laps), at a
 # third of full speed by default.
 #
 #   ~/software/scripts/launch.sh --no-cmd-vel      # terminal 1: bridge + ZED
 #   ~/software/scripts/launchObstacleRacer.sh      # terminal 2: this
-#   ~/software/scripts/launchObstacleRacer.sh -s 0.5 --laps 2
+#   ~/software/scripts/launchObstacleRacer.sh -s 0.5 --laps 1
 #   ~/software/scripts/launchObstacleRacer.sh --prior --prior-speed 0.8
 #   ~/software/scripts/launchObstacleRacer.sh -n   # print the command only
 #
@@ -46,7 +46,7 @@ Start the bridge and the ZED first, WITHOUT cmd_vel_to_drive:
 
 Options:
   -s, --speed-scale X   multiply every speed command (default: ${SPEED_SCALE})
-  -l, --laps N          laps before stopping (default: the launch file's, 1)
+  -l, --laps N          laps before stopping (default: the launch file's, 2)
       --label NAME      recording label, prefixed or_ (default: the synced
                         run, ${LABEL:-none}; else the policy's directory)
       --policy FILE     policy .npz (default: ${DRIVER_DIR}/policy.npz)
@@ -182,7 +182,7 @@ echo "  driver       obstacleRacer (${driver})"
 [[ "${driver}" == prior ]] && echo "  prior speed  ${prior_speed:-launch default} m/s"
 echo "  config       ${config}"
 echo "  speed scale  ${SPEED_SCALE}"
-echo "  laps         $([[ "${laps}" == 0 ]] && echo 'launch default (1)' || echo "${laps}")"
+echo "  laps         $([[ "${laps}" == 0 ]] && echo 'launch default (2)' || echo "${laps}")"
 echo "  record       ${record}${LABEL:+ as or_${LABEL}}"
 echo
 echo "  THIS ARMS THE ACTUATORS.  The car has no brakes.  Have the E-stop IN"

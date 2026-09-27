@@ -105,7 +105,10 @@ def zone_labels(lines):
     the one at the line's height wins (ELEVATED_REGIONS), and an obstacle
     the line has left is never re-entered: each is driven once a lap, so a
     later point inside its outline is the floor under it (past the tunnel,
-    under the ramp), not the obstacle again.
+    under the ramp), not the obstacle again.  Stepping out of a region and
+    back in with no other region between is still that region: the Wide
+    Section's outline is notched round its bales' nominal places, and a line
+    planned round a layout's bales goes through the notches.
     """
     regions = _regions()
     names = ["start"]
@@ -114,6 +117,7 @@ def zone_labels(lines):
         labels = np.zeros(len(line.points), np.int64)
         current = "start"
         left = set()
+        last_in = 0
         for i, (x, y, z) in enumerate(line.points):
             hits = [
                 h for h in regions.classify(float(x), float(y)) if h.name not in left
@@ -125,8 +129,11 @@ def zone_labels(lines):
             if hits:
                 if hits[0].name != current and current != "start":
                     left.add(current)
+                elif hits[0].name == current and last_in < i - 1:
+                    labels[last_in + 1 : i] = names.index(current)
                 current = hits[0].name
                 name = current
+                last_in = i
             else:
                 name = current if current == "start" else f"after_{current}"
             if name not in names:
@@ -154,7 +161,7 @@ class ObstacleEnv:
             self.cfg = cfg
         self.plant = P.Plant(cfg, model, n, self.rng)
         self.sensor = S.Sensor(cfg, model, n, self.rng)
-        self.lines = centerline_module.Centerlines(model.layouts)
+        self.lines = centerline_module.Centerlines(model.layouts, model=model)
         self.zone_names, zl = zone_labels(self.lines.lines)
         self.zone_of = np.zeros(self.lines.points.shape[:2], np.int64)
         for k, labels in enumerate(zl):
@@ -167,6 +174,27 @@ class ObstacleEnv:
         self.stack = O.Stack(n, O.frame_offsets(cfg), O.frame_dim(cfg))
         self.obs_dim = O.obs_dim(cfg)
         self.memory = O.Memory(n, cfg)
+        self.heading = O.Heading(n, cfg)
+        self.heading_bias = np.zeros(n)  # rad/s the heading drifts at
+        # The camera: the car's ZED publishes point clouds at 12 Hz
+        # (cfr_zed2i.yaml pub_frame_rate), and a cloud reaches the policy a
+        # segmentation later; the control loop runs at 20 Hz on whatever
+        # arrived last.  Scans are rendered every control step, kept for
+        # `latency` steps, and delivered only when a frame is due.
+        sc = cfg["sensor"]
+        self.cam_period = 1.0 / float(sc.get("camera_hz", e["control_hz"]))
+        lat = sc.get("latency_s", [0.0, 0.0])
+        self.lat_steps = (
+            int(round(float(lat[0]) / self.dt)),
+            int(round(float(lat[1]) / self.dt)),
+        )
+        depth = self.lat_steps[1] + 1
+        self.scan_hist = np.zeros((n, depth, int(sc["bins"])))
+        self.gate_hist = np.zeros((n, depth, 2 * S.GATE_FEATURES))
+        self.scan_held = np.zeros((n, int(sc["bins"])))
+        self.gate_held = np.zeros((n, 2 * S.GATE_FEATURES))
+        self.cam_phase = np.zeros(n)
+        self.cam_lat = np.zeros(n, np.int64)
         self.act_dim = 2
         z = np.zeros(n)
         self.t = z.copy()
@@ -198,6 +226,7 @@ class ObstacleEnv:
         # (the per-obstacle eval); None deals as usual.
         self.forced_lay = None
         self.forced_s = None
+        self.forced_floor = None  # with forced_s: never dealt behind these
         self.dither = z.copy()  # the wander on a slow speed target, m/s
         self.dither_scale = np.ones(n)
         self.prev_speed_cmd = z.copy()
@@ -381,17 +410,18 @@ class ObstacleEnv:
                 pick = self.rng.random()
                 p_fail = float(e.get("fail_start_prob", 0.0)) if n_fail else 0.0
                 p_sec = float(e.get("section_start_prob", 0.0))
-                target = None
+                target, floor = None, -np.inf
                 if pick < p_fail:
                     back = self.rng.uniform(*e["fail_backoff_m"])
                     target = self.fail_s[lay[i], self.rng.integers(n_fail)] - back
                 elif pick < p_fail + p_sec:
-                    target = self.section_target(lay[i])
+                    target, floor = self.section_target(lay[i])
                 if self.forced_s is not None:
                     target = self.forced_s[idx[i]]
+                    if self.forced_floor is not None:
+                        floor = self.forced_floor[idx[i]]
                 if target is not None:
-                    j = np.searchsorted(table, target, side="right") - 1
-                    s0[i] = table[max(j, 0)]
+                    s0[i] = self.snap(lay[i], target, floor)
                 x[i], y[i], z[i], yaw[i] = self.lines.lines[lay[i]].pose_at(s0[i])
                 speed[i] = self.rng.uniform(*e["dealt_speed"])
         # A stuck start goes exactly where the car stopped: noise could put
@@ -402,13 +432,15 @@ class ObstacleEnv:
         yaw[free] += self.rng.uniform(-yawn, yawn, free.sum())
         self.plant.reset(idx, lay, x, y, z, yaw, speed)
 
-        # A dealt start that lands the car against something is re-dealt;
-        # a stuck start is against something on purpose.
-        touching = (
-            P.body_contact(
-                self.plant.OBS, self.plant.lay[idx], self.plant.state[idx], 0.03
-            )
-            & ~stuck
+        # A start that lands the car inside something is re-dealt.  A stuck
+        # start is against something on purpose, but a pinned car rests just
+        # clear of it; one inside (set down again on a slope, where settling
+        # tilts it) would only be practicing the plant's contact rule.
+        touching = P.body_contact(
+            self.plant.OBS,
+            self.plant.lay[idx],
+            self.plant.state[idx],
+            P.CONTACT_SPACING,
         )
         if touching.any() and attempt < 4:
             self._reset_idx(idx[touching], attempt + 1, lay[touching])
@@ -465,7 +497,25 @@ class ObstacleEnv:
             self.speed_noise[idx] = 0.0
             self.dither_scale[idx] = 1.0
 
+        # Heading since the start box: the car's own estimate starts off by
+        # its placement error (and, dealt part way round, by what it would
+        # have drifted getting there), then drifts at a per-run bias.
+        hn = math.radians(float(self.cfg["env"].get("heading_init_noise_deg", 0.0)))
+        self.heading.reset(
+            idx, self.plant.state[idx, P.S_YAW] + self.rng.uniform(-hn, hn, len(idx))
+        )
+        hb = r.get("heading_bias", [0.0, 0.0]) if r["enabled"] else [0.0, 0.0]
+        self.heading_bias[idx] = self.rng.uniform(*hb, len(idx))
+
         scan, gate = self.sensor.read(self.plant.lay, self.plant.state, idx)
+        self.scan_hist[idx] = scan[:, None, :]
+        self.gate_hist[idx] = gate[:, None, :]
+        self.scan_held[idx] = scan
+        self.gate_held[idx] = gate
+        self.cam_phase[idx] = self.rng.uniform(0.0, self.cam_period, len(idx))
+        self.cam_lat[idx] = self.rng.integers(
+            self.lat_steps[0], self.lat_steps[1] + 1, len(idx)
+        )
         fresh = np.zeros(self.n, bool)
         fresh[idx] = True
         self.stack.reset(idx, self._frame(scan, gate, idx, fresh))
@@ -488,18 +538,51 @@ class ObstacleEnv:
         p = (1.0 - mix) * rate / rate.sum() + mix / len(cands)
         return cands, p
 
-    def section_target(self, lay, zone=None):
-        """An arc length a few meters before an obstacle on layout `lay`.
+    def snap(self, lay, target, floor=-np.inf):
+        """The dealable arc length at or before `target` on layout `lay`,
+        unless that is behind `floor`: then the first one past the floor."""
+        table = self.deal[lay]
+        j = np.searchsorted(table, target, side="right") - 1
+        if j < 0 or table[j] < floor:
+            j = min(np.searchsorted(table, floor), len(table) - 1)
+        return table[max(j, 0)]
+
+    def section_floor(self, lay, zone):
+        """Where the obstacle before `zone` ends on layout `lay` (-inf if none).
+
+        A section start must not be dealt behind this: the lanes between
+        obstacles are short (0.2-0.7 m before the buckets and the hoops), so
+        a start a few meters back lands inside the obstacle before.  v5 dealt
+        397 of 400 bucket starts inside the Wide Section and most hoop starts
+        inside the buckets, so the buckets and hoops were practiced only by
+        the few cars that got through what came first.
+        """
+        entry = self.section_s[lay][zone][0]
+        ends = [
+            b for z, (a, b) in self.section_s[lay].items() if z != zone and b <= entry
+        ]
+        return max(ends, default=-np.inf)
+
+    def section_target(self, lay, zone=None, back=None, any_hoop=True):
+        """(arc length, floor): a few meters before an obstacle on layout `lay`.
 
         The obstacle is `zone`, or one picked by section_weights from those
-        the line passes through.
+        the line passes through.  The start is never behind the end of the
+        obstacle before it (section_floor).  For the hoops, it goes before
+        one of the three hoops at random (any_hoop), so the second and third
+        are practiced without first threading the one before.
         """
         spans = self.section_s[lay]
         if zone is None:
             cands, p = self.section_weights(lay)
             zone = cands[self.rng.choice(len(cands), p=p)]
-        back = self.rng.uniform(*self.cfg["env"]["section_backoff_m"])
-        return spans[zone][0] - back
+        if back is None:
+            back = self.rng.uniform(*self.cfg["env"]["section_backoff_m"])
+        entry = spans[zone][0]
+        if any_hoop and self.zone_names[zone] == "hoops":
+            entry = max(entry, float(self.rng.choice(self.hoop_s[lay])))
+        floor = self.section_floor(lay, zone)
+        return max(entry - back, floor), floor
 
     # ---------------------------------------------------------------- step
 
@@ -525,9 +608,47 @@ class ObstacleEnv:
         prior = O.smooth_prior(self.prior[idx], raw, first, self.cfg)
         self.prior[idx] = prior
         memory = self.memory.update(speed, idx, first)
+        heading = self.heading.update(yaw_rate + self.heading_bias[idx], idx)
         return O.frame(
-            scan, gate, speed, yaw_rate, self.prev_action[idx], prior, self.cfg, memory
+            scan,
+            gate,
+            speed,
+            yaw_rate,
+            self.prev_action[idx],
+            prior,
+            self.cfg,
+            memory,
+            heading,
         )
+
+    def _capture_rows(self):
+        """Cars whose scan this step will be delivered after their latency."""
+        phase = self.cam_phase.copy()
+        capture = np.zeros(self.n, bool)
+        for lag in range(self.lat_steps[1] + 1):
+            phase += self.dt
+            due = phase >= self.cam_period
+            capture |= due & (self.cam_lat == lag)
+            phase[due] -= self.cam_period
+        return np.flatnonzero(capture)
+
+    def _camera(self, scan, gate, capture_rows):
+        """What the policy sees this step: the last frame to have arrived.
+
+        A frame is due every cam_period; the one delivered was rendered
+        cam_lat control steps ago.  Between frames the last one is held.
+        """
+        self.scan_hist = np.roll(self.scan_hist, 1, axis=1)
+        self.gate_hist = np.roll(self.gate_hist, 1, axis=1)
+        self.scan_hist[capture_rows, 0] = scan
+        self.gate_hist[capture_rows, 0] = gate
+        self.cam_phase += self.dt
+        due = self.cam_phase >= self.cam_period
+        self.cam_phase[due] -= self.cam_period
+        rows = np.flatnonzero(due)
+        self.scan_held[rows] = self.scan_hist[rows, self.cam_lat[rows]]
+        self.gate_held[rows] = self.gate_hist[rows, self.cam_lat[rows]]
+        return self.scan_held.copy(), self.gate_held.copy()
 
     def _track(self, st, lay):
         """Privileged bookkeeping for a step: arc length round the loop, hoops.
@@ -689,7 +810,9 @@ class ObstacleEnv:
 
         terminated = finished | crash | hoop_missed | stopped | off_course
         truncated = ~terminated & timeout
-        scan, gate = self.sensor.read(lay, st)
+        capture_rows = self._capture_rows()
+        scan, gate = self.sensor.read(lay, st, capture_rows, draw_for_all=True)
+        scan, gate = self._camera(scan, gate, capture_rows)
         obs = self.stack.push(self._frame(scan, gate)).copy()
 
         infos = [{} for _ in range(self.n)]
@@ -718,6 +841,8 @@ class ObstacleEnv:
                 ],
                 "timeout",
             )
+            movable = np.zeros(self.n, bool)
+            movable[done] = self._movable(lay[done], st[done])
             for i in done:
                 infos[i] = self._episode_info(i, causes[i])
                 met = self.visited[i]
@@ -738,7 +863,8 @@ class ObstacleEnv:
                     L = int(lay[i])
                     self.fail_s[L, self.fail_n[L] % self.fail_s.shape[1]] = self.s[i]
                     self.fail_n[L] += 1
-                    if causes[i] == "pinned":
+                    # Only where a stuck start could move (see _movable).
+                    if causes[i] == "pinned" and movable[i]:
                         slot = self.stuck_n[L] % self.stuck_pose.shape[1]
                         self.stuck_pose[L, slot] = (
                             self.s[i],
@@ -752,6 +878,29 @@ class ObstacleEnv:
             self._reset_idx(done)
             obs[done] = self.stack.obs[done]
         return obs, total.astype(np.float32), terminated, truncated, infos
+
+    def _movable(self, lay, st, path=(0.03, 0.06, 0.10)):
+        """Per car: resting clear, with a straight path back or on of 10 cm.
+
+        A car wedged between two obstacles can rest clear of both yet hit
+        one whichever way it moves, and the plant's contact rule (slide along
+        x or y, else stop) never finds the way out it came in by: v8 at 90M
+        ended 7 of 77 pinned runs frozen like that.  A stuck start there
+        would only be practicing the contact rule.
+        """
+        OBS, sp = self.plant.OBS, P.CONTACT_SPACING
+        ok = ~P.body_contact(OBS, lay, st, sp)
+        c, s = np.cos(st[:, P.S_YAW]), np.sin(st[:, P.S_YAW])
+        way = np.zeros(len(st), bool)
+        for sign in (-1.0, 1.0):
+            clear = np.ones(len(st), bool)
+            for d in path:
+                moved = st.copy()
+                moved[:, P.S_X] += sign * d * c
+                moved[:, P.S_Y] += sign * d * s
+                clear &= ~P.body_contact(OBS, lay, moved, sp)
+            way |= clear
+        return ok & way
 
     def _dither(self, speed_cmd):
         """The wander on a slow target: first-order noise, faded out with speed."""
