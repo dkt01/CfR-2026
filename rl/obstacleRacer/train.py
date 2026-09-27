@@ -310,8 +310,16 @@ def main():
         seed=10_001,
         start_box_only=True,
     )
+    # More held-out layouts, fewer runs on each: layouts differ far more
+    # than repeats on one layout do.
+    held_per = int(tcfg.get("heldout_episodes_per_layout", per))
     eval_held = EvalEnv(
-        cfg, model_, per * len(held_ids), held_ids, seed=10_002, start_box_only=True
+        cfg,
+        model_,
+        held_per * len(held_ids),
+        held_ids,
+        seed=10_002,
+        start_box_only=True,
     )
     sec_per = int(tcfg["section_eval_per_layout"])
     probe = ObstacleEnv(cfg, model_, 1, held_ids, seed=0)
@@ -385,7 +393,7 @@ def main():
             return Driver(model, n)
 
         tr = summarize(evaluate(eval_train, driver, per))
-        he = summarize(evaluate(eval_held, driver, per))
+        he = summarize(evaluate(eval_held, driver, held_per))
         he["sections"] = section_eval(eval_sections, driver, sec_per)
         inner = train_env.inner
         met = {

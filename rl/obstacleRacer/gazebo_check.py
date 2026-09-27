@@ -289,7 +289,7 @@ def seg_gap(sim, args):
         "carwash_misread_prob",
     ):
         cfg["sensor"][k] = 0.0
-    seeds = layouts.HELDOUT_SEEDS + layouts.TRAIN_SEEDS[:2]
+    seeds = layouts.HELDOUT_SLOT_SEEDS + layouts.TRAIN_SEEDS[:2]
     model = course_model.CourseModel(seeds)
     lines = centerline_module.Centerlines(model.layouts, model=model)
     sen = S.Sensor(cfg, model, 1, np.random.default_rng(0))
@@ -545,7 +545,9 @@ def surfaces(sim, args):
 def validate(sim, args):
     rng = np.random.default_rng(args.seed)
     seeds = (
-        [int(s) for s in args.seeds.split(",")] if args.seeds else layouts.HELDOUT_SEEDS
+        [int(s) for s in args.seeds.split(",")]
+        if args.seeds
+        else layouts.HELDOUT_SLOT_SEEDS
     )
     runs = []
     for seed in seeds:

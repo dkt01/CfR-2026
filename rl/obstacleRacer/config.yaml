@@ -237,7 +237,8 @@ train:
                                 # 40M, when progress stalled, leaving +-0.19 m/s
                                 # of speed noise -- too little to try reversing
   eval_every_steps: 2000000
-  eval_episodes_per_layout: 12
+  eval_episodes_per_layout: 12     # on the ten TRAIN_EVAL_SEEDS
+  heldout_episodes_per_layout: 2   # on the 32 held-out layouts: 64 runs
   # Per obstacle, on the held-out layouts: dealt just before it, does the
   # policy get through?  Measures every obstacle before laps finish.
-  section_eval_per_layout: 2
+  section_eval_per_layout: 1

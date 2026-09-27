@@ -134,13 +134,17 @@ def render(run_dir: Path, ui, patience, min_evals, threshold) -> str:
     lines.append(f"{ui.BOLD}how held-out runs end{ui.RESET}")
     for cause, count in list(last["heldout"]["ends"].items())[:8]:
         lines.append(f"  {count:4d}  {cause}")
-    lines.append(
-        "  by layout: "
-        + "  ".join(
-            f"{seed}:{100 * v:.0f}%"
-            for seed, v in last["heldout"]["finish_by_seed"].items()
+    by_seed = last["heldout"]["finish_by_seed"]
+    if len(by_seed) <= 8:
+        lines.append(
+            "  by layout: "
+            + "  ".join(f"{seed}:{100 * v:.0f}%" for seed, v in by_seed.items())
         )
-    )
+    else:
+        lines.append(
+            f"  finished at least once on {sum(v > 0 for v in by_seed.values())}"
+            f" of {len(by_seed)} held-out layouts"
+        )
     rollout = last.get("rollout") or {}
     if rollout.get("ep_rew_mean") is not None:
         lines.append(

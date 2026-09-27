@@ -7,8 +7,8 @@ Wide Section's bales stand -- drawn by
 the node's own ROS-free draw module, so "seed 104" means the same course in
 the numpy trainer, in Gazebo validation and in the node's log line.
 
-Two hundred seeds are trained on.  Four more are held out, one per entrance
-slot, and only ever evaluated, so a policy that has memorized its courses
+Two hundred seeds are trained on.  Thirty-two more are held out, and only
+ever evaluated, so a policy that has memorized its courses
 rather than learned to drive shows up as a gap between the two finish rates.
 v5 trained on ten: it learned those ten Wide Section bale arrangements by
 heart (0-20% through them) and got through the held-out ones 1 time in 111.
@@ -37,8 +37,13 @@ TRAIN_SEEDS = list(range(101, 111)) + list(range(1001, 1191))
 # The training layouts evaluated from the start box each time: v5's ten, so
 # the train-side numbers stay comparable across runs.
 TRAIN_EVAL_SEEDS = TRAIN_SEEDS[:10]
-# One per gap slot, so held-out finish rate covers every entrance.
-HELDOUT_SEEDS = [201, 202, 208, 218]
+# One per gap slot, so held-out finish rate covers every entrance, and from
+# v8's 96M 28 more: four were too few to judge by.  At 80M v8 cleared the
+# Wide Section 12% of the time on the four and 36% on 32 fresh draws, the
+# same as on its training layouts (40%) -- the four were a hard draw, not a
+# sign of memorizing.
+HELDOUT_SLOT_SEEDS = [201, 202, 208, 218]  # Gazebo validates on these
+HELDOUT_SEEDS = HELDOUT_SLOT_SEEDS + list(range(5001, 5029))
 
 
 def _draw_module():
