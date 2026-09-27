@@ -66,7 +66,12 @@ def frame(rng, w=640, h=360):
         for _ in range(4):
             r = rng.uniform(0.4, 12.0)
             lo, hi = sorted(rng.uniform(-1.4, 1.4, 2))
-            face = (a * r >= lo) & (a * r <= hi) & (0.2 + b * r >= 0) & (0.2 + b * r <= 0.356)
+            face = (
+                (a * r >= lo)
+                & (a * r <= hi)
+                & (0.2 + b * r >= 0)
+                & (0.2 + b * r <= 0.356)
+            )
             z = np.where(face, np.minimum(z, r), z)
     z[rng.random(z.shape) < 0.05] = np.nan
     z[~np.isfinite(z)] = np.nan
@@ -85,7 +90,9 @@ def main():
         expected.append((grid[0], scan[0], cam.encode(scan)[0]))
         cases.append(
             {
-                "depth": [None if not np.isfinite(v) else float(v) for v in depth.ravel()],
+                "depth": [
+                    None if not np.isfinite(v) else float(v) for v in depth.ravel()
+                ],
                 "w": depth.shape[1],
                 "h": depth.shape[0],
                 "fx": fx,
@@ -100,7 +107,9 @@ def main():
         tmp = Path(tmp)
         (tmp / "hooks.mjs").write_text(HOOKS)
         (tmp / "register.mjs").write_text(REGISTER)
-        (tmp / "run.mjs").write_text(RUN % (VIEWER / "src" / "policy-depth.js").as_uri())
+        (tmp / "run.mjs").write_text(
+            RUN % (VIEWER / "src" / "policy-depth.js").as_uri()
+        )
         (tmp / "cases.json").write_text(json.dumps(cases))
         result = subprocess.run(
             ["node", "--import", "./register.mjs", "run.mjs", "cases.json"],
@@ -113,12 +122,16 @@ def main():
         print(result.stderr)
         return 1
     ok = True
-    for n, (got, (grid, scan, enc)) in enumerate(zip(json.loads(result.stdout), expected)):
+    for n, (got, (grid, scan, enc)) in enumerate(
+        zip(json.loads(result.stdout), expected)
+    ):
         if (got["rows"], got["W"]) != grid.shape:
             print(f"case {n}: grid {got['rows']}x{got['W']} vs {grid.shape}")
             ok = False
             continue
-        jg = np.array([np.nan if v is None else v for v in got["grid"]]).reshape(grid.shape)
+        jg = np.array([np.nan if v is None else v for v in got["grid"]]).reshape(
+            grid.shape
+        )
         js = np.array([np.inf if v is None else v for v in got["scan"]])
         je = np.array(got["encoded"])
         same_nan = np.array_equal(np.isnan(jg), np.isnan(grid))
