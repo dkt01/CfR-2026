@@ -119,7 +119,11 @@ class FormulaTwoEnv:
         self.dt = np.full(n, self.dt_nominal)
         self.latency_steps = np.zeros(n, dtype=np.int32)
         self.noise_xy, self.noise_yaw = z.copy(), z.copy()
-        self.drift_dir, self.drift_rate, self.drift_yaw_rate = z.copy(), z.copy(), z.copy()
+        self.drift_dir, self.drift_rate, self.drift_yaw_rate = (
+            z.copy(),
+            z.copy(),
+            z.copy(),
+        )
         self.jitter = np.ones(n)
         # Camera draw.
         self.cam = {
@@ -193,7 +197,13 @@ class FormulaTwoEnv:
         c["period"][mask] = 1.0 / self._d(s["camera_hz"], k)
         c["timer"][mask] = self.rng.uniform(0, 1, k) * c["period"][mask]
         c["latency"][mask] = self._d(s["depth_latency"], k)
-        for name in ("noise_s0", "noise_s2", "pixel_dropout", "blob_rate", "edge_bleed"):
+        for name in (
+            "noise_s0",
+            "noise_s2",
+            "pixel_dropout",
+            "blob_rate",
+            "edge_bleed",
+        ):
             c[name][mask] = self._d(s[name], k)
         c["height"][mask] = self._d(s["height_err"], k)
         c["drop"][mask] = self._d(s["frame_drop"], k)
@@ -295,9 +305,10 @@ class FormulaTwoEnv:
         # Past the cast range there is still a bale somewhere: call it a far
         # wall, so the column reads "far" rather than "no data".
         r_h = np.where(np.isfinite(r_h), r_h, cam.scan_max + 5.0)
-        pitch = c["pitch"][rows] + self.rng.standard_normal(len(rows)) * c[
-            "pitch_jitter"
-        ][rows]
+        pitch = (
+            c["pitch"][rows]
+            + self.rng.standard_normal(len(rows)) * c["pitch_jitter"][rows]
+        )
         depth = cam.render(r_h, pitch, cam.z + c["height"][rows])
         if self.randomized:
             depth = corrupt(depth, cam, {k: v[rows] for k, v in c.items()}, self.rng)
@@ -346,7 +357,9 @@ class FormulaTwoEnv:
         rate = (1 - self.yaw_filter) * self.yaw_rate + self.yaw_filter * rate
         obs_speed = np.where(p.speed < 0.3, 0.0, p.speed)
         raw_accel = np.clip((obs_speed - self.prev_obs_speed) / self.dt, -20.0, 20.0)
-        accel = (1 - self.accel_filter) * self.speed_rate + self.accel_filter * raw_accel
+        accel = (
+            1 - self.accel_filter
+        ) * self.speed_rate + self.accel_filter * raw_accel
         keep = np.ones(self.n, dtype=bool) if mask is None else mask
         self.speed_rate = np.where(keep, accel, self.speed_rate)
         self.prev_obs_speed = np.where(keep, obs_speed, self.prev_obs_speed)
@@ -376,7 +389,9 @@ class FormulaTwoEnv:
         me = self.world.map_error(p.x, p.y)
         mex, mey = car_frame(me[:, 0], me[:, 1])
         pex, pey = car_frame(self.sensed_x - p.x, self.sensed_y - p.y)
-        yaw_err = np.arctan2(np.sin(self.sensed_yaw - p.yaw), np.cos(self.sensed_yaw - p.yaw))
+        yaw_err = np.arctan2(
+            np.sin(self.sensed_yaw - p.yaw), np.cos(self.sensed_yaw - p.yaw)
+        )
         nom = self.plant.nominal
         cols = [
             self.lateral_true / 0.5,
@@ -556,7 +571,9 @@ class FormulaTwoEnv:
         info = [{} for _ in range(self.n)]
         if done.any():
             for i in np.flatnonzero(done):
-                info[i] = self._episode_info(i, obs[i], stopped[i], crashed[i], stalled[i])
+                info[i] = self._episode_info(
+                    i, obs[i], stopped[i], crashed[i], stalled[i]
+                )
             self._reset_idx(done)
             self.pose_history[done] = np.stack(
                 [p.x[done], p.y[done], p.yaw[done]], axis=1
@@ -586,9 +603,11 @@ class FormulaTwoEnv:
             "lap_time": float(rt / self.laps) if np.isfinite(rt) else float("nan"),
             "lap_times": self.lap_times[i].tolist(),
             "stop_distance": float(self.distance[i] - self.target_distance),
-            "best_lap": float(self.best_lap_time[i])
-            if np.isfinite(self.best_lap_time[i])
-            else float("nan"),
+            "best_lap": (
+                float(self.best_lap_time[i])
+                if np.isfinite(self.best_lap_time[i])
+                else float("nan")
+            ),
             "last_lap": float(self.last_lap_time[i]),
             "mean_cte": float(self.ep_lateral_sum[i] / max(self.ep_lateral_n[i], 1)),
             "max_cte": float(self.ep_lateral_max[i]),

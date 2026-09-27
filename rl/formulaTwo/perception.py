@@ -92,9 +92,7 @@ class Camera:
             r_ground = np.where(slope < 0, h / -slope, np.inf)
             z_bale = h + r * slope
         on_bale = np.isfinite(r) & (z_bale >= 0) & (z_bale <= self.bale_height)
-        dist = np.where(
-            r_ground < r, r_ground, np.where(on_bale, r, np.nan)
-        )
+        dist = np.where(r_ground < r, r_ground, np.where(on_bale, r, np.nan))
         dist = np.where(np.isfinite(dist), dist, np.nan)
         return dist / hlen
 
@@ -174,13 +172,13 @@ class Camera:
 def corrupt(depth, cam, p, rng):
     """The ZED's artifacts, on the rendered grid.  `p` holds per-car arrays.
 
-      range noise   sigma = s0 + s2 Z^2 -- stereo disparity error in depth
-      edge bleed    at a depth discontinuity, the far pixel takes a value
-                    between the two surfaces (flying pixels / fattening)
-      dropout       random pixels with no stereo match
-      blobs         rectangles with none (glare, shadow, low texture)
-      field of view columns a narrower real lens does not see
-      range limits  closer than 0.3 m or past 20 m is no depth at all
+    range noise   sigma = s0 + s2 Z^2 -- stereo disparity error in depth
+    edge bleed    at a depth discontinuity, the far pixel takes a value
+                  between the two surfaces (flying pixels / fattening)
+    dropout       random pixels with no stereo match
+    blobs         rectangles with none (glare, shadow, low texture)
+    field of view columns a narrower real lens does not see
+    range limits  closer than 0.3 m or past 20 m is no depth at all
     """
     b, h, w = depth.shape
     z = depth + rng.standard_normal(depth.shape) * (

@@ -56,7 +56,12 @@ class World:
         # each tyre at its fore and aft edge, and the chassis flank midpoints.
         # The tyres stand 12.5 mm proud of the chassis sides.
         pts = [(sx * hl, sy * hw) for sx in (1, -1) for sy in (1, -1)]
-        pts += [(ax * wx + e * r, sy * wy) for ax in (1, -1) for e in (1, -1) for sy in (1, -1)]
+        pts += [
+            (ax * wx + e * r, sy * wy)
+            for ax in (1, -1)
+            for e in (1, -1)
+            for sy in (1, -1)
+        ]
         pts += [(0.0, hw), (0.0, -hw)]
         self.body = np.array(pts)
         # The coarse grid the fields are baked onto, covering the distance
@@ -139,7 +144,9 @@ class World:
         fy = np.clip(fy, 0, self._gh - 1.001)
         ix, iy = fx.astype(np.int32), fy.astype(np.int32)
         ax, ay = fx - ix, fy - iy
-        base = (rows[:, None] * 2 + int(layout_only)) * self._gcells + iy * self._gw + ix
+        base = (
+            (rows[:, None] * 2 + int(layout_only)) * self._gcells + iy * self._gw + ix
+        )
         g = self._flat
         w00 = (1 - ax) * (1 - ay)
         w10 = ax * (1 - ay)

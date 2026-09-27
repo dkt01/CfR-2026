@@ -79,7 +79,11 @@ def resample(t, x, y, yaw, cmd):
 def replay(cfg, params, steer, speed):
     """(N, T) yaw rate for N parameter sets under one command/speed history."""
     n = len(params["dead_time"])
-    p = Plant({**cfg, "randomize": {**cfg["randomize"], "enabled": False}}, n, np.random.default_rng(0))
+    p = Plant(
+        {**cfg, "randomize": {**cfg["randomize"], "enabled": False}},
+        n,
+        np.random.default_rng(0),
+    )
     z = np.zeros(n)
     p.reset(np.ones(n, bool), z, z, z, np.full(n, speed[0]))
     for name, v in params.items():
@@ -124,7 +128,9 @@ def main():
     cfg = yaml.safe_load(Path(args.config).read_text())
     t, x, y, yaw, cmd = load(args.trace, args.cmd)
     g, steer, speed, rate = resample(t, x, y, yaw, cmd)
-    print(f"{len(g) * DT:.1f} s of driving, {np.mean(speed > 3.5) * 100:.0f}% above 3.5 m/s")
+    print(
+        f"{len(g) * DT:.1f} s of driving, {np.mean(speed > 3.5) * 100:.0f}% above 3.5 m/s"
+    )
 
     pl = cfg["plant"]
     nominal = dict(
@@ -151,24 +157,40 @@ def main():
     for start in range(0, len(combos), 600):
         chunk = np.array(combos[start : start + 600])
         params = {k: chunk[:, i] for i, k in enumerate(keys)}
-        e = score(replay(cfg, params, steer, speed), rate, speed, args.min_speed, args.max_speed)
+        e = score(
+            replay(cfg, params, steer, speed),
+            rate,
+            speed,
+            args.min_speed,
+            args.max_speed,
+        )
         errs[start : start + len(chunk)] = e
         j = int(np.argmin(e))
         if e[j] < best[0]:
             best = (e[j], dict(zip(keys, chunk[j])))
-    print(f"\nnominal plant.py   relative yaw-rate error {e_nom:.3f}   {({k: v[0] for k, v in nominal.items()})}")
-    print(f"best of {len(combos)} fits  relative yaw-rate error {best[0]:.3f}   {best[1]}")
+    print(
+        f"\nnominal plant.py   relative yaw-rate error {e_nom:.3f}   {({k: v[0] for k, v in nominal.items()})}"
+    )
+    print(
+        f"best of {len(combos)} fits  relative yaw-rate error {best[0]:.3f}   {best[1]}"
+    )
     # How sharply is each parameter pinned?  Error of the best fit with that
     # one parameter moved, the others held.
     order = np.argsort(errs)[:10]
     print("\nten best:")
     for i in order:
-        print("  " + "  ".join(f"{k} {v:.3f}" for k, v in zip(keys, combos[i])) + f"   err {errs[i]:.3f}")
+        print(
+            "  "
+            + "  ".join(f"{k} {v:.3f}" for k, v in zip(keys, combos[i]))
+            + f"   err {errs[i]:.3f}"
+        )
 
     fit = replay(cfg, {k: np.array([v]) for k, v in best[1].items()}, steer, speed)
     for name, sig in (("gazebo", rate), ("nominal", nom[0]), ("fitted", fit[0])):
         gn, ph = weave_response(sig, steer, speed, args.weave_hz)
-        print(f"  {name:8s} steer->yaw-rate at {args.weave_hz} Hz, v>3.5: gain {gn:.2f}  phase {ph:+.0f} deg")
+        print(
+            f"  {name:8s} steer->yaw-rate at {args.weave_hz} Hz, v>3.5: gain {gn:.2f}  phase {ph:+.0f} deg"
+        )
 
 
 if __name__ == "__main__":

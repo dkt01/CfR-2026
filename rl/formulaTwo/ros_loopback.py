@@ -76,9 +76,17 @@ class Loopback(Node):
         full = copy.deepcopy(cfg)
         full["camera"].update(col_stride=1, row_stride=1, row_slope_limit=10.0)
         self.cam = Camera(full)
-        self.f = (WIDTH / 2) / math.tan(math.radians(float(cfg["camera"]["hfov_deg"])) / 2)
+        self.f = (WIDTH / 2) / math.tan(
+            math.radians(float(cfg["camera"]["hfov_deg"])) / 2
+        )
 
-        i = int(np.clip(np.searchsorted(self.track.s, self.track.start_station), 0, len(self.track.s) - 1))
+        i = int(
+            np.clip(
+                np.searchsorted(self.track.s, self.track.start_station),
+                0,
+                len(self.track.s) - 1,
+            )
+        )
         self.plant = Plant(cfg, 1, rng)
         self.plant.reset(
             np.array([True]),
@@ -96,15 +104,25 @@ class Loopback(Node):
         self.blip = float(self.get_parameter("depth_blip").value)
         self.go_time = None
 
-        self.create_subscription(DriveCommand, "/drive_cmd", self.on_cmd, qos_profile_sensor_data)
+        self.create_subscription(
+            DriveCommand, "/drive_cmd", self.on_cmd, qos_profile_sensor_data
+        )
         self.pose_pub = self.create_publisher(PoseStamped, "/zed/zed_node/pose", 10)
-        self.status_pub = self.create_publisher(ArduinoStatus, "/arduino_bridge/status", 10)
-        self.depth_pub = self.create_publisher(Image, "/zed/zed_node/depth/depth_registered", 10)
-        self.info_pub = self.create_publisher(CameraInfo, "/zed/zed_node/depth/camera_info", 10)
+        self.status_pub = self.create_publisher(
+            ArduinoStatus, "/arduino_bridge/status", 10
+        )
+        self.depth_pub = self.create_publisher(
+            Image, "/zed/zed_node/depth/depth_registered", 10
+        )
+        self.info_pub = self.create_publisher(
+            CameraInfo, "/zed/zed_node/depth/camera_info", 10
+        )
         self.go_pub = self.create_publisher(Bool, "/start_signal_detector/go", LATCHED)
         self.go_pub.publish(Bool(data=False))
         self.create_timer(1.0 / self.rate, self.tick)
-        self.create_timer(1.0 / float(self.get_parameter("depth_hz").value), self.publish_depth)
+        self.create_timer(
+            1.0 / float(self.get_parameter("depth_hz").value), self.publish_depth
+        )
         self.create_timer(float(self.get_parameter("go_after").value), self.release)
         self.released = False
         self.prev_tick = None

@@ -111,7 +111,12 @@ def generate_launch_description():
         output="log",
     )
     return LaunchDescription(
-        [*args, OpaqueFunction(function=driver), rviz, OpaqueFunction(function=recorder)]
+        [
+            *args,
+            OpaqueFunction(function=driver),
+            rviz,
+            OpaqueFunction(function=recorder),
+        ]
     )
 
 
@@ -176,5 +181,7 @@ def recorder(context, *args, **kwargs):
         cmd += ["--policy", value("policy")]
     cmd += shlex.split(value("record_args"))
     return [
-        ExecuteProcess(cmd=cmd, output="screen", sigterm_timeout="45", sigkill_timeout="60")
+        ExecuteProcess(
+            cmd=cmd, output="screen", sigterm_timeout="45", sigkill_timeout="60"
+        )
     ]

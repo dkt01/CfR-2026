@@ -55,7 +55,9 @@ failures = []
 
 
 def check(name, ok, detail=""):
-    print(f"[{'  ok  ' if ok else ' FAIL '}] {name}" + (f"   {detail}" if detail else ""))
+    print(
+        f"[{'  ok  ' if ok else ' FAIL '}] {name}" + (f"   {detail}" if detail else "")
+    )
     if not ok:
         failures.append(name)
 
@@ -71,8 +73,12 @@ class Monitor(Node):
         self.log = []  # (t, ready, steer, velocity, clearance, v_cap)
         self.hint = np.zeros(1, dtype=np.int64)
         self.pose = None
-        self.create_subscription(DriveCommand, "/drive_cmd", self.on_cmd, qos_profile_sensor_data)
-        self.create_subscription(PoseStamped, "/zed/zed_node/pose", self.on_pose, qos_profile_sensor_data)
+        self.create_subscription(
+            DriveCommand, "/drive_cmd", self.on_cmd, qos_profile_sensor_data
+        )
+        self.create_subscription(
+            PoseStamped, "/zed/zed_node/pose", self.on_pose, qos_profile_sensor_data
+        )
 
     def on_pose(self, msg):
         self.pose = msg
@@ -146,14 +152,23 @@ def scenario(name, cfg, trk, policy, mode, fallback, fail_after, seconds):
 def common(name, r, cfg):
     log = r["log"]
     moving = log[log[:, 3] > 0.05]
-    check(f"{name}: never over the rule cap", len(moving) == 0 or (moving[:, 3] - moving[:, 5]).max() <= 1e-6)
+    check(
+        f"{name}: never over the rule cap",
+        len(moving) == 0 or (moving[:, 3] - moving[:, 5]).max() <= 1e-6,
+    )
     check(f"{name}: steering in range", np.abs(log[:, 2]).max() <= 1.0 + 1e-6)
-    check(f"{name}: never touched a bale", log[:, 4].min() > 0.0, f"min body clearance {log[:, 4].min():+.3f} m")
+    check(
+        f"{name}: never touched a bale",
+        log[:, 4].min() > 0.0,
+        f"min body clearance {log[:, 4].min():+.3f} m",
+    )
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--policy", type=Path, default=HERE / "bestModel/f2_v3_59M/policy.npz")
+    ap.add_argument(
+        "--policy", type=Path, default=HERE / "bestModel/f2_v3_59M/policy.npz"
+    )
     ap.add_argument("--only", default="drive,stop,nan,blip,none,map")
     ap.add_argument("--domain", type=int, default=78)
     args = ap.parse_args()
@@ -167,11 +182,23 @@ def main():
     if "drive" in todo:
         r = scenario("drive", cfg, trk, args.policy, "ok", "stop", 1e9, 150)
         log = r["log"]
-        check("drive: arms before it drives", bool(len(log)) and all(log[:10, 1] > 0.5) and np.abs(log[:10, 3]).max() < 1e-6)
+        check(
+            "drive: arms before it drives",
+            bool(len(log))
+            and all(log[:10, 1] > 0.5)
+            and np.abs(log[:10, 3]).max() < 1e-6,
+        )
         common("drive", r, cfg)
-        check("drive: 3 laps and at rest", r["finished"] and r["laps"] >= laps, f"{r['laps']} laps, race {r['race_time'] or float('nan'):.1f} s")
+        check(
+            "drive: 3 laps and at rest",
+            r["finished"] and r["laps"] >= laps,
+            f"{r['laps']} laps, race {r['race_time'] or float('nan'):.1f} s",
+        )
         check("drive: no fallback", r["fallback"] is None, r["reason"])
-        check("drive: zero throttle while coasting to rest", np.abs(log[-20:, 3]).max() < 1e-6)
+        check(
+            "drive: zero throttle while coasting to rest",
+            np.abs(log[-20:, 3]).max() < 1e-6,
+        )
 
     for name, mode in (("stop", "stop"), ("nan", "nan")):
         if name not in todo:
@@ -185,30 +212,57 @@ def main():
         zero = after[np.abs(after[:, 3]) < 1e-6]
         react = zero[0, 0] - (r["go_time"] + 20.0) if len(zero) else float("inf")
         budget = timeout + 0.15 if mode == "stop" else 0.5
-        check(f"{name}: throttle cut after depth loss", react <= budget, f"{react:.2f} s (budget {budget:.2f} s)")
+        check(
+            f"{name}: throttle cut after depth loss",
+            react <= budget,
+            f"{react:.2f} s (budget {budget:.2f} s)",
+        )
         tail = after[after[:, 0] >= zero[0, 0]] if len(zero) else after
-        check(f"{name}: throttle stays zero afterwards", len(tail) > 0 and np.abs(tail[:, 3]).max() < 1e-6)
+        check(
+            f"{name}: throttle stays zero afterwards",
+            len(tail) > 0 and np.abs(tail[:, 3]).max() < 1e-6,
+        )
         check(f"{name}: fallback is stop", r["fallback"] == "stop", r["reason"])
-        check(f"{name}: came to rest", r["finished"] and r["speed"] < 0.3, f"{r['speed']:.2f} m/s, {r['distance']:.1f} m")
+        check(
+            f"{name}: came to rest",
+            r["finished"] and r["speed"] < 0.3,
+            f"{r['speed']:.2f} m/s, {r['distance']:.1f} m",
+        )
 
     if "blip" in todo:
         r = scenario("blip", cfg, trk, args.policy, "blip", "stop", 20.0, 150)
         common("blip", r, cfg)
-        check("blip: network was taken off the wheel", r["holds"] >= 1, f"{r['holds']} hold(s)")
+        check(
+            "blip: network was taken off the wheel",
+            r["holds"] >= 1,
+            f"{r['holds']} hold(s)",
+        )
         check("blip: no fallback", r["fallback"] is None, r["reason"])
-        check("blip: still finished 3 laps and stopped", r["finished"] and r["laps"] >= laps, f"{r['laps']} laps, race {r['race_time'] or float('nan'):.1f} s")
+        check(
+            "blip: still finished 3 laps and stopped",
+            r["finished"] and r["laps"] >= laps,
+            f"{r['laps']} laps, race {r['race_time'] or float('nan'):.1f} s",
+        )
 
     if "none" in todo:
         r = scenario("none", cfg, trk, args.policy, "none", "stop", 0.0, 12)
         log = r["log"]
-        check("none: never moved after green", np.abs(log[:, 3]).max() < 1e-6 and r["distance"] < 0.05, f"max velocity cmd {np.abs(log[:, 3]).max():.2f}")
+        check(
+            "none: never moved after green",
+            np.abs(log[:, 3]).max() < 1e-6 and r["distance"] < 0.05,
+            f"max velocity cmd {np.abs(log[:, 3]).max():.2f}",
+        )
         check("none: saw no depth frames", r["frames"] == 0)
 
     if "map" in todo:
         r = scenario("map", cfg, trk, args.policy, "stop", "map", 20.0, 170)
         common("map", r, cfg)
         check("map: fell back to the map", r["fallback"] == "map", r["reason"])
-        check("map: still finished 3 laps and stopped", r["finished"] and r["laps"] >= laps, f"{r['laps']} laps, race {r['race_time'] or float('nan'):.1f} s")
+        check(
+            "map: still finished 3 laps and stopped",
+            r["finished"] and r["laps"] >= laps,
+            f"{r['laps']} laps, race {r['race_time'] or float('nan'):.1f} s",
+        )
 
     print()
     if failures:

@@ -113,7 +113,11 @@ class FormulaTwo(Node):
         deployed = HERE / "policy.npz"  # a synced Orin tree; see the launch file
         self.declare_parameter(
             "policy",
-            str(deployed if deployed.exists() else HERE / "bestModel/f2_v3_59M/policy.npz"),
+            str(
+                deployed
+                if deployed.exists()
+                else HERE / "bestModel/f2_v3_59M/policy.npz"
+            ),
         )
         # "baseline" runs the scripted driver from baseline.py instead of a
         # network.  It takes the same observation and emits the same action,
@@ -468,7 +472,14 @@ class FormulaTwo(Node):
         k = msg.k
         if k[0] <= 0.0:
             return
-        new = (float(k[0]), float(k[4]), float(k[2]), float(k[5]), msg.width, msg.height)
+        new = (
+            float(k[0]),
+            float(k[4]),
+            float(k[2]),
+            float(k[5]),
+            msg.width,
+            msg.height,
+        )
         if self.intrinsics is None:
             self.get_logger().info(
                 f"depth camera: {msg.width}x{msg.height}, fx {k[0]:.1f}, "
@@ -527,7 +538,12 @@ class FormulaTwo(Node):
         # image (the ZED can publish depth downscaled); scale K to the image.
         if (w, h) != (msg.width, msg.height) and w and h:
             sx, sy = msg.width / w, msg.height / h
-            fx, cx, fy, cy = fx * sx, (cx + 0.5) * sx - 0.5, fy * sy, (cy + 0.5) * sy - 0.5
+            fx, cx, fy, cy = (
+                fx * sx,
+                (cx + 0.5) * sx - 0.5,
+                fy * sy,
+                (cy + 0.5) * sy - 0.5,
+            )
         grid = self.camera.sample_depth(depth, fx, fy, cx, cy)
         (roll, pitch), source = self.attitude()
         if source != self.attitude_source:
@@ -539,7 +555,9 @@ class FormulaTwo(Node):
                 "none": "no attitude yet -- scan assumed level",
                 "off": "level_scan is off -- scan assumed level",
             }[source]
-            (self.get_logger().info if source == "imu" else self.get_logger().warn)(note)
+            (self.get_logger().info if source == "imu" else self.get_logger().warn)(
+                note
+            )
         self.roll_pitch = (roll, pitch)
         scan = self.camera.depth_to_scan(
             grid, self.camera_height, np.array([pitch]), np.array([roll])
@@ -981,12 +999,14 @@ class FormulaTwo(Node):
         self.publish_car(x, y, yaw, frame, speed, velocity[0])
         self.publish_telemetry(
             (
-                DriverTelemetry.STATE_STOPPING
-                if self.stopping
-                else DriverTelemetry.STATE_RUNNING
-            )
-            if DriverTelemetry
-            else 0,
+                (
+                    DriverTelemetry.STATE_STOPPING
+                    if self.stopping
+                    else DriverTelemetry.STATE_RUNNING
+                )
+                if DriverTelemetry
+                else 0
+            ),
             now,
             pose=(x, y, yaw),
             frame=frame,

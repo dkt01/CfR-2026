@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """Checks that have to pass before a formulaTwo training run is worth starting.
 
-  WORLD      the warped course is self-consistent: a car on the as-built
-             centerline reads zero cross-track error and nominal clearance.
-  CAMERA     the virtual LiDAR sees the corridor walls where the track says
-             they are, and the car-side sampler reproduces the render.
-  v12        the first 35 actor inputs are v12's, bit for bit, so train.py's
-             warm start is exact.
-  FEASIBLE   every NEW randomisation, alone at its full range, still leaves
-             the scripted driver able to finish (formulaOne trap #1: a range
-             that makes the task impossible teaches the policy to crawl), and
-             the speed floor is reachable by the lowest-drag car.
-  ENV        the scripted driver does three laps and stops on the nominal car.
+WORLD      the warped course is self-consistent: a car on the as-built
+           centerline reads zero cross-track error and nominal clearance.
+CAMERA     the virtual LiDAR sees the corridor walls where the track says
+           they are, and the car-side sampler reproduces the render.
+v12        the first 35 actor inputs are v12's, bit for bit, so train.py's
+           warm start is exact.
+FEASIBLE   every NEW randomisation, alone at its full range, still leaves
+           the scripted driver able to finish (formulaOne trap #1: a range
+           that makes the task impossible teaches the policy to crawl), and
+           the speed floor is reachable by the lowest-drag car.
+ENV        the scripted driver does three laps and stops on the nominal car.
 
-    python3 selftest.py          # ~1 minute
+  python3 selftest.py          # ~1 minute
 """
 
 from __future__ import annotations
@@ -38,7 +38,9 @@ failures = []
 
 
 def check(name, ok, detail=""):
-    print(f"[{'  ok  ' if ok else ' FAIL '}] {name}" + (f"   {detail}" if detail else ""))
+    print(
+        f"[{'  ok  ' if ok else ' FAIL '}] {name}" + (f"   {detail}" if detail else "")
+    )
     if not ok:
         failures.append(name)
 
@@ -82,8 +84,16 @@ def main():
     dx, dy = w._analytic(cx[:, None], cy[:, None], True, np.arange(64))
     yaw = np.arctan2(tr.ty[idx], tr.tx[idx])
     _, _, lat, psi = w.frenet(cx + dx[:, 0], cy + dy[:, 0], yaw, idx)
-    check("as-built centerline reads zero CTE", np.abs(lat).max() < 0.003, f"{np.abs(lat).max() * 1000:.2f} mm")
-    check("and near-zero heading error", np.abs(psi).max() < 0.03, f"{np.abs(psi).max():.3f} rad")
+    check(
+        "as-built centerline reads zero CTE",
+        np.abs(lat).max() < 0.003,
+        f"{np.abs(lat).max() * 1000:.2f} mm",
+    )
+    check(
+        "and near-zero heading error",
+        np.abs(psi).max() < 0.03,
+        f"{np.abs(psi).max():.3f} rad",
+    )
     px = cx[:, None] + rng.uniform(-0.4, 0.4, (64, 50))
     py = cy[:, None] + rng.uniform(-0.4, 0.4, (64, 50))
     a = w._analytic(px, py, False, np.arange(64))
@@ -97,7 +107,9 @@ def main():
     obs = env.reset()
     cam = env.camera
     scan = obs[0, env.map_dim : env.map_dim + cam.width]
-    r = np.where(scan > INVALID + 1e-6, 0.25 * np.exp(scan * np.log(cam.scan_max / 0.25)), np.nan)
+    r = np.where(
+        scan > INVALID + 1e-6, 0.25 * np.exp(scan * np.log(cam.scan_max / 0.25)), np.nan
+    )
     left = tr.half_left[env.hint[0]] / np.sin(abs(cam.azimuth[0]))
     right = tr.half_right[env.hint[0]] / np.sin(abs(cam.azimuth[-1]))
     check(
@@ -118,7 +130,9 @@ def main():
     slope = b / hl
     rg = np.where(slope < 0, c.z / -np.minimum(slope, -1e-9), np.inf)
     zb = c.z + 2.0 * slope
-    dist = np.where(rg < 2.0, rg, np.where((zb >= 0) & (zb <= c.bale_height), 2.0, np.nan))
+    dist = np.where(
+        rg < 2.0, rg, np.where((zb >= 0) & (zb <= c.bale_height), 2.0, np.nan)
+    )
     full = dist / hl
     samp = c.sample_depth(full, fx, fx, 320 - 0.5, 180 - 0.5)[0]
     agree = np.nanmax(np.abs(samp - depth)) if np.isfinite(samp).any() else 1.0
@@ -127,7 +141,9 @@ def main():
     print("\n--- v12")
     here_obs = obs[0, : env.map_dim]
     check("map block is 35 wide, like v12", env.map_dim == 35, f"{env.map_dim}")
-    check("no NaN in the observation", np.isfinite(obs).all(), f"{obs.shape[1]} columns")
+    check(
+        "no NaN in the observation", np.isfinite(obs).all(), f"{obs.shape[1]} columns"
+    )
 
     print("\n--- feasibility of the new randomisation")
     floor = speed_floor(tr, cfg)
@@ -140,7 +156,11 @@ def main():
     # 0.05: at the drag floor the budget allows 0.03 m/s over at one corner --
     # well inside what the overspeed term already prices -- and 0.15 (drag
     # x0.85) is where it stops being a rounding error.
-    check("speed floor reachable by the lowest-drag car", gap < 0.05, f"drag x{low:.2f}, floor over by {gap:+.3f} m/s")
+    check(
+        "speed floor reachable by the lowest-drag car",
+        gap < 0.05,
+        f"drag x{low:.2f}, floor over by {gap:+.3f} m/s",
+    )
     for name, keys, world in (
         ("bale layout, jitter and scale", [], True),
         ("ground friction", ["mu"], False),
@@ -154,12 +174,24 @@ def main():
     print("\n--- env")
     out = baseline_run(cfg, tr, 16, deterministic=True)
     fin = [o for o in out if o["stopped"]]
-    check("scripted driver: 3 laps and stops, nominal", len(fin) == len(out), f"{len(fin)}/{len(out)}")
+    check(
+        "scripted driver: 3 laps and stops, nominal",
+        len(fin) == len(out),
+        f"{len(fin)}/{len(out)}",
+    )
     if fin:
         lap = np.mean([o["race_time"] for o in fin]) / 3
         clr = min(o["min_clearance"] for o in fin)
-        check("  at a sane pace, off the bales", 25 < lap < 40 and clr > 0.02, f"{lap:.2f} s/lap, clearance {clr:+.3f} m")
-        check("  stopped inside the course", all(0 < o["stop_distance"] < 20 for o in fin), f"{np.mean([o['stop_distance'] for o in fin]):.1f} m past the line")
+        check(
+            "  at a sane pace, off the bales",
+            25 < lap < 40 and clr > 0.02,
+            f"{lap:.2f} s/lap, clearance {clr:+.3f} m",
+        )
+        check(
+            "  stopped inside the course",
+            all(0 < o["stop_distance"] < 20 for o in fin),
+            f"{np.mean([o['stop_distance'] for o in fin]):.1f} m past the line",
+        )
 
     print()
     if failures:

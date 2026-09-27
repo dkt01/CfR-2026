@@ -224,8 +224,8 @@ class Plant:
 
         # Motor: a first-order lag between the slewed target and what the
         # drivetrain actually chases.
-        self.motor_target += dt / (self.motor_tau + dt) * (
-            self.target - self.motor_target
+        self.motor_target += (
+            dt / (self.motor_tau + dt) * (self.target - self.motor_target)
         )
         # Plant: thrust up, coast down.  Asymmetric by measurement -- see
         # ApproachTarget in sim_vehicle_node.cpp.

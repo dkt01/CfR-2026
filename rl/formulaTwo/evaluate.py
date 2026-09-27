@@ -98,12 +98,16 @@ def plot(path, track, cfg, act, label):
     log = []
     for _ in range(12000):
         s = env.snapshot()
-        log.append([s[k][0] for k in ("x", "y", "speed", "station", "clearance", "lateral")])
+        log.append(
+            [s[k][0] for k in ("x", "y", "speed", "station", "clearance", "lateral")]
+        )
         obs, _, te, tr, _ = env.step(act(env, obs))
         if te[0] or tr[0]:
             break
     x, y, v, st, cl, lat = np.array(log).T
-    fig, ax = plt.subplots(3, 1, figsize=(14, 11), gridspec_kw=dict(height_ratios=[2, 1, 1]))
+    fig, ax = plt.subplots(
+        3, 1, figsize=(14, 11), gridspec_kw=dict(height_ratios=[2, 1, 1])
+    )
     ax[0].plot(track.x, track.y, color="0.85", lw=8, zorder=1)
     sc = ax[0].scatter(x, y, c=v, cmap="RdYlGn", vmin=2, vmax=5.4, s=5, zorder=3)
     plt.colorbar(sc, ax=ax[0], label="m/s", fraction=0.025)

@@ -145,7 +145,9 @@ def main():
     cfg = sweep_config(base, dead, servo, lag, args.laps)
     trk = track_mod.build(cfg, ROOT)
     current = {k: float(base["env"]["steer_prior"][k]) for k in KEYS}
-    print(f"  car: dead time {dead} s, servo lag {servo} s, chassis lag {lag} s; {args.laps} laps at the speed floor")
+    print(
+        f"  car: dead time {dead} s, servo lag {servo} s, chassis lag {lag} s; {args.laps} laps at the speed floor"
+    )
 
     grid = dict(
         horizon_s=[0.35, 0.45, 0.55, 0.70, 0.85],
@@ -180,7 +182,9 @@ def main():
 
     ok = np.flatnonzero(nom["finished"] & (nom["clear"] >= args.min_clear))
     ok = ok[ok != cur]
-    print(f"\n  {len(ok)} of {len(combos) - 1} settings finish with >= {args.min_clear:.2f} m clearance")
+    print(
+        f"\n  {len(ok)} of {len(combos) - 1} settings finish with >= {args.min_clear:.2f} m clearance"
+    )
     if not len(ok):
         print("  none -- relax --min-clear, or the car cannot be held at this speed")
         return 1
@@ -193,7 +197,9 @@ def main():
     pool = list(ok[np.argsort(key)[: args.top]]) + [cur]
     F = args.field
     g = {k: np.repeat([combos[i][k] for i in pool], F) for k in KEYS}
-    print(f"  {len(pool)} candidates x {F} randomised cars = {len(pool) * F} cars in one batch...")
+    print(
+        f"  {len(pool)} candidates x {F} randomised cars = {len(pool) * F} cars in one batch..."
+    )
     f = drive(cfg, trk, g, deterministic=False, seed=11, dr_scale=0.5)
     results = []
     for j, i in enumerate(pool):
@@ -221,11 +227,17 @@ def main():
     print(head + " | field fin  clr p10  rms_st max_st")
     for r in cands[:12] + [cur_r]:
         tag = "   <- current" if r[0] == cur else ""
-        print(row(r[0], f" | {100 * r[1]:5.0f}%  {r[2]:+.3f}  {r[3]:.3f}  {r[4]:.3f}{tag}"), flush=True)
+        print(
+            row(
+                r[0], f" | {100 * r[1]:5.0f}%  {r[2]:+.3f}  {r[3]:.3f}  {r[4]:.3f}{tag}"
+            ),
+            flush=True,
+        )
     win = cands[0]
     w = combos[win[0]]
     print(
-        "\n  best: " + "  ".join(f"{k} {w[k]:.2f}" for k in KEYS)
+        "\n  best: "
+        + "  ".join(f"{k} {w[k]:.2f}" for k in KEYS)
         + f"\n        nominal fitted car: straights rms {nom['rms_straight'][win[0]]:.3f} m, worst {nom['max_straight'][win[0]]:.3f} m, clearance {nom['clear'][win[0]]:+.3f} m"
         + f"\n        randomised field:   {100 * win[1]:.0f}% finish, clearance p10 {win[2]:+.3f} m, straights rms {win[3]:.3f} m, worst {win[4]:.3f} m"
         + f"\n  current: nominal rms {nom['rms_straight'][cur]:.3f} / worst {nom['max_straight'][cur]:.3f} / clear {nom['clear'][cur]:+.3f}; "
