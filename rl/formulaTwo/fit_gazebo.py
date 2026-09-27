@@ -169,7 +169,7 @@ def main():
         if e[j] < best[0]:
             best = (e[j], dict(zip(keys, chunk[j])))
     print(
-        f"\nnominal plant.py   relative yaw-rate error {e_nom:.3f}   {({k: v[0] for k, v in nominal.items()})}"
+        f"\nnominal plant.py   relative yaw-rate error {e_nom:.3f}   { ({k: v[0] for k, v in nominal.items()}) }"
     )
     print(
         f"best of {len(combos)} fits  relative yaw-rate error {best[0]:.3f}   {best[1]}"
