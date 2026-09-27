@@ -294,6 +294,54 @@ def stereo_noise(points: np.ndarray, seed: int) -> np.ndarray:
     return out
 
 
+def bent_streamers(view: View, mode: str) -> tuple[np.ndarray, np.ndarray]:
+    """Bend each 0.425 m streamer while preserving its length.
+
+    The rendered fixture supplies the visible points and part labels. This
+    changes only streamer returns, keeping the bucket and bale truth intact;
+    it cannot model newly exposed or occluded background pixels. Each strip
+    has its own tip direction in the mixed and tangled cases.
+    """
+    ribbon = (view.parts == sc.PART_CARWASH_RIBBON) & np.isfinite(view.world).all(
+        axis=1
+    )
+    world = view.world[ribbon]
+    row = np.clip(np.rint((world[:, 1] + 0.4445) / 0.127), 0, 7).astype(int)
+    arch = np.rint((world[:, 0] - np.nanmin(world[:, 0])) / 0.457).astype(int)
+    if mode == "mixed":
+        phase = row * 2.31 + arch * 1.73
+        tip_x, tip_y = 0.30 * np.cos(phase), 0.30 * np.sin(phase)
+    elif mode == "tangled":
+        # Separate attachments, with free ends drawn toward the middle and
+        # neighboring strips crossing there.
+        tip_x = np.where(row % 2 == 0, -0.08, 0.08)
+        tip_y = np.clip(-(row - 3.5) * 0.127, -0.30, 0.30)
+    else:
+        directions = {
+            "forward": (0.30, 0.0),
+            "backward": (-0.30, 0.0),
+            "left": (0.0, 0.30),
+            "right": (0.0, -0.30),
+            "diagonal": (0.30 / math.sqrt(2), 0.30 / math.sqrt(2)),
+        }
+        tip_x, tip_y = directions[mode]
+    drop = np.clip(0.54 - world[:, 2], 0.0, 0.425)
+    factor = drop / 0.425
+    length = np.hypot(tip_x, tip_y)
+    lift = drop * (1.0 - np.sqrt(1.0 - (length / 0.425) ** 2))
+    delta_world = np.broadcast_arrays(factor * tip_x, factor * tip_y, lift)
+    rotation = np.load(FIXTURES / f"{view.name}.npz")["camera_rotation"]
+    points = view.points.copy()
+    points[ribbon] += np.stack(delta_world, axis=1) @ rotation
+
+    # The real party streamers are lemon yellow; the other known objects in
+    # the wash are gray buckets and straw-colored bales.
+    rgb = np.full(len(view.parts), 0x808080, dtype=np.uint32)
+    rgb[view.parts == sc.PART_BALE] = 0xB87A1F
+    rgb[ribbon] = 0xFFF430
+    return points, rgb
+
+
 def score(view: View, points=None, pitch=None, roll=None) -> dict:
     """Everything the fixture tests assert on, for one run of the segmenter."""
     points = view.points if points is None else points
@@ -495,6 +543,87 @@ def test_a_tall_board_on_two_feet_is_not_a_gate():
     board = np.r_[board, np.c_[np.full(y.size, 2.0), y.ravel(), z.ravel()]]
     seg = cs.segment(np.r_[floor(), board])
     assert not seg.gates
+
+
+def test_a_wide_wash_arch_is_found_when_thin_streamers_disappear():
+    # A party streamer need not produce a stereo return in every frame. The
+    # rigid 1.151 m arch still distinguishes the wash from the 0.584 m hoops.
+    cloud = np.r_[floor(), _gate(2.0, 1.151, 0.537)]
+    seg = cs.segment(cloud)
+    assert [gate.kind for gate in seg.gates] == [cs.CARWASH]
+
+
+def test_yellow_is_not_passable_without_a_car_wash_arch():
+    cloud = np.r_[floor(), wall(2.0, -0.45, 0.45)]
+    rgb = np.full(len(cloud), 0xFFF430, dtype=np.uint32)
+    seg = cs.segment(cloud, rgb=rgb)
+    face = (np.arange(len(cloud)) >= len(floor())) & (cloud[:, 2] > -0.12)
+    assert np.all(seg.labels[face] == cs.OBSTACLE)
+    assert np.all(seg.blocking[face])
+
+
+def test_gazebo_shaded_straw_inside_the_wash_stays_blocking():
+    ground = floor()
+    arch = _gate(2.0, 1.151, 0.537)
+    bale = wall(2.25, -0.20, 0.20)
+    cloud = np.r_[ground, arch, bale]
+    rgb = np.full(len(cloud), 0x808080, dtype=np.uint32)
+    rgb[len(ground) + len(arch) :] = 0x554621  # observed Gazebo bale shade
+    seg = cs.segment(cloud, rgb=rgb)
+    face = np.arange(len(cloud)) >= len(ground) + len(arch)
+    face &= cloud[:, 2] > -0.12
+    assert any(gate.kind == cs.CARWASH for gate in seg.gates)
+    assert np.mean(seg.blocking[face]) >= 0.95
+
+
+@pytest.mark.parametrize("name", ("obs_carwash_near", "obs_carwash_inside"))
+def test_gazebo_shaded_yellow_streamers_stay_passable(name):
+    view = load(name)
+    points, rgb = bent_streamers(view, "tangled")
+    ribbon = view.parts == sc.PART_CARWASH_RIBBON
+    rgb[ribbon] = 0x64622B  # observed Gazebo streamer shade
+    seg = cs.segment(points, view.pitch, view.roll, rgb=rgb)
+    assert np.mean(seg.blocking[ribbon & np.isfinite(points).all(axis=1)]) <= 0.01
+
+
+@pytest.mark.parametrize(
+    "name",
+    (
+        "obs_carwash_near",
+        "obs_carwash_oblique",
+        "obs_carwash_inside",
+        "obs_carwash_bucket_behind",
+    ),
+)
+@pytest.mark.parametrize(
+    "mode", ("forward", "backward", "left", "right", "diagonal", "mixed", "tangled")
+)
+def test_windblown_yellow_streamers_do_not_block_the_wash(name, mode):
+    view = load(name)
+    points, rgb = bent_streamers(view, mode)
+    seg = cs.segment(points, view.pitch, view.roll, rgb=rgb)
+    level = cs.level_points(points, view.pitch, view.roll)
+    near = (
+        (view.parts == sc.PART_CARWASH_RIBBON)
+        & np.isfinite(points).all(axis=1)
+        & (np.hypot(level[:, 0], level[:, 1]) <= EVAL_RANGE)
+    )
+    assert near.sum() >= 1000
+    assert any(gate.kind == cs.CARWASH for gate in seg.gates)
+    assert np.mean(seg.blocking[near]) <= 0.01, f"{name} {mode}: ribbon points block"
+    truth_scan = _scan(level, view.truth_blocking)
+    scan = cs.scan_from_segmentation(seg, SCAN_BINS, SCAN_FOV, SCAN_RANGE)
+    agreement = np.mean(np.abs(scan - truth_scan) <= 0.10 + 0.05 * truth_scan)
+    assert agreement >= 0.85, f"{name} {mode}: scan agreement {agreement:.0%}"
+    if name == "obs_carwash_bucket_behind":
+        bucket = (view.parts == sc.PART_BUCKET) & np.isfinite(points).all(axis=1)
+        assert np.mean(seg.blocking[bucket]) >= 0.80
+        bale = (
+            (view.parts == sc.PART_BALE)
+            & (view.truth == cs.OBSTACLE)
+            & np.isfinite(points).all(axis=1)
+        )
+        assert np.mean(seg.blocking[bale]) >= 0.95
 
 
 # ---------------------------------------------------------- fixture views

@@ -516,12 +516,57 @@ def body_contact(OBS, lay, st, spacing):
     return out
 
 
+def per_layout(model, part):
+    """Yield one whole-course (row, col) array per layout.
+
+    part(fields) turns a dict of course_model grids into the array wanted; it
+    is applied to the static grid, and each layout's window is pasted over.
+    """
+    s, w = model.static, model.window
+    base = part(s)
+    wj, wi = model.wj, model.wi
+    for L in range(w["E_n"].shape[0]):
+        win = part({k: v[L] for k, v in w.items()})
+        out = base.copy()
+        out[wj : wj + win.shape[0], wi : wi + win.shape[1]] = win
+        yield out
+
+
+def obstacle_distance(model):
+    """Per layout and cell: whole cells to the nearest obstacle cell, uint8.
+
+    _outline_hits reads it to skip a car no outline point can reach an
+    obstacle from, which is most cars most of the time.
+    """
+    from scipy.ndimage import distance_transform_edt
+
+    return np.stack(
+        [
+            np.minimum(np.floor(distance_transform_edt(free)), 255).astype(np.uint8)
+            for free in per_layout(model, lambda f: f["O_n"] == 0)
+        ]
+    )
+
+
 @nb.njit(cache=True)
 def _outline_hits(OBS, L, s, grow, spacing):
     c = math.cos(s[S_YAW])
     sn = math.sin(s[S_YAW])
     hl = BODY_HALF_LENGTH + grow
     hw = BODY_HALF_WIDTH + grow
+    # Every outline point is within hypot(hl, hw) of the center in plan, and
+    # a point and a cell center are under a cell apart, so with no obstacle
+    # cell that near the center's cell no point can land in one.
+    G = OBS[0]
+    ci = int(math.floor((s[S_X] - G[0]) / course_model.RES))
+    cj = int(math.floor((s[S_Y] - G[1]) / course_model.RES))
+    FAR = OBS[7]
+    if 0 <= ci < FAR.shape[2] and 0 <= cj < FAR.shape[1]:
+        if (
+            FAR[L, cj, ci] * course_model.RES
+            > math.hypot(hl, hw) + 2 * course_model.RES
+        ):
+            return False
     nl = max(2, int(2 * hl / spacing) + 1)
     nw = max(2, int(2 * hw / spacing) + 1)
     sp = math.sin(s[S_PITCH])
@@ -550,12 +595,12 @@ def _outline_hits(OBS, L, s, grow, spacing):
     return False
 
 
-@nb.njit(cache=True)
+@nb.njit(cache=True, parallel=True)
 def body_clearance(OBS, lay, st, rings):
     """Per car: the smallest ring offset (m) at which the outline hits, else inf."""
     n = st.shape[0]
     out = np.full(n, np.inf)
-    for k in range(n):
+    for k in nb.prange(n):
         for r in rings:
             if _outline_hits(OBS, lay[k], st[k], r, 0.03):
                 out[k] = r
@@ -569,6 +614,7 @@ class Plant:
     def __init__(self, cfg: dict, model, n: int, rng: np.random.Generator):
         self.cfg = cfg
         self.SUP, self.OBS, self.SEN = model.tables()
+        self.OBS = self.OBS + (obstacle_distance(model),)
         self.n = n
         self.rng = rng
         p = cfg["plant"]

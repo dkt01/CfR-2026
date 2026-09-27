@@ -84,6 +84,7 @@ _lib.cfr_segment.argtypes = [
     ctypes.c_void_p,
     ctypes.c_void_p,
     ctypes.c_void_p,
+    ctypes.c_void_p,
     ctypes.c_int64,
 ]
 _GATE_FIELDS = _lib.cfr_segmentation_gate_fields()
@@ -160,10 +161,15 @@ def segment(
     pitch: float = 0.0,
     roll: float = 0.0,
     params: Params = Params(),
+    rgb: np.ndarray | None = None,
 ) -> Segmentation:
     """Classify an (N, 3) body-frame cloud. See the header for how."""
     points = np.ascontiguousarray(np.asarray(points, dtype=np.float64).reshape(-1, 3))
     n = len(points)
+    if rgb is not None:
+        rgb = np.ascontiguousarray(np.asarray(rgb, dtype=np.uint32).reshape(-1))
+        if len(rgb) != n:
+            raise ValueError(f"rgb has {len(rgb)} entries for {n} points")
     values = np.array([getattr(params, name) for name in _PARAM_NAMES], dtype=float)
     labels = np.empty(n, dtype=np.uint8)
     height = np.empty(n, dtype=np.float64)
@@ -179,6 +185,7 @@ def segment(
             float(roll),
             values.ctypes.data,
             len(values),
+            None if rgb is None else rgb.ctypes.data,
             labels.ctypes.data,
             height.ctypes.data,
             blocking.ctypes.data,

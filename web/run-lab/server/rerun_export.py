@@ -251,7 +251,6 @@ class RunRecording:
             ),
             recording=self.rec,
         )
-        # The driven path, coloured by speed, inside the run window.
         speed = np.abs(_arr(c.get("speed") or c.get("speed_pose") or [np.nan] * len(t)))
         inside = ok & (t >= window["t0"] - 0.5) & (t <= window["t1"] + 0.5)
         idx = np.flatnonzero(inside)
@@ -332,7 +331,6 @@ class RunRecording:
             ),
             static=True,
         )
-        # The car at the playhead: a marker and its heading, moved over time.
         yaw = _arr(c.get("yaw_map") or [0.0] * len(t))
         ok &= np.isfinite(yaw)
         self.rec.log(
@@ -428,7 +426,6 @@ class RunRecording:
                 columns=rr.Scalars.columns(scalars=v[ok]),
                 recording=self.rec,
             )
-        # The graze band as a flat reference line on the clearance plot.
         if "clearance" in c:
             self.rec.log(
                 "metrics/clearance/graze_band",

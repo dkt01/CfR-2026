@@ -41,12 +41,22 @@ same files. Add or edit skills under `.agents/skills/` only. Symlinks need
 
 ## Conventions
 
+* Keep comments and docs concise. Explain why a choice or constraint exists,
+  especially when the code cannot show it. Remove narration of obvious code,
+  repeated instructions, stale history and duplicate explanations. Keep
+  protocol details, safety steps, measured results and useful troubleshooting
+  context; link to their source instead of copying them into file headers.
 * American spelling everywhere (color, meter, center, neighbor, gray) in code,
   comments, docs and UI. Leave pre-existing identifiers such as `HELIX_CENTRE`.
 * The repo relies on `core.autocrlf=input`. A CRLF working tree breaks
   anything run from a Linux mount (`#!/usr/bin/env python3\r` fails with exit
   127). When editing from Windows, write bytes (or a bare `\n` newline), and
   check for CR bytes after edits and after pre-commit runs.
+* Run `pre-commit run --files <changed files>` (config:
+  `.pre-commit-config.yaml`) before every commit, and again before every push
+  to upstream. Fix anything it reports, re-stage hook-modified files, and
+  re-run until it passes. Never skip it with `--no-verify`. If `pre-commit` is
+  not installed, install it (`pip install pre-commit`) rather than skipping.
 * Run the sim and the test suite in Docker. WSL RoboStack `colcon test` cannot
   run this repo's `launch_testing` pytest tests.
 * RL: observations must be realizable from the ZED and wheel encoder; reward
