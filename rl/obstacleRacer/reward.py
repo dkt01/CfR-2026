@@ -59,6 +59,8 @@ import math
 import numpy as np
 import yaml
 
+import observation as O
+
 HERE = Path(__file__).resolve().parent
 TERMS = (
     "progress",
@@ -259,7 +261,9 @@ def assert_episode_incentives(cfg, lap=74.0):
     # the cheapest escape is steering pinned at full lock, past the noise.
     s = math.exp(float(cfg["train"]["log_std_init"]))
     dt = 1.0 / float(cfg["env"]["control_hz"])
-    s_steer = s * float(cfg["prior"]["residual_scale"])
+    s_steer = (
+        s * float(cfg["prior"]["residual_scale"]) * math.exp(O.steer_log_std_shift(cfg))
+    )
     s_speed = s * (float(cfg["env"]["v_cap"]) + float(cfg["env"]["v_reverse"])) / 2
     noise_tax = (
         float(r["steer_rate"]) * 2 * s_steer**2

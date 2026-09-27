@@ -37,8 +37,12 @@ class _SquashedMean:
 
     squashes_mean = True
 
-    def __init__(self, *args, log_std_range=(-2.5, -0.5), **kwargs):
+    def __init__(self, *args, log_std_range=(-2.5, -0.5), log_std_shift=None, **kwargs):
         self.log_std_range = (float(log_std_range[0]), float(log_std_range[1]))
+        # Per action, added to the bounded log std: v8's steering is scaled
+        # by 2 (observation.steer_log_std_shift), so its std runs a factor 2
+        # lower in action units and the same in road-wheel units.
+        self.log_std_shift = tuple(float(v) for v in log_std_shift or ())
         lo, hi = self.log_std_range
         init = float(kwargs.get("log_std_init", 0.0))
         if not lo < init < hi:
@@ -58,7 +62,10 @@ class _SquashedMean:
     @property
     def log_std(self) -> th.Tensor:
         lo, hi = self.log_std_range
-        return lo + (hi - lo) * th.sigmoid(self.log_std_raw)
+        log_std = lo + (hi - lo) * th.sigmoid(self.log_std_raw)
+        if self.log_std_shift:
+            log_std = log_std + th.tensor(self.log_std_shift, dtype=log_std.dtype)
+        return log_std
 
     def _get_action_dist_from_latent(self, latent_pi: th.Tensor):
         mean = th.tanh(self.action_net(latent_pi))
@@ -67,6 +74,8 @@ class _SquashedMean:
     def _get_constructor_parameters(self):
         data = super()._get_constructor_parameters()
         data["log_std_range"] = self.log_std_range
+        if self.log_std_shift:
+            data["log_std_shift"] = self.log_std_shift
         return data
 
 

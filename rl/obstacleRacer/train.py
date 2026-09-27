@@ -31,6 +31,7 @@ import yaml
 
 import course_model
 import layouts
+import observation as O
 import reward
 from env import ObstacleEnv
 import ppo_policy
@@ -334,6 +335,7 @@ def main():
             net_arch=list(tcfg["net_arch"]),
             log_std_init=float(tcfg["log_std_init"]),
             log_std_range=tuple(tcfg["log_std_range"]),
+            log_std_shift=(O.steer_log_std_shift(cfg), 0.0),
         ),
     )
     if recurrent:

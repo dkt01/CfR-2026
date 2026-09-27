@@ -37,7 +37,9 @@ The scans reach it as the car's do: a new frame at the ZED's 12 Hz, each
 50-100 ms old, held between frames (`sensor.camera_hz`, `sensor.latency_s`).
 
 It gives a `DriveCommand`:
-- steering = a map-free follow-the-gap prior + the policy's residual (full authority)
+- steering = a map-free follow-the-gap prior + twice the policy's residual, so
+  the policy can steer full lock to full lock whatever the prior says (v7's
+  residual of 1 left it half the wheel when the prior sat at full lock)
 - speed from -1 to 3.5 m/s. The car has no brakes, so speed is limited by
   sight distance.
 

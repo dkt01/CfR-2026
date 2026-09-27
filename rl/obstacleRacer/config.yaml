@@ -141,8 +141,11 @@ prior:
   gap_min_depth: 1.5        # m: a bin this deep or deeper is "open"
   straight_bias: 0.15       # prefer gaps near dead ahead
   yaw_damping: 0.45         # road-wheel rad per rad/s of yaw rate (swept, see prior_sweep)
-  residual_scale: 1.0       # policy steering = prior + this * a0; v1's 0.5
-                            # could not turn in early enough for the helix
+  residual_scale: 2.0       # policy steering = prior + this * a0; v1's 0.5
+                            # could not turn in early enough for the helix,
+                            # and v7's 1.0 left half the wheel to a prior at
+                            # full lock (Wide Section).  The steering std is
+                            # scaled down to match (steer_log_std_shift).
   smoothing_s: 0.15         # low-pass on the prior's command
 
 reward:

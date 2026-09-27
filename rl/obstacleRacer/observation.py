@@ -361,6 +361,14 @@ def action_to_command(action, prior, cfg):
     return steer, speed
 
 
+def steer_log_std_shift(cfg):
+    """Offset on the steering action's log std that keeps its exploration
+    noise, in road-wheel units, the same whatever `prior.residual_scale` is:
+    v8 doubled the scale, and doubling the noise with it would have
+    quadrupled the steer_rate and steer_jerk tax on it (reward.py check)."""
+    return -math.log(float(cfg["prior"]["residual_scale"]))
+
+
 def speed_to_action(speed, cfg):
     """Inverse of action_to_command's speed mapping: m/s -> action[1]."""
     lo = -float(cfg["env"].get("v_reverse", 0.0))
