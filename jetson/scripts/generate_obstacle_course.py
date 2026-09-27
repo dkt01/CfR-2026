@@ -37,6 +37,7 @@ import struct
 from pathlib import Path
 
 import start_signal
+from generate_straw_assets import bale_visuals
 
 FOOT = 0.3048
 INCH = 0.0254
@@ -434,6 +435,31 @@ def static_model(name: str, body: str) -> str:
 
 BATTLESHIP_GRAY = "0.52 0.52 0.51 1"
 STRAW = "0.72 0.48 0.12 1"
+
+
+# --no-strands: textured bales without the loose straw (see main).
+STRANDS = True
+
+
+def straw_bale(name: str, pose: tuple, look: int) -> str:
+    """A bale: the box collision, drawn as the Speed Course's straw bale --
+    textured, rounded edges, loose strands (generate_straw_assets.py).
+    `look` picks its texture, tint and strands; any fixed number will do."""
+    pose_text = " ".join(f"{value:.4f}" for value in pose)
+    return (
+        box(
+            name,
+            pose,
+            (BALE_LENGTH, BALE_WIDTH, BALE_HEIGHT),
+            STRAW,
+            friction=BALE_FRICTION,
+            visual=False,
+        )
+        + bale_visuals(name, pose_text, look, STRANDS)
+        + "\n"
+    )
+
+
 WHITE = "1 1 1 1"
 GRAVEL_GRAY = "0.44 0.43 0.40 1"
 
@@ -494,13 +520,7 @@ def build_bales(bales) -> str:
         # Numbered in place, so every other bale keeps its number.
         if wide_bale_number(x, y):
             continue
-        body += box(
-            f"bale_{index}",
-            (x, y, BALE_HEIGHT / 2, 0, 0, yaw),
-            (BALE_LENGTH, BALE_WIDTH, BALE_HEIGHT),
-            STRAW,
-            friction=BALE_FRICTION,
-        )
+        body += straw_bale(f"bale_{index}", (x, y, BALE_HEIGHT / 2, 0, 0, yaw), index)
     return (
         "    <!-- 65 ft by 48 ft obstacle course, walled with 14 x 18 x 36 in"
         " straw bales. -->\n" + static_model("course_bales", body)
@@ -1041,13 +1061,7 @@ def build_wide_bales(bales) -> str:
     }
     for number, _, _ in WIDE_BALES:
         x, y, yaw = by_number[number]
-        body = box(
-            "bale",
-            (0, 0, BALE_HEIGHT / 2, 0, 0, 0),
-            (BALE_LENGTH, BALE_WIDTH, BALE_HEIGHT),
-            STRAW,
-            friction=BALE_FRICTION,
-        )
+        body = straw_bale("bale", (0, 0, BALE_HEIGHT / 2, 0, 0, 0), 1000 + number)
         out += (
             f'    <model name="wide_bale_{number}"><static>true</static>'
             f"<pose>{x:.4f} {y:.4f} 0 0 0 {yaw:.5f}</pose>\n"
@@ -1073,13 +1087,7 @@ def build_gap_bales() -> str:
     park_x, park_y = parking_spot(GAP_BALE_PARKING_INDEX)
     for index, (x_ft, y_ft, yaw) in enumerate(GAP_BALES):
         x, y = (park_x, park_y) if index == 0 else to_world(x_ft, y_ft)
-        body = box(
-            "bale",
-            (0, 0, BALE_HEIGHT / 2, 0, 0, 0),
-            (BALE_LENGTH, BALE_WIDTH, BALE_HEIGHT),
-            STRAW,
-            friction=BALE_FRICTION,
-        )
+        body = straw_bale("bale", (0, 0, BALE_HEIGHT / 2, 0, 0, 0), 2000 + index)
         out += (
             f'    <model name="gap_bale_{index}"><static>true</static>'
             f"<pose>{x:.4f} {y:.4f} 0 0 0 {yaw:.5f}</pose>\n"
@@ -1485,7 +1493,15 @@ def main() -> None:
         type=Path,
         help="site-layout DXF containing Speed and Obstacle courses",
     )
+    parser.add_argument(
+        "--no-strands",
+        action="store_true",
+        help="leave out the loose-straw meshes (textured bales only); a "
+        "simulation can also drop them at launch with strands:=false",
+    )
     args = parser.parse_args()
+    global STRANDS
+    STRANDS = not args.no_strands
 
     worlds = PACKAGE / "worlds"
     config = PACKAGE / "config"

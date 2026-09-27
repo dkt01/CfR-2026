@@ -40,9 +40,10 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import bagio  # noqa: E402
 import course as course_mod  # noqa: E402
+import depthview  # noqa: E402
 import rerun_export  # noqa: E402
 
-VERSION = 6  # bump when outputs change shape; the UI flags older runs to re-process
+VERSION = 8  # bump when outputs change shape; the UI flags older runs to re-process
 GRID_HZ = 20.0
 ZED = "/zed/zed_node"
 GRAZE = 0.12  # m; the training reward's graze band
@@ -193,8 +194,12 @@ def read_streams(bag, progress):
             if t_ns - last_imu < 20_000_000:  # 50 Hz is plenty for stats
                 continue
             last_imu = t_ns
-            a, w = msg.linear_acceleration, msg.angular_velocity
-            s[topic].append((t, a.x, a.y, a.z, w.x, w.y, w.z))
+            a, w, q = msg.linear_acceleration, msg.angular_velocity, msg.orientation
+            # Roll and pitch too: the depth view levels the driver's grid on
+            # them, as formula_two_node does (ROS: pitch + is nose down).
+            roll = math.atan2(2 * (q.w * q.x + q.y * q.z), 1 - 2 * (q.x**2 + q.y**2))
+            pitch = math.asin(max(-1.0, min(1.0, 2 * (q.w * q.y - q.z * q.x))))
+            s[topic].append((t, a.x, a.y, a.z, w.x, w.y, w.z, roll, pitch))
         elif topic == "/rosout":
             s[topic].append((t, int(msg.level), msg.name, msg.msg))
         elif topic == "/tf_static":
@@ -489,7 +494,8 @@ def process(run_dir: Path, callback=None, clouds=True, images=True):
 
     with bagio.Bag(bag_dir) as bag:
         cam_size = camera_size(bag) if images else None
-        recording.layout(cam_size)
+        dep_size = depthview.depth_size(bag) if images else None
+        recording.layout(cam_size, dep_size)
         progress(0.04, "reading the bag")
         streams = read_streams(bag, progress)
         tb = Timebase(streams, bag.start_ns * 1e-9)
@@ -511,6 +517,10 @@ def process(run_dir: Path, callback=None, clouds=True, images=True):
             progress(0.85, "extracting camera frames")
             result["summary"]["perception"].update(write_images(bag, tb, recording))
             result["summary"]["perception"]["camera_size"] = cam_size
+            progress(0.88, "depth frames and the driver's scan")
+            result["summary"]["perception"].update(
+                depthview.write_depth(bag, run_dir, streams, tb, recording, progress)
+            )
 
     summary = result["summary"]
     summary["bag"] = bag_info

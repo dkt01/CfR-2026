@@ -34,6 +34,7 @@ import re
 from pathlib import Path
 
 import start_signal
+from generate_straw_assets import bale_visuals
 
 INCH = 0.0254
 BALE_LENGTH = 36 * INCH
@@ -79,20 +80,21 @@ LANE_EDGE = 0.464
 SIGNAL_POSITION = start_signal.position(START_LINE, HEADING, LANE_EDGE)
 
 
-def bale_xml(index: int, x: float, y: float, yaw: float) -> str:
+def bale_xml(index: int, x: float, y: float, yaw: float, strands: bool = True) -> str:
     pose = f"{x:.4f} {y:.4f} {BALE_Z:.4f} 0 0 {yaw:.5f}"
     geometry = (
         f"<box><size>{BALE_LENGTH:.4f} {BALE_WIDTH:.4f} {BALE_HEIGHT:.4f}</size></box>"
     )
-    material = "<material><diffuse>0.72 0.48 0.12 1</diffuse><specular>0.08 0.05 0.01 1</specular></material>"
     surface = (
         f"<surface><friction><ode><mu>{BALE_FRICTION}</mu><mu2>{BALE_FRICTION}</mu2></ode>"
         f"<bullet><friction>{BALE_FRICTION}</friction><friction2>{BALE_FRICTION}</friction2>"
         "</bullet></friction></surface>"
     )
+    # The straw look -- textured rounded body and loose strands -- is shared
+    # with the Obstacle Course: generate_straw_assets.bale_visuals.
     return (
         f'      <collision name="bale_{index}_collision"><pose>{pose}</pose><geometry>{geometry}</geometry>{surface}</collision>\n'
-        f'      <visual name="bale_{index}_visual"><pose>{pose}</pose><geometry>{geometry}</geometry>{material}</visual>'
+        + bale_visuals(f"bale_{index}", pose, index, strands)
     )
 
 
@@ -184,12 +186,14 @@ def world_bales(contents: str) -> list[tuple[float, float, float]]:
     ]
 
 
-def build_course(bales: list[tuple[float, float, float]]) -> str:
+def build_course(bales: list[tuple[float, float, float]], strands: bool = True) -> str:
     lines = [
         "    <!-- 135 ft by 47 ft speed course, built from individual 14 x 18 x 36 in straw bales. -->",
         '    <model name="course_bales"><static>true</static><link name="bales">',
     ]
-    lines.extend(bale_xml(index, *bale) for index, bale in enumerate(bales))
+    lines.extend(
+        bale_xml(index, *bale, strands=strands) for index, bale in enumerate(bales)
+    )
     lines.append("    </link></model>")
     return "\n".join(lines)
 
@@ -207,6 +211,12 @@ def main() -> None:
             "The start signal, and the bales it displaces, are rewritten "
             "either way."
         ),
+    )
+    parser.add_argument(
+        "--no-strands",
+        action="store_true",
+        help="leave out the loose-straw meshes (textured boxes only); the "
+        "rendered depth then sees only the box faces, as training does",
     )
     args = parser.parse_args()
     contents = WORLD_FILE.read_text()
@@ -230,7 +240,10 @@ def main() -> None:
     # name="slash"> itself: the model is generated from vehicle.yaml by
     # generate_vehicle_model.py, and anchoring on the model tag would pull
     # that block's header comments into the bale region and delete them.
-    replacement = build_course(cleared) + "\n\n    <!-- BEGIN generated vehicle"
+    replacement = (
+        build_course(cleared, strands=not args.no_strands)
+        + "\n\n    <!-- BEGIN generated vehicle"
+    )
     contents, replacements = re.subn(
         r"    <!-- (?:44\.7 m by 34\.5 m drawing area|135 ft by 47 ft speed course)"
         r".*?    <!-- BEGIN generated vehicle",

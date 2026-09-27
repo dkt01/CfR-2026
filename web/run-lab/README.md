@@ -60,7 +60,15 @@ Each run becomes one folder in `~/cfr_runs/<UTC>_<label>/`:
 control tick: station, CTE, map clearance, cap, prior, raw action and the full
 observation), `/lap_counter/*`, `/start_signal_detector/state|go`, the ZED pose,
 pose status, odom, IMU, path, health, the rectified camera (compressed), the
-point cloud, and `mapping/fused_cloud` with `--map`.
+point cloud, `mapping/fused_cloud` with `--map`, and the depth image thinned
+to 2 Hz (below).
+
+**The depth image is thinned, not turned down.** formulaTwo drives on every
+depth frame, so the ZED's depth rate stays as it is. The recorder subscribes
+best-effort, keeps one frame every 1/`--depth-hz` s (default 2), and
+republishes it as 16-bit millimeters on `/run_recorder/depth/compressed` (PNG;
+raw `/run_recorder/depth` without OpenCV), with the depth `camera_info`.
+`--depth-hz 0` records none.
 
 **The point cloud is rate-limited.** The ZED 2i's registered cloud is about 3.7 MB
 per frame, around 55 MB/s at full rate. The recorder lowers the ZED's own
@@ -118,7 +126,7 @@ keys step, and shift-arrow steps 5 s.
 | **Replay (Rerun)** | The run in the embedded Rerun viewer. It fills the window (or goes fullscreen from its top bar) and holds the course with the car (a fixed Course view, and a Follow car view that tracks it; the *Follow car* toggle opens on that one), the ZED cloud at each moment plus the map they accumulate (and the ZED's own spatial map if recorded), the full camera frame, every channel in grouped plots, and the events and `/rosout` logs. It shares the Run Lab's timeline both ways. Also: open the same recording, or the raw bag, in the native Rerun app |
 | **Vehicle model** | The car against `plant.py`: speed envelope, speed loop (command → target → measured), coast-down, steering authority left/right, and the **command-to-yaw lag** the policy was trained with |
 | **RL policy** | Speed, clearance, CTE and steering per lap against station; section × lap clearance matrix; action saturation; prior vs residual |
-| **ZED & localisation** | Pose health: rate, gaps, jumps, odom divergence, tracking status, pose age at the driver, and the driver's position belief against the analysis |
+| **ZED & localisation** | Pose health: rate, gaps, jumps, odom divergence, tracking status, pose age at the driver, and the driver's position belief against the analysis. Depth: each recorded frame with formulaTwo's sampling grid on it, beside the 64-beam scan the driver acted on (from its telemetry) and the same scan recomputed from the frame |
 | **System health** | Battery, Arduino link, E-stops, modes, Orin CPU/GPU/temperature, and every topic's rate against what it should be |
 | **Files** | Everything in the run, downloadable; the whole run as one `.tar`; the commands to open it in Rerun or `ros2 bag play` |
 
@@ -155,6 +163,8 @@ number means the same moment in both tools:
 | `world/car`, `world/path`, `world/events` | the car over time, its path coloured by speed, contacts, grazes, stalls and pose jumps |
 | `world/cloud/frame`, `map`, `zed_map` | the ZED cloud at each moment, the voxel map accumulated from it, the ZED's own spatial map |
 | `camera` | the rectified camera, 5 Hz |
+| `depth/image`, `depth/grid` | the recorded depth (mm), and formulaTwo's sampling grid on it: sampled, in the height band, each column's beam (`server/depthview.py`, which imports `rl/formulaTwo/perception.py`) |
+| `scan/driver`, `scan/depth` | the virtual LiDAR from above, forward up: the driver's own scan from its observation (10 Hz), and the scan recomputed from each depth frame |
 | `metrics/<group>/*` | speed, steering, yaw rate against the plant, clearance, line, acceleration, actions, progress, localisation, battery |
 | `events`, `rosout` | the Run Lab's events and verdicts, and every ROS log line |
 

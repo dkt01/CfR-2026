@@ -8,6 +8,7 @@ package), so both launch files insert this directory into sys.path first.
 
 from __future__ import annotations
 
+import re
 import tempfile
 from pathlib import Path
 
@@ -39,26 +40,45 @@ SENSORS_CAMERA = """<sensor name="zed2i" type="rgbd_camera">
           </sensor>"""
 
 
-def resolve_world(context, *_args, **_kwargs):
-    """Hand Gazebo the world, with the rendered sensors switched on or not.
+# The loose-straw meshes around each bale (generate_straw_assets.py): one
+# <visual name="..._strands"> per bale, on its own line.  Visual only, but the
+# rendered ZED sees them, so its depth has straw in front of the bale faces
+# that training's renderer does not -- strands:=false takes them out.
+STRANDS_VISUAL = re.compile(r'\n[ \t]*<visual name="[^"]*_strands">.*?</visual>')
 
-    Without `sensors:=true` the world is used exactly as it sits in the
-    package, markers and all -- an XML comment costs nothing.  With it, the
-    markers are replaced and the result written beside the other simulation
-    scratch files, because Gazebo takes a path and not a string.
+
+def _flag(context, name, default):
+    """A launch argument as a bool, `default` where the including launch file
+    does not declare it (training.launch.py has no strands:=)."""
+    value = context.launch_configurations.get(name, default)
+    return str(value).lower() in ("true", "1")
+
+
+def resolve_world(context, *_args, **_kwargs):
+    """Hand Gazebo the world, with the rendered sensors and the loose straw
+    switched on or not.
+
+    With `sensors:=false` and `strands:=true` (the defaults) the world is used
+    exactly as it sits in the package, markers and all -- an XML comment costs
+    nothing.  Otherwise the markers are replaced and/or the strands dropped,
+    and the result written beside the other simulation scratch files, because
+    Gazebo takes a path and not a string.
     """
     world = Path(context.perform_substitution(LaunchConfiguration("world")))
-    if context.perform_substitution(LaunchConfiguration("sensors")).lower() not in (
-        "true",
-        "1",
-    ):
+    sensors = _flag(context, "sensors", "false")
+    strands = _flag(context, "strands", "true")
+    if not sensors and strands:
         return [world]
 
     text = world.read_text()
-    for marker, replacement in (
-        (SYSTEM_MARKER, SENSORS_SYSTEM),
-        (CAMERA_MARKER, SENSORS_CAMERA),
-    ):
+    if not strands:
+        text = STRANDS_VISUAL.sub("", text)
+    markers = (
+        ((SYSTEM_MARKER, SENSORS_SYSTEM), (CAMERA_MARKER, SENSORS_CAMERA))
+        if sensors
+        else ()
+    )
+    for marker, replacement in markers:
         if marker not in text:
             raise RuntimeError(
                 f"{world.name} has no {marker}, so sensors:=true cannot add the "

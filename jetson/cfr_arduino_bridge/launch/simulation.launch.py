@@ -64,6 +64,14 @@ def generate_launch_description():
             "LIBGL_ALWAYS_SOFTWARE=1 for llvmpipe at reduced frame rate"
         ),
     )
+    strands_arg = DeclareLaunchArgument(
+        "strands",
+        default_value="true",
+        description=(
+            "Draw the loose straw around the bales (visual only).  false: the "
+            "rendered depth sees the bale faces alone, as training renders them"
+        ),
+    )
     world_name_arg = DeclareLaunchArgument(
         "world_name",
         default_value="cfr_speed_course",
@@ -353,6 +361,7 @@ def generate_launch_description():
             gui_arg,
             websocket_arg,
             sensors_arg,
+            strands_arg,
             world_name_arg,
             randomizer_arg,
             layout_arg,

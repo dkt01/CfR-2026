@@ -84,7 +84,18 @@ export class RerunView {
                 if (Number.isFinite(t) && Math.abs(t - playhead.t) > 0.02) seek(t, "rerun");
             }),
         );
-        this.offs.push(this.viewer.on("recording_open", () => this.push(playhead.t, true)));
+        // The recording carries its own default layout (the Replay page's),
+        // and it and the one start() opened land in either order -- a page
+        // with two viewers came up with the Replay layout in its depth card.
+        // So once the recording is open, apply this view's layout again; it
+        // then wins every time.  The time cursor goes back to the playhead.
+        this.offs.push(
+            this.viewer.on("recording_open", () => {
+                if (this.view !== "replay") this.viewer.open(this.blueprintUrl(false));
+                this.push(playhead.t, true);
+                setTimeout(() => this.push(playhead.t, true), 400);
+            }),
+        );
         // Playhead -> Rerun.
         this.offs.push(
             subscribe((t, source) => {
