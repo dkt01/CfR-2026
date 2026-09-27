@@ -199,9 +199,11 @@ def test_rerun_export():
         check(
             "Rerun recording verifies",
             verify.returncode == 0,
-            (verify.stdout + verify.stderr).strip().splitlines()[-1]
-            if (verify.stdout + verify.stderr).strip()
-            else "",
+            (
+                (verify.stdout + verify.stderr).strip().splitlines()[-1]
+                if (verify.stdout + verify.stderr).strip()
+                else ""
+            ),
         )
         printed = subprocess.run(
             [str(rerun), "rrd", "print", str(path)], capture_output=True, text=True

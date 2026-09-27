@@ -470,7 +470,13 @@ class RunRecording:
     def depth_static(self, cam):
         """The car and range rings, under the scan."""
         body = np.array(
-            [[cam.x, 0.15], [cam.x, -0.15], [cam.x - 0.55, -0.15], [cam.x - 0.55, 0.15], [cam.x, 0.15]]
+            [
+                [cam.x, 0.15],
+                [cam.x, -0.15],
+                [cam.x - 0.55, -0.15],
+                [cam.x - 0.55, 0.15],
+                [cam.x, 0.15],
+            ]
         )
         self.rec.log(
             "scan/car",
@@ -485,7 +491,10 @@ class RunRecording:
         self.rec.log(
             "scan/rings",
             rr.LineStrips2D(
-                rings, colors=[(200, 200, 195)], radii=0.01, labels=["1 m", "2 m", "5 m", f"{cam.scan_max:g} m"]
+                rings,
+                colors=[(200, 200, 195)],
+                radii=0.01,
+                labels=["1 m", "2 m", "5 m", f"{cam.scan_max:g} m"],
             ),
             static=True,
         )
@@ -498,7 +507,9 @@ class RunRecording:
         strips = [self._screen(np.array([a, b])) for a, b in zip(start, end)]
         self.rec.log(
             f"scan/{which}",
-            rr.LineStrips2D(strips, colors=colors, radii=0.012 if which == "driver" else 0.02),
+            rr.LineStrips2D(
+                strips, colors=colors, radii=0.012 if which == "driver" else 0.02
+            ),
         )
 
     def depth_frame(self, t, depth, uu, vv, ok, keep, beam):
@@ -546,7 +557,11 @@ class RunRecording:
             radii.append(np.full(int(mask.sum()), radius))
         self.rec.log(
             "depth/grid",
-            rr.Points2D(np.concatenate(pts), colors=np.concatenate(colors), radii=np.concatenate(radii)),
+            rr.Points2D(
+                np.concatenate(pts),
+                colors=np.concatenate(colors),
+                radii=np.concatenate(radii),
+            ),
         )
 
 
@@ -604,7 +619,9 @@ def blueprint(camera_size=None, *, follow=False, depth_size=None):
             ),
             rrb.Vertical(
                 rrb.Tabs(
-                    rrb.Spatial2DView(origin="camera", name="Camera", visual_bounds=bounds),
+                    rrb.Spatial2DView(
+                        origin="camera", name="Camera", visual_bounds=bounds
+                    ),
                     *(_depth_views(depth_size) if depth_size else []),
                 ),
                 rrb.TimeSeriesView(
@@ -633,7 +650,9 @@ def _depth_views(depth_size=None):
         else None
     )
     return [
-        rrb.Spatial2DView(origin="depth", name="Depth + driver grid", visual_bounds=bounds),
+        rrb.Spatial2DView(
+            origin="depth", name="Depth + driver grid", visual_bounds=bounds
+        ),
         rrb.Spatial2DView(
             origin="scan",
             name="Scan, top-down (blue: driver, orange: from the frame)",

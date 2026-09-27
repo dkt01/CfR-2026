@@ -349,7 +349,9 @@ def recording_blueprint(name: str, follow: bool = False, view: str = "replay"):
         extent = [min(xs), max(xs), min(ys), max(ys)] if xs and ys else None
         bp = rerun_export.pose2d_blueprint(extent)
     elif view == "depth":
-        bp = rerun_export.depth_blueprint((summary.get("perception") or {}).get("depth_size"))
+        bp = rerun_export.depth_blueprint(
+            (summary.get("perception") or {}).get("depth_size")
+        )
     else:
         per = summary.get("perception") or {}
         bp = rerun_export.blueprint(

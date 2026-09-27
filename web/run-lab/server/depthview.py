@@ -89,7 +89,9 @@ def decode(topic, msg):
         depth = mm / 1000.0
         depth[mm <= 0] = np.nan
         return depth
-    data = bytes(msg.data) if not isinstance(msg.data, np.ndarray) else msg.data.tobytes()
+    data = (
+        bytes(msg.data) if not isinstance(msg.data, np.ndarray) else msg.data.tobytes()
+    )
     big = bool(msg.is_bigendian)
     if msg.encoding == "32FC1":
         rows = np.frombuffer(data, dtype=">f4" if big else "<f4").reshape(
@@ -212,7 +214,10 @@ def depth_size(bag):
         depth = decode(topic, msg)
         if depth is not None:
             step = rerun_export.depth_step(depth.shape[1])
-            return [len(range(0, depth.shape[1], step)), len(range(0, depth.shape[0], step))]
+            return [
+                len(range(0, depth.shape[1], step)),
+                len(range(0, depth.shape[0], step)),
+            ]
     return None
 
 
@@ -269,7 +274,9 @@ def write_depth(bag, run_dir, streams, tb, recording, progress, hz=2.0, scan_hz=
         roll, pitch = attitude_at(streams, t)
         grid = cam.sample_depth(depth, *k)[0]
         keep, beam = in_band(cam, grid, cam.z, pitch, roll)
-        scan = cam.depth_to_scan(grid[None], None, np.array([pitch]), np.array([roll]))[0]
+        scan = cam.depth_to_scan(grid[None], None, np.array([pitch]), np.array([roll]))[
+            0
+        ]
         uu, vv, ok = grid_pixels(cam, *k, wid, hgt)
         start, end, invalid = beams_xy(cam, np.where(np.isfinite(scan), scan, np.nan))
         recording.depth_frame(
