@@ -67,7 +67,10 @@ The reward is privileged, computed in simulation only (`reward.py`):
   `reward.pinned`, set so that the wait plus the penalty never costs more
   than a hard hit. A share of starts (`env.stuck_start_prob`) put the car
   back exactly where a recent run ended pinned, stopped, to practice backing
-  out; the TUI shows how many of those drive on
+  out; the TUI shows how many of those drive on. A pinned spot is kept only
+  if the car rests clear with a straight 10 cm path back or on (a car
+  wedged between two obstacles can hit one whichever way it moves), and a
+  stuck start that settles into what it hit is re-dealt
 - costs for grazing obstacles, steering chatter and speed-command chatter.
   These are charged on the sampled action, exploration noise included, so
   `reward.py` checks that noise at the starting std costs under half the time
@@ -109,7 +112,12 @@ controller's direction, as `ArduinoStatus.speed` is.
 
 A car that touches an obstacle is put back where it was clear and slides
 along it, keeping the share of its speed the slide carries; head-on, it
-stops and has to back off.
+stops and has to back off. The body outline is checked every 1 cm, under the
+2 cm grid, so an obstacle's corner cannot slip in between two points. A car
+already overlapping something (a slope's settling can tilt one in) may move
+so long as it goes no deeper, so it can always back out; judged strictly
+from clear, such a car froze, and about a fifth of v8's stuck starts could
+not move at all.
 
 `sensor.py` ray-marches the visual grid from wherever the body put the camera,
 following the surface out from under the car the way the segmenter does.

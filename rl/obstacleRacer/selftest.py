@@ -356,7 +356,7 @@ def contact_checks(cfg, model):
         for k in range(2):
             if touched[k] and first[k] is None:
                 first[k] = i
-        inside += int(P.body_contact(pl.OBS, pl.lay, pl.state, 0.03).sum())
+        inside += int(P.body_contact(pl.OBS, pl.lay, pl.state, P.CONTACT_SPACING).sum())
         if first[1] is not None:
             speed_after.append(pl.state[1, P.S_V])
     failures += check(
@@ -379,6 +379,34 @@ def contact_checks(cfg, model):
         "at a glancing angle it slides along, keeping most of its speed",
         held > 1.2,
         f"{held:.2f} m/s over the 0.75 s after touching",
+    )
+    # The head-on car set down 3 cm into the side it stopped against, as a
+    # slope's settling can leave one: reversing has to back it out (judged
+    # strictly from clear, every move hit and it froze there), and pushing
+    # on must not take it any deeper.  The lane's other side is ~0.3 m
+    # behind it, so backing out means getting clear and that far back.
+    sx, sy, syaw = (pl.state[0, k] for k in (P.S_X, P.S_Y, P.S_YAW))
+    sx, sy = sx + 0.03 * math.cos(syaw), sy + 0.03 * math.sin(syaw)
+    pin = _plant_at(cfg, model, [(sx, sy, syaw, 0.0), (sx, sy, syaw, 0.0)])
+    start = int(P.body_contact(pin.OBS, pin.lay, pin.state, P.CONTACT_SPACING).sum())
+    depth0 = P._outline_count(pin.OBS, 0, pin.state[1], 0.0, P.CONTACT_SPACING)
+    depth = 0
+    for _ in range(int(3.0 / dt)):
+        pin.step(np.zeros(2), np.array([-1.0, 1.0]), 10)
+        depth = max(
+            depth, P._outline_count(pin.OBS, 0, pin.state[1], 0.0, P.CONTACT_SPACING)
+        )
+    backed = math.hypot(pin.state[0, P.S_X] - sx, pin.state[0, P.S_Y] - sy)
+    out = not P.body_contact(pin.OBS, pin.lay[:1], pin.state[:1], P.CONTACT_SPACING)[0]
+    failures += check(
+        "a car set down inside what it hit can back out of it",
+        start == 2 and backed > 0.2 and out,
+        f"both inside at the start: {start == 2}; backed {backed:.2f} m, clear {out}",
+    )
+    failures += check(
+        "...and pushing on takes it no deeper",
+        depth0 > 0 and depth <= depth0,
+        f"{depth0} outline points inside at the start, at most {depth} since",
     )
     return failures
 

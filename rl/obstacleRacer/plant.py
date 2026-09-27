@@ -93,6 +93,10 @@ BODY_HALF_LENGTH = 0.275
 BODY_HALF_WIDTH = 0.1625
 BODY_BOTTOM = 0.034
 BODY_TOP = 0.154
+# Outline point spacing for contact, m: under the 0.02 m obstacle grid, so a
+# bale corner cannot slip in between two points.  At 0.03 one could, and the
+# car then froze there (every move after hit the corner; see control_period).
+CONTACT_SPACING = 0.01
 
 # Slip relaxation: how fast lateral velocity dies when the tires can hold it.
 SLIP_TAU = 0.05
@@ -393,6 +397,7 @@ def control_period(
         clear_x = st[k, S_X]
         clear_y = st[k, S_Y]
         clear_yaw = st[k, S_YAW]
+        clear_hits = _outline_count(OBS, lay[k], st[k], 0.0, CONTACT_SPACING)
         for i in range(substeps):
             hist[k, h, 0] = steer[k]
             hist[k, h, 1] = speed[k]
@@ -410,24 +415,33 @@ def control_period(
             )
             h = (h + 1) % hlen
             if (i + 1) % check_every == 0 or i == substeps - 1:
-                if _outline_hits(OBS, lay[k], st[k], 0.0, 0.03):
+                hits = _outline_count(OBS, lay[k], st[k], 0.0, CONTACT_SPACING)
+                if hits:
                     touched[k] = True
-                    lost[k] += _resolve_contact(
-                        OBS, lay[k], st[k], clear_x, clear_y, clear_yaw
-                    )
+                    # A car already overlapping something (set down on a
+                    # slope where settling tilted it in) may move as long as
+                    # it goes no deeper, so it can back or slide out; judged
+                    # strictly from clear, it could never move at all.
+                    if hits > clear_hits:
+                        lost[k] += _resolve_contact(
+                            OBS, lay[k], st[k], clear_x, clear_y, clear_yaw, clear_hits
+                        )
+                        hits = _outline_count(OBS, lay[k], st[k], 0.0, CONTACT_SPACING)
                 clear_x = st[k, S_X]
                 clear_y = st[k, S_Y]
                 clear_yaw = st[k, S_YAW]
+                clear_hits = hits
         if abs(st[k, S_PITCH]) > ROLLOVER_RAD or abs(st[k, S_ROLL]) > ROLLOVER_RAD:
             rolled[k] = True
     return touched, lost, rolled
 
 
 @nb.njit(cache=True)
-def _resolve_contact(OBS, L, s, x0, y0, yaw0):
+def _resolve_contact(OBS, L, s, x0, y0, yaw0, allowed):
     """Put a car that has moved into an obstacle back, sliding if it can.
 
-    (x0, y0, yaw0) is where it last checked clear.  Its motion since is tried
+    (x0, y0, yaw0) is where it last checked clear, or where it last checked
+    with `allowed` outline points inside something, no more of which count.  Its motion since is tried
     along x alone and along y alone, the longer first, from the clear pose's
     heading; the first that stays clear is kept, with the share of the speed
     that component carries.  If neither does, it goes back to the clear pose
@@ -448,7 +462,7 @@ def _resolve_contact(OBS, L, s, x0, y0, yaw0):
         s[S_X] = tx
         s[S_Y] = ty
         s[S_YAW] = yaw0
-        if d > 1e-9 and not _outline_hits(OBS, L, s, 0.0, 0.03):
+        if d > 1e-9 and _outline_count(OBS, L, s, 0.0, CONTACT_SPACING) <= allowed:
             keep = abs(dx if along_x else dy) / d
             fx = tx
             fy = ty
@@ -549,6 +563,17 @@ def obstacle_distance(model):
 
 @nb.njit(cache=True)
 def _outline_hits(OBS, L, s, grow, spacing):
+    return _outline_scan(OBS, L, s, grow, spacing, True) > 0
+
+
+@nb.njit(cache=True)
+def _outline_count(OBS, L, s, grow, spacing):
+    """How many outline points are inside an obstacle: how deep a car is in."""
+    return _outline_scan(OBS, L, s, grow, spacing, False)
+
+
+@nb.njit(cache=True)
+def _outline_scan(OBS, L, s, grow, spacing, first):
     c = math.cos(s[S_YAW])
     sn = math.sin(s[S_YAW])
     hl = BODY_HALF_LENGTH + grow
@@ -565,11 +590,12 @@ def _outline_hits(OBS, L, s, grow, spacing):
             FAR[L, cj, ci] * course_model.RES
             > math.hypot(hl, hw) + 2 * course_model.RES
         ):
-            return False
+            return 0
     nl = max(2, int(2 * hl / spacing) + 1)
     nw = max(2, int(2 * hw / spacing) + 1)
     sp = math.sin(s[S_PITCH])
     sr = math.sin(s[S_ROLL])
+    hits = 0
     for side in range(4):
         count = nl if side < 2 else nw
         for a in range(count):
@@ -590,8 +616,10 @@ def _outline_hits(OBS, L, s, grow, spacing):
             if course_model.obstacle_overlap(
                 OBS, L, px, py, z0 + BODY_BOTTOM - 0.02, z0 + BODY_TOP
             ):
-                return True
-    return False
+                hits += 1
+                if first:
+                    return hits
+    return hits
 
 
 @nb.njit(cache=True, parallel=True)

@@ -432,13 +432,15 @@ class ObstacleEnv:
         yaw[free] += self.rng.uniform(-yawn, yawn, free.sum())
         self.plant.reset(idx, lay, x, y, z, yaw, speed)
 
-        # A dealt start that lands the car against something is re-dealt;
-        # a stuck start is against something on purpose.
-        touching = (
-            P.body_contact(
-                self.plant.OBS, self.plant.lay[idx], self.plant.state[idx], 0.03
-            )
-            & ~stuck
+        # A start that lands the car inside something is re-dealt.  A stuck
+        # start is against something on purpose, but a pinned car rests just
+        # clear of it; one inside (set down again on a slope, where settling
+        # tilts it) would only be practicing the plant's contact rule.
+        touching = P.body_contact(
+            self.plant.OBS,
+            self.plant.lay[idx],
+            self.plant.state[idx],
+            P.CONTACT_SPACING,
         )
         if touching.any() and attempt < 4:
             self._reset_idx(idx[touching], attempt + 1, lay[touching])
@@ -839,6 +841,8 @@ class ObstacleEnv:
                 ],
                 "timeout",
             )
+            movable = np.zeros(self.n, bool)
+            movable[done] = self._movable(lay[done], st[done])
             for i in done:
                 infos[i] = self._episode_info(i, causes[i])
                 met = self.visited[i]
@@ -859,7 +863,8 @@ class ObstacleEnv:
                     L = int(lay[i])
                     self.fail_s[L, self.fail_n[L] % self.fail_s.shape[1]] = self.s[i]
                     self.fail_n[L] += 1
-                    if causes[i] == "pinned":
+                    # Only where a stuck start could move (see _movable).
+                    if causes[i] == "pinned" and movable[i]:
                         slot = self.stuck_n[L] % self.stuck_pose.shape[1]
                         self.stuck_pose[L, slot] = (
                             self.s[i],
@@ -873,6 +878,29 @@ class ObstacleEnv:
             self._reset_idx(done)
             obs[done] = self.stack.obs[done]
         return obs, total.astype(np.float32), terminated, truncated, infos
+
+    def _movable(self, lay, st, path=(0.03, 0.06, 0.10)):
+        """Per car: resting clear, with a straight path back or on of 10 cm.
+
+        A car wedged between two obstacles can rest clear of both yet hit
+        one whichever way it moves, and the plant's contact rule (slide along
+        x or y, else stop) never finds the way out it came in by: v8 at 90M
+        ended 7 of 77 pinned runs frozen like that.  A stuck start there
+        would only be practicing the contact rule.
+        """
+        OBS, sp = self.plant.OBS, P.CONTACT_SPACING
+        ok = ~P.body_contact(OBS, lay, st, sp)
+        c, s = np.cos(st[:, P.S_YAW]), np.sin(st[:, P.S_YAW])
+        way = np.zeros(len(st), bool)
+        for sign in (-1.0, 1.0):
+            clear = np.ones(len(st), bool)
+            for d in path:
+                moved = st.copy()
+                moved[:, P.S_X] += sign * d * c
+                moved[:, P.S_Y] += sign * d * s
+                clear &= ~P.body_contact(OBS, lay, moved, sp)
+            way |= clear
+        return ok & way
 
     def _dither(self, speed_cmd):
         """The wander on a slow target: first-order noise, faded out with speed."""
