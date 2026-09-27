@@ -51,7 +51,11 @@ Confirm it took, on the car:
 ros2 param get /zed/zed_node pos_tracking.pos_tracking_mode   # GEN_3
 ros2 param get /zed/zed_node pos_tracking.area_memory         # true
 ros2 topic hz /zed/zed_node/pose                              # ~60 Hz; well below means the Orin cannot keep up
+ros2 param get /zed/zed_node video.auto_exposure_gain         # false
+ros2 param get /zed/zed_node region_of_interest.manual_polygon
 ```
+
+Exposure is **manual** (`video.exposure` 10, `video.gain` 20) to bound motion blur. Those values are only a starting point, so tune them on the course in that day's light: both are dynamic, so `ros2 param set` them with the node running and watch `rgb/color/rect/image`. Use the lowest exposure that leaves the straw unclipped, and make up the brightness with gain. The top 20% of the frame is masked out of tracking and depth (the RGB image is untouched). Check the mask on `/zed/zed_node/roi_mask/image`.
 
 `reset_odom_with_loop_closure` is turned **off**, against the wrapper's default. With it on, every loop closure resets `/zed/zed_node/odom` to the origin — a jump as long as the distance travelled since the last reset. With it off, `/odom` is continuous visual-inertial odometry and only `/pose` carries corrections, so a jump in `/odom` means tracking failed and a jump in `/pose` alone means a loop closed.
 
