@@ -7,7 +7,6 @@ import random
 import struct
 import zlib
 
-
 PIXELS_PER_METER = 32
 MATERIALS = Path(__file__).parents[1] / "cfr_arduino_bridge/materials"
 COURSES = {"speed": (60, 45), "obstacle": (30, 24)}

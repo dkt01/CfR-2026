@@ -456,6 +456,8 @@ def straw_bale(name: str, pose: tuple, look: int) -> str:
         + bale_visuals(name, pose_text, look, STRANDS)
         + "\n"
     )
+
+
 WHITE = "1 1 1 1"
 GRAVEL_GRAY = "0.44 0.43 0.40 1"
 

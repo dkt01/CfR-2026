@@ -88,7 +88,11 @@ def bale_look(index: int) -> tuple[int, int, float]:
     """(texture, strand mesh, tint) for a bale, fixed by a number, so a
     wall does not repeat one bale and regenerating does not reshuffle it."""
     h = (index * 2654435761) & 0xFFFFFFFF
-    return h % VARIANTS, (h >> 8) % STRAND_VARIANTS, 0.88 + 0.12 * ((h >> 16) % 100) / 99
+    return (
+        h % VARIANTS,
+        (h >> 8) % STRAND_VARIANTS,
+        0.88 + 0.12 * ((h >> 16) % 100) / 99,
+    )
 
 
 def bale_visuals(name: str, pose: str, look: int, strands: bool = True) -> str:
@@ -144,7 +148,9 @@ def texture(rng):
         for _ in range(count):
             x, y = rng.uniform(-60, TEX_W + 60), rng.uniform(-20, TEX_H + 20)
             # Mostly along the bale, some crossing: the baler lays them long.
-            ang = rng.normal(0.0, 0.22) if rng.random() < 0.85 else rng.uniform(-1.2, 1.2)
+            ang = (
+                rng.normal(0.0, 0.22) if rng.random() < 0.85 else rng.uniform(-1.2, 1.2)
+            )
             length = rng.gamma(2.2, 34.0) + 15
             width = int(rng.choice([2, 3, 3, 4, 4, 5]))
             dx, dy = math.cos(ang) * length / 2, math.sin(ang) * length / 2
@@ -160,13 +166,19 @@ def texture(rng):
             color = GOLD if pick < 0.5 else PALE if pick < 0.75 else TAN
             color = color * (lift + 0.25 * t) * rng.uniform(0.85, 1.12)
             shade = tuple(int(c) for c in (GAP * 0.7))
-            draw_c.line([(p[0] + 1, p[1] + 2) for p in pts], fill=shade, width=width + 1)
-            draw_c.line(pts, fill=tuple(int(c) for c in color.clip(0, 255)), width=width)
+            draw_c.line(
+                [(p[0] + 1, p[1] + 2) for p in pts], fill=shade, width=width + 1
+            )
+            draw_c.line(
+                pts, fill=tuple(int(c) for c in color.clip(0, 255)), width=width
+            )
             # A highlight down one edge of the fatter stalks: they are tubes.
             if width >= 4:
                 hi = tuple(int(c) for c in (color * 1.18).clip(0, 255))
                 draw_c.line([(p[0], p[1] - 1) for p in pts], fill=hi, width=1)
-            draw_h.line(pts, fill=int(90 + 55 * layer + rng.uniform(0, 30)), width=width)
+            draw_h.line(
+                pts, fill=int(90 + 55 * layer + rng.uniform(0, 30)), width=width
+            )
     albedo = albedo.filter(ImageFilter.GaussianBlur(0.6))
     arr = np.asarray(albedo, dtype=float)
     # Fine grain and a little sun-bleaching toward the top of the face.
@@ -214,7 +226,10 @@ def prism(a, b, radius, up_hint):
         side = np.cross(axis, np.array([1.0, 0.0, 0.0]))
     side /= np.linalg.norm(side)
     other = np.cross(axis, side)
-    ring = [side * math.cos(k) * radius + other * math.sin(k) * radius for k in (0, 2.094, 4.189)]
+    ring = [
+        side * math.cos(k) * radius + other * math.sin(k) * radius
+        for k in (0, 2.094, 4.189)
+    ]
     tris = []
     for k in range(3):
         p0, p1 = ring[k], ring[(k + 1) % 3]
@@ -236,7 +251,10 @@ def spike(a, b, radius, up_hint):
         side = np.cross(axis, np.array([1.0, 0.0, 0.0]))
     side /= np.linalg.norm(side)
     other = np.cross(axis, side)
-    ring = [a + side * math.cos(k) * radius + other * math.sin(k) * radius for k in (0, 2.094, 4.189)]
+    ring = [
+        a + side * math.cos(k) * radius + other * math.sin(k) * radius
+        for k in (0, 2.094, 4.189)
+    ]
     return [(ring[k], ring[(k + 1) % 3], b) for k in range(3)]
 
 
@@ -249,7 +267,9 @@ def strand(rng, root, out, droop, length, radius):
     mid = root + out * length * 0.55
     bent = out * 0.45 + np.array([0, 0, -droop])
     bent /= np.linalg.norm(bent)
-    return prism(root, mid, radius, up) + spike(mid, mid + bent * length * 0.45, radius * 0.8, up)
+    return prism(root, mid, radius, up) + spike(
+        mid, mid + bent * length * 0.45, radius * 0.8, up
+    )
 
 
 def unit(v):
@@ -283,22 +303,40 @@ def strands(rng):
             along = unit(np.array([rng.choice([-1.0, 1.0]), 0.0, rng.normal(0, 0.5)]))
             out = unit(normal * rng.uniform(0.15, 0.6) + along)
             root = np.array([x, sign * (ly - 0.003), z])
-            tris += spike(root, root + out * rng.uniform(0.02, 0.06), radius() * 1.3, up)
+            tris += spike(
+                root, root + out * rng.uniform(0.02, 0.06), radius() * 1.3, up
+            )
         # A few long strays that droop.
         for _ in range(18):
             x, z = rng.uniform(-lx, lx), rng.uniform(-lz + 0.03, lz)
             along = np.array([rng.choice([-1.0, 1.0]), 0.0, rng.normal(0, 0.4)])
-            out = unit(normal * rng.uniform(0.3, 0.9) + unit(along) * rng.uniform(0.4, 1.0))
+            out = unit(
+                normal * rng.uniform(0.3, 0.9) + unit(along) * rng.uniform(0.4, 1.0)
+            )
             root = np.array([x, sign * (ly - 0.004), z])
-            tris += strand(rng, root, out, rng.uniform(0.1, 0.8), long_length(), radius())
+            tris += strand(
+                rng, root, out, rng.uniform(0.1, 0.8), long_length(), radius()
+            )
         # Tufts along the top edge: clumps of stalks fanning up and over.
         for _ in range(11):
             cx = rng.uniform(-lx + 0.03, lx - 0.03)
             for _ in range(int(rng.integers(4, 8))):
                 root = np.array(
-                    [cx + rng.normal(0, 0.03), sign * (ly - rng.uniform(0.0, 0.025)), lz - rng.uniform(0.0, 0.02)]
+                    [
+                        cx + rng.normal(0, 0.03),
+                        sign * (ly - rng.uniform(0.0, 0.025)),
+                        lz - rng.uniform(0.0, 0.02),
+                    ]
                 )
-                out = unit(np.array([rng.normal(0, 0.7), sign * rng.uniform(0.3, 1.0), rng.uniform(0.1, 1.0)]))
+                out = unit(
+                    np.array(
+                        [
+                            rng.normal(0, 0.7),
+                            sign * rng.uniform(0.3, 1.0),
+                            rng.uniform(0.1, 1.0),
+                        ]
+                    )
+                )
                 length = rng.uniform(0.03, 0.11)
                 tris += strand(rng, root, out, rng.uniform(0.3, 1.2), length, radius())
         # Litter on the ground at the foot of the wall.
@@ -309,18 +347,34 @@ def strands(rng):
             ang = rng.normal(0.0, 0.5) + (math.pi if rng.random() < 0.5 else 0.0)
             d = np.array([math.cos(ang), math.sin(ang), rng.uniform(-0.02, 0.05)])
             root = np.array([x, y, z])
-            tris += spike(root, root + unit(d) * rng.uniform(0.04, 0.14), radius() * 1.3, up)
+            tris += spike(
+                root, root + unit(d) * rng.uniform(0.04, 0.14), radius() * 1.3, up
+            )
     # Fuzz and a few risers on the top.
     for _ in range(45):
         root = np.array([rng.uniform(-lx, lx), rng.uniform(-ly, ly), lz - 0.003])
-        out = unit(np.array([rng.normal(0, 1), rng.normal(0, 0.6), rng.uniform(0.1, 0.7)]))
+        out = unit(
+            np.array([rng.normal(0, 1), rng.normal(0, 0.6), rng.uniform(0.1, 0.7)])
+        )
         tris += spike(root, root + out * rng.uniform(0.02, 0.07), radius() * 1.3, up)
     # The cut ends.
     for sign in (-1, 1):
         for _ in range(22):
-            root = np.array([sign * (lx - 0.003), rng.uniform(-ly, ly), rng.uniform(-lz + 0.01, lz)])
-            out = unit(np.array([sign * rng.uniform(0.3, 1.0), rng.normal(0, 0.6), rng.normal(0, 0.5)]))
-            tris += spike(root, root + out * rng.uniform(0.02, 0.07), radius() * 1.3, up)
+            root = np.array(
+                [sign * (lx - 0.003), rng.uniform(-ly, ly), rng.uniform(-lz + 0.01, lz)]
+            )
+            out = unit(
+                np.array(
+                    [
+                        sign * rng.uniform(0.3, 1.0),
+                        rng.normal(0, 0.6),
+                        rng.normal(0, 0.5),
+                    ]
+                )
+            )
+            tris += spike(
+                root, root + out * rng.uniform(0.02, 0.07), radius() * 1.3, up
+            )
     return tris
 
 
@@ -372,7 +426,12 @@ def rounded_bale(r=BALE_RADIUS, n=BALE_BAND_STEPS):
                 nrm = d / length if length > 1e-9 else normal
                 verts.append(q + nrm * r if length > 1e-9 else p)
                 norms.append(nrm)
-                uvs.append(((u + half[u_axis]) / (2 * half[u_axis]), (v + half[v_axis]) / (2 * half[v_axis])))
+                uvs.append(
+                    (
+                        (u + half[u_axis]) / (2 * half[u_axis]),
+                        (v + half[v_axis]) / (2 * half[v_axis]),
+                    )
+                )
         nu = len(u_coords)
         for j in range(len(v_coords) - 1):
             for i in range(nu - 1):
@@ -407,7 +466,9 @@ def write_obj(path, verts, uvs, norms, faces):
         for nrm in norms:
             f.write(f"vn {nrm[0]:.4f} {nrm[1]:.4f} {nrm[2]:.4f}\n")
         for a, b, c in faces:
-            f.write(f"f {a + 1}/{a + 1}/{a + 1} {b + 1}/{b + 1}/{b + 1} {c + 1}/{c + 1}/{c + 1}\n")
+            f.write(
+                f"f {a + 1}/{a + 1}/{a + 1} {b + 1}/{b + 1}/{b + 1} {c + 1}/{c + 1}/{c + 1}\n"
+            )
 
 
 def write_stl(path, tris):
@@ -447,7 +508,9 @@ def main():
         tris = strands(rng)
         path = PACKAGE / "meshes" / f"bale_strands_{k}.stl"
         write_stl(path, tris)
-        print(f"wrote {path.relative_to(PACKAGE.parent.parent)}  ({len(tris)} triangles)")
+        print(
+            f"wrote {path.relative_to(PACKAGE.parent.parent)}  ({len(tris)} triangles)"
+        )
 
 
 if __name__ == "__main__":

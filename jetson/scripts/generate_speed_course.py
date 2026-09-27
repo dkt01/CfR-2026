@@ -193,7 +193,9 @@ def build_course(bales: list[tuple[float, float, float]], strands: bool = True) 
         "    <!-- 135 ft by 47 ft speed course, built from individual 14 x 18 x 36 in straw bales. -->",
         '    <model name="course_bales"><static>true</static><link name="bales">',
     ]
-    lines.extend(bale_xml(index, *bale, strands=strands) for index, bale in enumerate(bales))
+    lines.extend(
+        bale_xml(index, *bale, strands=strands) for index, bale in enumerate(bales)
+    )
     lines.append("    </link></model>")
     return "\n".join(lines)
 
@@ -240,7 +242,10 @@ def main() -> None:
     # name="slash"> itself: the model is generated from vehicle.yaml by
     # generate_vehicle_model.py, and anchoring on the model tag would pull
     # that block's header comments into the bale region and delete them.
-    replacement = build_course(cleared, strands=not args.no_strands) + "\n\n    <!-- BEGIN generated vehicle"
+    replacement = (
+        build_course(cleared, strands=not args.no_strands)
+        + "\n\n    <!-- BEGIN generated vehicle"
+    )
     contents, replacements = re.subn(
         r"    <!-- (?:44\.7 m by 34\.5 m drawing area|135 ft by 47 ft speed course)"
         r".*?    <!-- BEGIN generated vehicle",

@@ -224,7 +224,9 @@ def summarise(records):
         crashed=float(np.mean([r["crashed"] for r in records])),
         time=float(np.mean(times)) if times else float("nan"),
         lap=float(np.mean(times)) / 3 if times else float("nan"),
-        best_lap=float(np.nanmean([r["best_lap"] for r in done])) if done else float("nan"),
+        best_lap=(
+            float(np.nanmean([r["best_lap"] for r in done])) if done else float("nan")
+        ),
         distance=float(np.mean([r["distance"] for r in records])),
         clearance=float(clear.min()),
         clearance_p10=float(np.percentile(clear, 10)),
@@ -233,7 +235,9 @@ def summarise(records):
         gate=float(np.mean([r["mean_gate"] for r in records])),
         jerk=float(np.mean([r["steer_jerk_rms"] for r in records])),
         overspeed=float(np.max([r["max_overspeed"] for r in records])),
-        stop=float(np.mean([r["stop_distance"] for r in done])) if done else float("nan"),
+        stop=(
+            float(np.mean([r["stop_distance"] for r in done])) if done else float("nan")
+        ),
         n=len(records),
     )
 
@@ -300,7 +304,9 @@ def main():
     train_inner = ParallelEnv(cfg, n_envs, args.workers, seed=int(tcfg["seed"]))
     train_env = sb3_adapter(train_inner)
     n_eval = args.eval_episodes
-    nominal = ParallelEnv(cfg, 32, 2, seed=10_001, deterministic=True, random_start=False)
+    nominal = ParallelEnv(
+        cfg, 32, 2, seed=10_001, deterministic=True, random_start=False
+    )
     field = ParallelEnv(cfg, n_eval, 4, seed=10_002, random_start=False)
     # Checkpoints are SELECTED on a half-strength field: at full strength the
     # fixed-gain prior finishes 0% at any speed, so a policy's full-field
