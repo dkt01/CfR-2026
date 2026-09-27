@@ -68,6 +68,32 @@ different machine.
 | The robot | `dynamic_pose/info`, live |
 | The start signal's arms | the same stream -- they turn on a joint, so Gazebo reports them as a moving link |
 | Buckets and hoops | sampled from `pose/info` every 3 s over a connection of its own |
+| Policy depth | `/zed/gz/rgbd/depth_image` and `camera_info`, subscribed only while the panel is open and throttled to 5 Hz on the websocket (the ROS bridge still gets every frame) |
+
+**The straw bales are not drawn by gzweb.** gzweb builds every visual with
+its own material and loads its textures again for each one, so the Speed
+Course's 202 bales (body and loose strands each) cost ~1,700 draw calls and
+~20 ms a frame before a pixel was filled, and the view stuttered.
+`src/bales.js` takes the bale visuals out of the world as it loads and draws
+them as one `InstancedMesh` per mesh and texture: 73 draw calls and ~5 ms, shadows
+included. Poses, meshes, textures and tints all come from the world file, so
+`generate_speed_course.py` changes this view too. `?bales=gzweb` draws them
+the old way, for comparison.
+
+**Loose straw** (the checkbox by the buttons) shows or hides the strands
+around every bale, remembered per browser. It changes this view only: the
+simulated camera, and so the drivers' depth and point cloud, still sees them
+unless the simulation was launched with `strands:=false`
+(`speed_course.launch.py` and `obstacle_course.launch.py` both take it).
+
+**Policy depth** shows the simulated depth image the way the formulaTwo
+policy (f2_v3_59M) takes it in: the grid it samples (every 10th column, every
+5th row), the pixels inside its 0.07-0.33 m height band, each column's beam,
+and the 64-beam scan from above. *Policy grid* shows only the sampled cells,
+which is the grid training renders. `src/policy-depth.js` is a port of
+`rl/formulaTwo/perception.py` that reads the policy's own `config.yaml`;
+`python3 scripts/check_policy_depth.py` checks that the port and the Python
+agree. The simulation must run with `sensors:=true`.
 
 Buckets and hoops are absent from the dynamic pose stream. The websocket
 server latches the whole-world topic when a client subscribes, so a persistent

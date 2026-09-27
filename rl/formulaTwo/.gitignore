@@ -1,0 +1,9 @@
+# Training environment and artefacts.  The exported policy.npz under runs/ is
+# the deployment artefact -- if you want to keep one, commit it explicitly
+# with `git add -f`.
+.venv/
+runs/
+# Derived from the world SDF and the centerline JSON; rebuilt on demand.
+.cache/
+__pycache__/
+*.pyc

@@ -129,6 +129,15 @@ class FormulaOne(Node):
                 )
             self.policy = NumpyPolicy.load(path)
             self.scripted = None
+            # Refused here, not at the first tick: a formulaTwo policy (map +
+            # depth stack) loads fine and then dies on the matmul the moment
+            # the car is released, leaving /drive_cmd stale and the car parked.
+            if self.policy.obs_dim != self.obs.obs_dim:
+                raise SystemExit(
+                    f"{path} takes {self.policy.obs_dim} inputs; formulaOne builds "
+                    f"{self.obs.obs_dim} under this config.  A formulaTwo policy runs "
+                    "under formula_two.launch.py (launchFormulaTwo.sh), not this node."
+                )
         self.laps_target = int(self.param("laps")) or int(self.cfg["env"]["laps"])
         self.residual = float(self.cfg["env"]["steer_residual"])
         self.yaw_filter = float(self.cfg["env"]["yaw_rate_filter"])

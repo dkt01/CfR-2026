@@ -1,0 +1,308 @@
+# formulaTwo -- THREE laps of the Speed Course and stop, at v12's pace or better,
+# driving on the map AND on what the ZED actually sees.
+#
+# What is inherited from formulaOne/v12 unchanged, and why: the track, the
+# measured plant, the speed cap and floors, the centerline steering prior and
+# the 35 map/pose features.  Those are the parts that have finished in Gazebo.
+# The actor's first 35 inputs are laid out exactly as v12's, which is what
+# lets train.py start the actor AS v12 (see `train.init_from`).
+#
+# What is new:
+#   * `world`      the bales are not where the map says: a smooth layout warp,
+#                  per-bale jitter and a scale change, redrawn per episode.
+#   * `camera`     a ZED 2i depth image, with its artifacts, reduced to a
+#                  64-beam virtual LiDAR and stacked over 4 frames.
+#   * `plant`      friction (a lateral-grip limit), mass, motor lag and a
+#                  throttle-only delay are randomised on top of v12's draws.
+#   * `reward`     progress is paid only in proportion to how well the car sits
+#                  on the TRUE centerline, in position and in heading.
+#   * `collision`  contact is scored against the real chassis box and wheels.
+#   * three laps.
+#
+# Every randomised quantity is [lo, hi, nominal].  `dr_scale` (a training
+# curriculum, see `train.dr_curriculum`) shrinks each range toward its nominal;
+# evaluation always runs at 1.0.
+
+track:
+  world_sdf: jetson/cfr_arduino_bridge/worlds/speed_course.sdf
+  centerline_json: jetson/cfr_arduino_bridge/config/speed_course_path.json
+  ds: 0.05
+  curvature_smooth_m: 0.6
+  v_hairpin: 2.5
+  v_straight: 5.2
+  hairpin_radius: 3.0
+  lateral_accel: 4.5
+  hairpin_gap_close_m: 1.5
+  hairpin_dilate_m: 0.5
+  # v12's floors, unchanged -- they are what made v12 fast (formulaOne
+  # config.yaml has the measured clearance-vs-floor table behind them).
+  speed_floor_hairpin: 2.05
+  speed_floor_taper: 1.9
+  speed_floor_open: 5.0
+  # The floor is clipped by the coast-feasible profile of a car with this much
+  # of the nominal drag.  1.0 is v12's floor, and it IS the pace: both
+  # policies hold the throttle at the floor on 100% of ticks.  Floor-driven
+  # flying laps: 1.00 -> 33.45 s, 0.90 -> 34.05, 0.85 -> 34.60, 0.75 -> 35.65.
+  # f2_v2 trained at 0.75 (to stay feasible down to drag x0.77) and lost
+  # ~2.2 s/lap to v12 for it.  So the floor is v12's again, and instead the
+  # DRAG RANGE is narrowed (coast_scale, mass_scale below) to where v12's
+  # floor stays reachable: at drag x0.90 it asks at most 0.03 m/s too much,
+  # at x0.85 already 0.15.
+  floor_drag_scale: 1.0
+  sdf_res: 0.02
+  sdf_margin: 2.0
+  vehicle_start: [20.15, 4.76]
+
+# The footprint the MAP-DERIVED clearance feature is computed with.  Kept at
+# v12's padded 0.58 x 0.32 so the 35 inherited features mean exactly what they
+# meant to v12.  Contact and grazing are NOT scored with this -- see below.
+vehicle:
+  length: 0.58
+  width: 0.32
+
+# What actually touches a bale, from the Gazebo model (generate_vehicle_model.py
+# / speed_course.sdf): chassis box 0.55 x 0.30, wheel outer faces at +/-0.1625 m
+# lateral, wheel centres at +/-0.162 m longitudinal, radius 0.0566.
+# v12 "crashes" in formulaOne's env at -7 mm against the padded footprint and
+# gets round in Gazebo; against this geometry the offline score and Gazebo
+# agree on what contact means.
+collision:
+  chassis_half_length: 0.275
+  chassis_half_width: 0.150
+  wheel_x: 0.162
+  wheel_radius: 0.0566
+  wheel_outer_y: 0.1625
+
+plant:
+  speed_slew_rate: 2.0
+  max_speed: 8.0
+  command_dead_time: 0.19
+  mass: 3.599
+  coast_f0: 2.18
+  coast_f1: 0.47
+  max_accel: 3.0
+  brake_decel: 0.0          # THE CAR HAS NO BRAKES.
+  wheelbase: 0.324
+  understeer_gradient: 0.007
+  tire_scrub: 1.10
+  yaw_response_tau: 0.34
+  steering_command_points: [-1.0, -0.5, 0.0, 0.5, 1.0]
+  steering_angle_points: [-0.382, -0.191, 0.0, 0.256, 0.512]
+  steering_tau: 0.05
+  steering_slew: 6.16
+  # NEW.  Lateral grip, as a cap on the lateral acceleration the tires can
+  # carry: |v * yaw_rate| <= mu * g.  vehicle.yaml mu_lateral 1.0 (`guess`);
+  # the skidpad held 0.55 g without sliding, so 0.55 is a LOWER bound.
+  mu: 1.0
+  gravity: 9.81
+  # NEW.  First-order ESC/motor lag between the bridge's slewed target and the
+  # speed the plant chases.  Unmeasured; nominal small because the bridge slew
+  # (2.0 m/s^2) is what binds today.
+  motor_tau: 0.0
+
+env:
+  control_hz: 20.0
+  substeps: 10
+  laps: 3
+  # 3 laps at v12's pace is ~100 s from a standing start; the stop is <15 s.
+  episode_timeout_s: 170.0
+  random_start: true
+  random_start_speed: [0.0, 5.2]
+  lookahead_m: [0.5, 1.0, 2.0, 3.0, 4.5, 6.0, 8.0, 10.0, 13.0, 16.0]
+  steer_residual: 0.5
+  steer_prior:
+    k_lateral: 0.8
+    k_heading: 0.4
+    speed_floor: 1.2
+    horizon_s: 0.35
+    lead_scale: 0.50
+    k_rate: 0.08
+  yaw_rate_filter: 0.4
+  speed_rate_filter: 0.25
+  observe_accel: false      # 35 map features, exactly v12's
+  stall_speed: 0.25
+  stall_patience_s: 2.5
+  baseline_speed_scale: 0.90
+  stop_speed: 0.20
+  stop_timeout_s: 14.0
+
+# THE BALES ARE NOT WHERE THE MAP SAYS.  Implemented as a displacement field
+# per episode, d(p) = sum_k a_k sin(w_k . p + phi_k), applied to the world the
+# plant drives in and the camera sees -- never to the map the policy's prior
+# and lookahead read.  So the gap between the two is exactly what the depth
+# channel has to close.
+#   layout   long wavelength: a straight built 8 cm to one side of the
+#            drawing.  The TRUE centerline moves with it (it is the middle of
+#            the corridor as built), so the reward follows the real course.
+#   jitter   bale-length wavelength: each bale a few cm off its neighbour.
+#            Makes the walls ragged; the centerline does NOT follow it.
+#   inflate  bale scale: every face moves out (bigger bales) or in, in metres.
+#            A 36 x 18 in bale at +/-5% is +/-2.3 cm of length, 1.1 of width.
+# Amplitudes bound |d| (each mode gets amp / modes), so the corridor can never
+# narrow by more than 2 * (jitter + inflate) = 11 cm of its 0.92 m.
+world:
+  layout_amp: [0.0, 0.10, 0.0]        # m
+  layout_wavelength: [8.0, 30.0]      # m
+  layout_modes: 3
+  jitter_amp: [0.0, 0.035, 0.0]       # m
+  jitter_wavelength: [1.2, 3.0]       # m
+  jitter_modes: 4
+  inflate: [-0.015, 0.02, 0.0]        # m
+  bale_height: 0.3556
+
+# ZED 2i as simulated (jetson/cfr_arduino_bridge/launch/sensors_world.py:
+# 110 deg HFOV, 640x360, near 0.2, far 20, mounted 0.315 m ahead of centre and
+# 0.20 m up) and as configured on the car (cfr_zed2i.yaml: depth published at
+# 12 fps, NEURAL_LIGHT).  The camera sits BELOW the 0.356 m bale tops, so
+# every horizon ray ends on a bale: the course is 2.5-D and a height-banded,
+# azimuth-binned slice of the depth image carries all of it.
+camera:
+  image_width: 640
+  image_height: 360
+  # The car reads every 10th column and every 5th row of the depth image, at
+  # pixel centres: 64 azimuths, rows 0.024 rad apart.  Rows are denser than
+  # columns on purpose: a 0.26 m height band at 10 m spans 0.026 rad, so at
+  # 10-pixel row spacing a bale face past ~6 m falls BETWEEN rows and the
+  # straight ahead reads as no data.
+  col_stride: 10
+  row_stride: 5
+  hfov_deg: 110.0
+  x: 0.315
+  z: 0.20
+  min_range: 0.30           # ZED 2i minimum depth
+  max_range: 20.0
+  # Virtual LiDAR: back-project, keep points this high above the ground,
+  # take the nearest per column.  Low edge rejects the ground under a small
+  # pitch error; high edge is just under the bale tops.
+  band: [0.07, 0.33]        # m above ground
+  scan_max: 10.0            # m, encoded range saturates here
+  stack: 4                  # frames of history
+  # Rows that can ever land inside the band at >= min_range; the rest are
+  # ground or sky whatever the pose.  Only these are rendered or read.
+  row_slope_limit: 0.50
+
+sensor_noise:
+  camera_hz: [10.0, 15.0, 12.0]       # car publishes 12, Gazebo renders 15
+  depth_latency: [0.04, 0.12, 0.07]   # s, exposure to arrival
+  frame_drop: [0.0, 0.10, 0.0]        # fraction of frames never delivered
+  # Stereo error grows with range squared: sigma_Z = s0 + s2 * Z^2.
+  # ZED 2i spec: <1% to 3 m, <5% to 15 m -> s2 ~ 0.003-0.01.
+  noise_s0: [0.0, 0.01, 0.0]          # m
+  noise_s2: [0.001, 0.010, 0.003]     # 1/m
+  pixel_dropout: [0.0, 0.15, 0.0]     # random invalid pixels
+  blob_rate: [0.0, 1.5, 0.0]          # mean invalid blobs per frame (glare, shadow)
+  edge_bleed: [0.0, 0.6, 0.0]         # P(flying pixel) at a depth edge
+  pitch_err_deg: [-0.75, 0.75, 0.0]   # static, after IMU levelling
+  pitch_jitter_deg: [0.0, 0.15, 0.0]  # per frame
+  yaw_err_deg: [-1.5, 1.5, 0.0]       # mount yaw
+  height_err: [-0.01, 0.01, 0.0]      # m
+  hfov_half_deg: [51.0, 55.0, 55.0]   # a real 2i at HD720 may be narrower
+
+randomize:
+  enabled: true
+  # --- v12's draws, same ranges
+  dead_time: [0.13, 0.26, 0.19]
+  # Lowest drag drawn = coast_scale lo / mass_scale hi = 0.95 / 1.055 = 0.90,
+  # the least v12's floor can take (see track.floor_drag_scale).  More drag is
+  # always feasible -- it only makes the car slow sooner -- so the top end stays.
+  coast_scale: [0.95, 1.12, 1.0]
+  accel_scale: [0.80, 1.20, 1.0]
+  slew_scale: [0.75, 1.25, 1.0]
+  steer_gain: [0.82, 1.10, 1.0]
+  steer_asymmetry: [0.85, 1.15, 1.0]
+  steer_offset: [-0.035, 0.035, 0.0]
+  steer_limit: [0.38, 0.55, 0.512]
+  understeer: [0.0, 0.02, 0.007]
+  scrub_scale: [0.90, 1.15, 1.0]
+  yaw_tau_scale: [0.6, 1.6, 1.0]
+  steering_tau: [0.04, 0.08, 0.05]
+  pose_noise_xy: [0.0, 0.022, 0.0]
+  pose_noise_yaw: [0.0, 0.010, 0.0]
+  pose_latency: [0.02, 0.10, 0.02]
+  pose_drift_m_per_lap: [0.0, 0.10, 0.0]
+  pose_drift_rad_per_lap: [0.0, 0.03, 0.0]
+  start_lateral: [-0.16, 0.16, 0.0]
+  start_heading: [-0.09, 0.09, 0.0]
+  control_jitter: [0.9, 1.1, 1.0]
+  action_dropout: [0.0, 0.05, 0.0]
+  # --- new
+  # Ground friction.  0.60 is just above the 0.55 g the skidpad HELD, and the
+  # course never needs more than 0.43 g (2.5 m/s round R 1.48 m), so every
+  # draw can make every corner -- trap #1 of formulaOne, checked in selftest.
+  mu: [0.60, 1.10, 1.0]
+  # Battery, mounts, wiring.  Scales drag deceleration and accel by 1/m.  Not
+  # the yaw lag: yaw_tau_scale already spans the measured per-trace spread.
+  mass_scale: [0.95, 1.055, 1.0]
+  motor_tau: [0.0, 0.12, 0.0]         # s
+  throttle_delay: [0.0, 0.06, 0.0]    # s, on top of dead_time, throttle only
+
+reward:
+  # THE EXPERT REWARD.  The map knows the exact centerline, so the reward can
+  # say exactly what "good" is: progress along the TRUE centerline, paid in
+  # proportion to how well the car sits on it:
+  #
+  #     gate = exp(-e_y^2 / 2 sigma_y^2) * exp(-e_psi^2 / 2 sigma_psi^2)
+  #     progress_reward = progress * metres_advanced * gate
+  #
+  # e_y and e_psi are measured against the centerline AS BUILT (the layout
+  # warp above), from the true pose -- never from what the car senses.  The
+  # policy sees depth and a noisy map; the reward sees the truth.
+  #
+  # Multiplicative, not additive, and that is the design: a metre driven off
+  # the line is worth less than a metre on it, in proportion to the speed it
+  # was driven at, so precision is priced exactly where it is dangerous (fast)
+  # and costs nothing while the car is parked.  Bounded, so a corner's
+  # unavoidable error cannot outbid the whole lap -- the lesson of formulaOne's
+  # quadratic `lateral` term.  The speed floors stop the other escape (crawl).
+  #   e_y 0.05 -> 0.97   0.10 -> 0.88   0.20 -> 0.61   0.30 -> 0.32
+  progress: 6.0
+  sigma_y: 0.20             # m
+  sigma_psi: 0.35           # rad
+  # The same gate as a standing cost, so the line still matters in the
+  # stopping phase, where progress no longer pays.
+  track: 3.0                # per second at gate = 0
+  time: 3.0                 # formulaOne: 4.0 buys crashes, 2.0 crawls
+  overspeed_linear: 20.0
+  overspeed_quad: 15.0
+  graze: 15.0
+  graze_margin: 0.10        # m from the REAL body (v12's 0.12 was from padding)
+  steer_rate: 0.04
+  steer_jerk: 0.15          # sized against PPO's exploration noise, see F1 trap #4
+  lap_bonus: 25.0
+  finish_bonus: 60.0
+  stop_bonus: 80.0
+  lap_improve: 2.0
+  lap_improve_cap: 6.0
+  crash: -40.0
+  stall: -20.0
+
+train:
+  total_steps: 40000000
+  n_envs: 256
+  n_steps: 64
+  batch_size: 4096
+  n_epochs: 4
+  gamma: 0.995
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.005
+  learning_rate: 0.0003
+  lr_final_frac: 0.05
+  # Actor exactly v12's shape so it can START as v12.  The critic is bigger
+  # and sees privileged truth (true CTE, friction, mass, lags, map error): an
+  # asymmetric actor-critic.  Under this much randomisation a critic that has
+  # to infer the car it drew from noisy inputs is the bottleneck, and it never
+  # ships, so there is no reason to blind it.
+  pi_arch: [128, 128]
+  vf_arch: [256, 256]
+  log_std_init: -1.0
+  # Start the actor as v12 (new inputs get zero weight, so step 0 IS v12),
+  # then train only the critic for `critic_warmup_steps` so the first policy
+  # updates are not driven by a random value function.
+  init_from: ../formulaOne/bestModel/v12/best_model.zip
+  critic_warmup_steps: 1500000
+  # Randomisation strength ramps from `start` to 1.0 over the first `ramp`
+  # fraction of training.  Evaluation is always at full strength.
+  dr_curriculum: {start: 0.4, ramp: 0.4}
+  eval_every_steps: 1000000
+  seed: 0
