@@ -139,7 +139,7 @@ def main():
     check("car-side sampler reproduces the render", agree < 1e-6, f"{agree:.1e}")
 
     print("\n--- v12")
-    here_obs = obs[0, : env.map_dim]
+
     check("map block is 35 wide, like v12", env.map_dim == 35, f"{env.map_dim}")
     check(
         "no NaN in the observation", np.isfinite(obs).all(), f"{obs.shape[1]} columns"
