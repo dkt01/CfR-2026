@@ -155,6 +155,8 @@ let latestSlashPose;
 let followTargetOffset;
 let followCameraOffset;
 let updatingFollowView = false;
+let followYaw;
+let followYawStamp;
 let simulationSocket;
 let worldControlType;
 let booleanType;
@@ -220,25 +222,32 @@ function getSlashYaw(pose) {
   );
 }
 
-function slashQuaternion(pose) {
-  const { x, y, z, w } = pose.orientation;
-  return new THREE.Quaternion(x, y, z, w).normalize();
+// Smooth heading briefly while keeping the camera level through banks and ramps.
+const FOLLOW_YAW_TAU = 0.08;
+
+function followRotation() {
+  return new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), followYaw);
 }
 
 function captureFollowView() {
   const scene = viewer["scene"];
-  if (!followSlash || updatingFollowView || !latestSlashPose || !scene) {
+  if (!followSlash || updatingFollowView || !latestSlashPose || !scene || followYaw === undefined) {
     return;
   }
 
-  // Store mouse orbit and zoom in the car's frame so both survive a turn or
-  // a banked section without the view slipping away from the robot.
-  const inverse = slashQuaternion(latestSlashPose).invert();
+  const inverse = followRotation().invert();
   const { x, y, z } = latestSlashPose.position;
   const position = new THREE.Vector3(x, y, z);
   const target = scene.controls.target;
-  followTargetOffset = target.clone().sub(position).applyQuaternion(inverse);
-  followCameraOffset = scene.camera.position.clone().sub(target).applyQuaternion(inverse);
+  const targetOffset = target.clone().sub(position).applyQuaternion(inverse);
+  const cameraOffset = scene.camera.position.clone().sub(target).applyQuaternion(inverse);
+  // Preserve zoom and height, but keep the chase view behind the car.
+  followTargetOffset.set(Math.max(0, targetOffset.x), 0, targetOffset.z);
+  followCameraOffset.set(
+    -Math.max(0.5, Math.hypot(cameraOffset.x, cameraOffset.y)),
+    0,
+    Math.max(0.3, cameraOffset.z),
+  );
 }
 
 function startSlashFollowView(pose) {
@@ -247,9 +256,10 @@ function startSlashFollowView(pose) {
     return;
   }
 
-  // A short, low chase view keeps the robot framed like the Gazebo videos.
-  followTargetOffset = new THREE.Vector3(1.25, 0, 0.2);
-  followCameraOffset = new THREE.Vector3(-3.25, 0, 0.95);
+  followYaw = getSlashYaw(pose);
+  followYawStamp = performance.now();
+  followTargetOffset = new THREE.Vector3(0.5, 0, 0.15);
+  followCameraOffset = new THREE.Vector3(-3, 0, 3.85);
   updateSlashFollowView(pose);
 }
 
@@ -259,13 +269,21 @@ function updateSlashFollowView(pose) {
     return;
   }
 
-  const rotation = slashQuaternion(pose);
+  const now = performance.now();
+  const dt = Math.min(Math.max((now - followYawStamp) / 1000, 0), 0.5);
+  followYawStamp = now;
+  const difference = getSlashYaw(pose) - followYaw;
+  followYaw += Math.atan2(Math.sin(difference), Math.cos(difference)) *
+    (1 - Math.exp(-dt / FOLLOW_YAW_TAU));
+  const rotation = followRotation();
   const position = new THREE.Vector3(pose.position.x, pose.position.y, pose.position.z);
   const target = scene.controls.target;
   updatingFollowView = true;
   target.copy(position).add(followTargetOffset.clone().applyQuaternion(rotation));
   scene.camera.position.copy(target).add(followCameraOffset.clone().applyQuaternion(rotation));
-  scene.camera.up.set(0, 0, 1).applyQuaternion(rotation);
+  scene.camera.up.set(0, 0, 1);
+  // gzweb controls update position without aiming the camera at their target.
+  scene.camera.lookAt(target);
   scene.controls.update();
   updatingFollowView = false;
 }
@@ -945,6 +963,7 @@ document.querySelector("#reset-view").addEventListener("click", () => {
   followSlash = false;
   followTargetOffset = undefined;
   followCameraOffset = undefined;
+  followYaw = undefined;
   followButton.textContent = "Follow robot";
   showCourseOverview();
 });
