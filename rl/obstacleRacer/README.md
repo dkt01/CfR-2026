@@ -184,7 +184,7 @@ In the sim container, with the workspace built:
 ```
 
 To watch a run the way it happens on race day (the driver waits for the start
-signal and takes the throttle off when lap_counter reports the lap):
+signal and takes the throttle off when lap_counter reports the laps):
 
 ```bash
 # Gazebo: course, ZED, start signal detector, lap counter (1 lap), driver
@@ -193,17 +193,29 @@ LIBGL_ALWAYS_SOFTWARE=1 ros2 launch rl/obstacleRacer/obstacle_racer_sim.launch.p
 # or turn the signal green yourself:
 ros2 service call /obstacle_randomizer/start_signal std_srvs/srv/SetBool "{data: true}"
 
-# Send it to the Orin: the code to ~/software/obstacleRacer, and runs/v4's
-# policy.npz (export_policy.py first) and config.yaml to its top level
-jetson/scripts/syncSoftware.sh --racer-policy v4 --build
+# Send it to the Orin: the code to ~/software/obstacleRacer, and the race
+# policy's policy.npz and config.yaml to its top level.  The race policy is
+# committed in bestModel/v8/ and is the sync's default; --racer-policy RUN
+# sends another from bestModel/RUN or runs/RUN (export_policy.py first)
+jetson/scripts/syncSoftware.sh --build
 
 # The car, with ~/software/scripts/launch.sh --no-cmd-vel already up and the
-# E-Stop in hand: start signal detector, lap counter, driver, recorder
-ros2 launch ~/software/obstacleRacer/obstacle_racer_car.launch.py speed_scale:=0.3
+# E-Stop in hand: start signal detector, lap counter (2 laps), driver, recorder
+~/software/scripts/launchObstacleRacer.sh            # speed_scale 0.3 by default
 ```
 
-Without `--racer-policy` the sync sends the code and the tree's config.yaml
-only, which is enough for `driver:=prior`.
+`--racer-policy ''` sends the code and the tree's config.yaml only, which is
+enough for `driver:=prior`, and leaves the policy on the Orin alone.
+
+The car goes on whichever comes first: the start signal turning green, or the
+Arduino's Manual Start bit rising from 0 to 1 (a bit already set when the
+driver starts does not count). lap_counter arms on either, and the driver
+takes the throttle off when it latches done after `laps` laps (2, the
+Obstacle Course's). `check_car_chain.py` checks that chain with no car:
+bring up `obstacle_racer_car.launch.py record:=false` in a built workspace,
+then run it with `--start visual` and again with `--start manual`; it plays
+the bridge, the ZED and the start signal, and moves a synthetic pose round a
+loop only while the driver commands a speed.
 
 `obstacle_racer.launch.py` is the driver alone, for validate.sh.  The car
 launch records with `--cloud-hz 0`: record_run.py otherwise drops the ZED cloud

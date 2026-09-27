@@ -30,7 +30,7 @@ cloud_segmentation_node runs and the fixtures score), then
 `scan_from_segmentation` and the segmenter's gates, then observation.py -- the
 module the trainer built every training observation with.
 
-    ros2 launch rl/obstacleRacer/obstacle_racer.launch.py policy:=runs/v1/policy.npz
+    ros2 launch rl/obstacleRacer/obstacle_racer.launch.py policy:=bestModel/v8/policy.npz
 
 driver:=prior drives the map-free steering prior alone at a fixed speed, for
 checking the whole chain before a policy exists.
@@ -104,7 +104,7 @@ def attitude(pose):
 class ObstacleRacer(Node):
     def __init__(self):
         super().__init__("obstacle_racer")
-        self.declare_parameter("policy", str(HERE / "runs/v1/policy.npz"))
+        self.declare_parameter("policy", str(HERE / "policy.npz"))
         self.declare_parameter("config", str(HERE / "config.yaml"))
         self.declare_parameter("driver", "policy")  # policy | prior
         self.declare_parameter("prior_speed", 1.0)  # m/s, driver:=prior

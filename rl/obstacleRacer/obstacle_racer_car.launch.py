@@ -16,7 +16,7 @@ Then this:
 It adds, beside the bridge and camera:
 
     start_signal_detector   on the ZED's color image; latches /start_signal_detector/go
-    lap_counter             `laps` laps (1: one run is one lap); latches /lap_counter/done
+    lap_counter             `laps` laps (2, the Obstacle Course's); latches /lap_counter/done
     obstacle_racer_node     drives on go or Manual Start, takes the throttle off on done
     record_run.py           the run, into ~/cfr_runs (record:=false to skip)
 
@@ -73,8 +73,8 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "laps",
-            default_value="1",
-            description="Laps before lap_counter latches ~/done",
+            default_value="2",
+            description="Laps before lap_counter latches ~/done: 2 on the Obstacle Course",
         ),
         DeclareLaunchArgument(
             "image_topic",

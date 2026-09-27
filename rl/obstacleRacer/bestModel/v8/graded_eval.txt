@@ -1,0 +1,9 @@
+v8 race policy: runs/v8/step_128000k.zip (128M steps), exported with export_policy.py.
+Chosen 2026-09-27 from the 116-130M checkpoints on one start-box lap per car, 256 cars:
+the 32 held-out layouts x4 and 64 never-seen layouts (seeds 5101-5164) x2.
+
+step_116000k.zip   all fin 25.4%  54.5 m lap  89.0 s | held 25.0%  55.5 m | new 25.8%  53.6 m
+step_122000k.zip   all fin 23.8%  55.0 m lap  90.2 s | held 29.7%  57.3 m | new 18.0%  52.6 m
+step_126000k.zip   all fin 24.2%  54.8 m lap  90.3 s | held 30.5%  56.3 m | new 18.0%  53.4 m
+step_128000k.zip   all fin 24.6%  55.5 m lap  94.0 s | held 24.2%  55.7 m | new 25.0%  55.3 m
+step_130000k.zip   all fin 20.3%  53.6 m lap  90.3 s | held 25.0%  55.0 m | new 15.6%  52.3 m
