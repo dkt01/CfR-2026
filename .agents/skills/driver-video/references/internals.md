@@ -34,6 +34,20 @@ a newer chase stamp and re-steps if one was dropped. All of this goes through
 `ros_gz_bridge` services (ControlWorld, SetEntityPose, SpawnEntity,
 DeleteEntity); the image has no gz python bindings.
 
+## Gazebo-mode mechanics
+
+After setup, the capture pauses the world and runs it in 10 ms steps
+(`--step-ms`). Before each step it moves the chase camera (and, on the Speed
+Course, the film ZED) to the car and waits for the move to land. The car's
+pose is carried forward from its 30 Hz stamp to mid-step with odometry speed
+and yaw rate. Wall time is paced to `--rtf`, because the driver and segmenter
+run in wall time and need that slack to keep up with sim time. The driver only
+sees sim time, so for it this is the same as the world file's real-time cap.
+
+The first version moved the cameras asynchronously while the world ran free.
+Each move landed a varying few ms late, so the car crept across the frame and
+snapped back ("rubber-banding"): ±15% in the car's apparent size at 5 m/s.
+
 ## Traps (each cost a failed run once)
 
 - **Best-effort image subscriptions stall replays.** A 1.5 MB image is
@@ -47,6 +61,9 @@ DeleteEntity); the image has no gz python bindings.
   other physics fields: the car floated up upside down. Cap the real-time
   factor in the world file instead (`patch-world --rtf`).
 - **CPU starvation trips driver watchdogs.** See Runtime in SKILL.md: cap RTF.
+  Measured on 2026-09-26 with a 4 s sim window: a best-effort Python
+  subscriber to `cloud_registered` got 15 of 48 clouds (gaps up to 1.2 s),
+  and a reliable one got all 48. Stepping and free running dropped the same.
 - **Stopping a launch:** `docker restart` is the only clean way. Killing
   `ros2 launch` orphans gz and the nodes, and `pkill -f` inside
   `docker exec bash -c "..."` matches (and kills) its own shell.

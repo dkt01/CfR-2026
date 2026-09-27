@@ -6,9 +6,10 @@
     capture.py replay --course speed --track /work/track.npz --out /work/out --label "..."
 
 gazebo  The real stack drives under Gazebo physics (launched by video.sh).
-        This films it in sim time: a level, yaw-following chase camera is
-        re-posed on every ground-truth pose, the run is started, and it ends on
-        lap_counter's done, a rollover, no progress, or the timeout.
+        Once set up, the capture steps the world 10 ms at a time, paced to
+        --rtf, and places a level, yaw-following chase camera on the car
+        before every step.  The run ends on lap_counter's done, a rollover,
+        no progress, or the timeout.
 replay  A numpy-sim track (rollout.py) is re-posed frame by frame with Gazebo
         paused: a static ghost of the car carries the ZED view, the chase
         camera follows it, and each frame steps the world one control period so
@@ -239,14 +240,15 @@ def make_node(args):
             self.hoops = None
             self.laps = None
             self.done = False
-            self.on_pose_hook = None
+            self.pose_t = None
+            self.yaw_rate = 0.0
             self.create_subscription(
                 PoseStamped, "/zed/zed_node/pose", self.on_pose, qos_profile_sensor_data
             )
             self.create_subscription(
                 Odometry,
                 "/zed/zed_node/odom",
-                lambda m: setattr(self, "speed", m.twist.twist.linear.x),
+                self.on_odom,
                 qos_profile_sensor_data,
             )
             self.create_subscription(
@@ -283,7 +285,6 @@ def make_node(args):
                 create=SpawnEntity,
                 remove=DeleteEntity,
             )
-            self.pending = None
 
         def now(self):
             return self.get_clock().now().nanoseconds * 1e-9
@@ -296,8 +297,29 @@ def make_node(args):
             p = m.pose.position
             r, pch, y = rpy_of(m.pose.orientation)
             self.pose = (p.x, p.y, p.z, y, pch, r)
-            if self.on_pose_hook:
-                self.on_pose_hook(m.header.stamp.sec + m.header.stamp.nanosec * 1e-9)
+            self.pose_t = m.header.stamp.sec + m.header.stamp.nanosec * 1e-9
+
+        def on_odom(self, m):
+            self.speed = m.twist.twist.linear.x
+            self.yaw_rate = m.twist.twist.angular.z
+
+        def pose_at(self, t):
+            """The car's pose carried forward to sim time t.
+
+            The pose publisher runs at 30 Hz, so the latest pose can be 33 ms
+            old -- 17 cm at 5 m/s, which a camera placed from it shows.
+            """
+            x, y, z, yaw, pitch, roll = self.pose
+            dt = min(max(t - self.pose_t, 0.0), 0.1)
+            yaw_mid = yaw + 0.5 * self.yaw_rate * dt
+            return (
+                x + self.speed * math.cos(yaw_mid) * dt,
+                y + self.speed * math.sin(yaw_mid) * dt,
+                z,
+                yaw + self.yaw_rate * dt,
+                pitch,
+                roll,
+            )
 
         def wait_until(self, cond, timeout):
             t0 = time.monotonic()
@@ -701,22 +723,37 @@ def run_gazebo(args):
                 "zedcam", "/video/zed", 640, 360, 1.91986, args.hz, near=0.2, far=20
             ),
         )
-    last = {"t": None}
+    # From here the capture drives the clock.  Moving the cameras while the
+    # world runs free lands each move a varying few ms late, so the car
+    # creeps across the frame and snaps back; moving them between steps, and
+    # waiting for the move, puts them on the car for every render.
+    n.control(pause=True)
+    step_s = args.step_ms / 1000.0
 
-    def on_pose(stamp):
-        dt = 0.0 if last["t"] is None else stamp - last["t"]
-        last["t"] = stamp
-        if n.pending is not None and not n.pending.done():
-            return  # the bridge is still busy with the last move
-        n.pending = n.set_pose("chasecam", *follow.update(n.pose, dt), wait=False)
+    def place_cameras(t):
+        p = n.pose_at(t)
+        n.set_pose("chasecam", *follow.update(p, step_s))
         if use_zedcam:
-            x, y, z, yaw, pitch, roll = n.pose
+            x, y, z, yaw, pitch, roll = p
             o = rot(roll, pitch, yaw) @ np.array(ZED_OFFSET)
-            n.set_pose(
-                "zedcam", x + o[0], y + o[1], z + o[2], roll, pitch, yaw, wait=False
-            )
+            n.set_pose("zedcam", x + o[0], y + o[1], z + o[2], roll, pitch, yaw)
 
-    n.on_pose_hook = on_pose
+    def step():
+        t, w = n.now(), time.monotonic()
+        place_cameras(t + step_s / 2)  # a render lands somewhere in the step
+        n.control(steps=args.step_ms)
+        n.wait_until(lambda: n.now() >= t + step_s - 1e-4, 10.0)
+        # The ROS nodes run in wall time: give every step at least step/rtf of
+        # it.  Pacing the average instead lets steps after a slow render run
+        # back to back, and the segmenter falls behind (stale-cloud holds).
+        while time.monotonic() - w < step_s / args.rtf:
+            rclpy.spin_once(n, timeout_sec=0.005)
+
+    def advance(seconds):
+        end = n.now() + seconds
+        while n.now() < end:
+            step()
+
     comp = Compositor(args.out, args.title, args.subtitle, args.note, mm)
     stamps, rec = [], {"on": False, "t_go": None, "status": ""}
     maxv = [0.0]
@@ -747,11 +784,15 @@ def run_gazebo(args):
             on_chase(m)
 
     n.on_img = on_img  # the subscriptions look on_img up at call time
-    if not n.wait_until(lambda: n.stamp["chase"] > 0, 180):
+    for _ in range(int(5.0 / step_s)):
+        if n.stamp["chase"] > 0:
+            break
+        step()
+    else:
         raise RuntimeError("the chase camera never rendered")
 
     rec.update(on=True, t_go=n.now(), status="waiting for the start")
-    n.wait_until(lambda: n.now() - rec["t_go"] > 1.5, 120)
+    advance(1.5)
     if args.course == "obstacle":
         n.call(SetBool, "/obstacle_randomizer/start_signal", SetBool.Request(data=True))
         manual = "/obstacle_racer/manual_start"
@@ -764,8 +805,15 @@ def run_gazebo(args):
     if kicked:
         n.call(SetBool, manual, SetBool.Request(data=True))
     outcome = "timeout"
-    while n.now() - t_green < args.timeout:
-        rclpy.spin_once(n, timeout_sec=0.05)
+    while True:
+        # --timeout is driving time: the wait for the start (up to the manual
+        # fallback at 10 s) must not eat into a short clip.
+        if moved_at is None and n.now() - t_green > 30.0:
+            outcome = "no_start"
+            break
+        if moved_at is not None and n.now() - moved_at >= args.timeout:
+            break
+        step()
         x, y, _, _, pitch, roll = n.pose
         if math.hypot(x - last_xy[0], y - last_xy[1]) > 0.15:
             last_xy, last_move = (x, y), n.now()
@@ -790,10 +838,10 @@ def run_gazebo(args):
         "finish": "FINISHED",
         "rollover": "ROLLED OVER",
         "stuck": f"STUCK - no progress for {args.stuck_s:.0f} s",
-        "timeout": "TIMEOUT",
+        "timeout": f"TIME LIMIT - {args.timeout:.0f} s of driving",
+        "no_start": "NEVER STARTED",
     }[outcome]
-    t1 = n.now()
-    n.wait_until(lambda: n.now() - t1 > args.tail, 600)
+    advance(args.tail)
     rec["on"] = False
     first = 0
     if moved_at is not None:  # trim the idle wait for the start
@@ -912,11 +960,17 @@ def main():
         if name == "gazebo":
             p.add_argument("--seed", type=int, default=104)
             p.add_argument(
-                "--timeout", type=float, default=180.0, help="sim s after the start"
+                "--timeout", type=float, default=180.0, help="sim s of driving"
             )
             p.add_argument("--stuck-s", type=float, default=12.0)
             p.add_argument("--tail", type=float, default=3.0)
             p.add_argument("--hz", type=int, default=15)
+            p.add_argument(
+                "--rtf", type=float, default=0.1, help="wall pacing of the steps"
+            )
+            p.add_argument(
+                "--step-ms", type=int, default=10, help="sim ms per camera update"
+            )
             p.add_argument(
                 "--zed-topic",
                 default="",

@@ -15,7 +15,8 @@
 #   --seed N          obstacle layout seed (default 104)
 #   --out FILE.mp4    default: <policy dir>/video/<name>.mp4
 #   --label TEXT      driver name in the title (default: from the policy path)
-#   --timeout S       gazebo: sim seconds after the start before giving up (180)
+#   --timeout S       gazebo: sim seconds of driving before stopping (180); a short
+#                     value makes a clip, labeled "TIME LIMIT", not a failure
 #   --rtf R           Gazebo real-time factor cap (0.1; raise it on an idle machine)
 #   --episodes N      replay: numpy starts to try (obstacle 24, speed 1)
 #   --pick P          replay: fastest | first | median | any  (any = longest run if none finish)
@@ -186,7 +187,7 @@ SEEDTXT=""
 [[ "$COURSE" == obstacle ]] && SEEDTXT="layout seed $SEED | "
 if [[ "$MODE" == gazebo ]]; then
   SUB="Gazebo physics | ${SEEDTXT}sim-time playback"
-  EXTRA="--seed $SEED --timeout $TIMEOUT"
+  EXTRA="--seed $SEED --timeout $TIMEOUT --rtf $RTF"
   if [[ "$COURSE" == obstacle ]]; then
     EXTRA="$EXTRA --zed-topic /zed/zed_node/left/image_rect_color"
   else

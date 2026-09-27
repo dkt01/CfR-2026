@@ -93,8 +93,13 @@ mode trims the wait for the start.
   min. A training run usually holds the CPU, and at full speed the driver's
   0.5 s stale-sensor watchdog ("pose or cloud stale -- holding at zero speed"
   in `/work/sim.log`) keeps stopping the car and corrupts the run. On an idle
-  machine `--rtf 0.3` is fine. Check that log for those holds if a Gazebo run
-  looks jerky.
+  machine `--rtf 0.3` is fine.
+- A few holds remain even at 0.1 on the Obstacle Course. obstacle_racer_node
+  reads the full `cloud_registered` cloud best-effort, and under load it
+  receives only about 4 of the 12 clouds per sim second. Any gap over 0.5 s
+  trips the watchdog. That is the driver as it really runs in Gazebo, not the
+  capture, so count the holds (`grep -c stale /work/sim.log`, with `--keep`)
+  and mention them when a run stutters.
 - Replay renders at about 2–3 frames/s: roughly 8 min for a 65 s obstacle
   lap. `--limit 120` gives a quick 6 s look first.
 - The first run creates the container and builds the workspace, which takes a
