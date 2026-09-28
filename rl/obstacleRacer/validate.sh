@@ -7,6 +7,9 @@
 #   ./validate.sh --prior                          # the steering prior alone
 #   ./validate.sh --seg-gap [--poses 150]          # sensor model vs segmenter
 #   ./validate.sh --surfaces                       # plant vs Gazebo's body motion
+#   ./validate.sh --flat-surfaces                  # steering on open floor
+#   ./validate.sh --helix-surfaces                 # short passes on the helix
+#   ./validate.sh --cadence                        # raw and processed cloud timing
 #
 # Run inside the sim container (sim-launch skill) with the workspace built:
 #   docker exec -it <container> bash -lc 'cd /repo/rl/obstacleRacer && ./validate.sh'
@@ -19,22 +22,33 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 REPO=$(cd ../.. && pwd)
 
 POLICY="$PWD/runs/v1/policy.npz"
+CONFIG="$PWD/config.yaml"
 MODE=validate
 DRIVER=policy
 STARTS=5
 SEEDS=""
 TIMEOUT=""
 POSES=""
+HELIX_POSES=""
+MONITOR_CLOUD=""
+CADENCE_SECONDS=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --policy) POLICY="$(realpath "$2")"; shift 2;;
+    --config) CONFIG="$(realpath "$2")"; shift 2;;
     --prior) DRIVER=prior; shift;;
     --starts) STARTS="$2"; shift 2;;
     --seeds) SEEDS="$2"; shift 2;;
     --timeout) TIMEOUT="$2"; shift 2;;
     --poses) POSES="$2"; shift 2;;
+    --helix-poses) HELIX_POSES="$2"; shift 2;;
+    --monitor-cloud) MONITOR_CLOUD=1; shift;;
+    --seconds) CADENCE_SECONDS="$2"; shift 2;;
+    --cadence) MODE=cadence; shift;;
     --seg-gap) MODE=seg-gap; shift;;
     --surfaces) MODE=surfaces; shift;;
+    --helix-surfaces) MODE=helix-surfaces; shift;;
+    --flat-surfaces) MODE=flat-surfaces; shift;;
     *) echo "unknown argument: $1"; exit 1;;
   esac
 done
@@ -84,16 +98,24 @@ for _ in $(seq 90); do
 done
 
 if [[ "$MODE" == "validate" ]]; then
-  spawn ros2 launch "$PWD/obstacle_racer.launch.py" policy:="$POLICY" driver:="$DRIVER" \
+  spawn ros2 launch "$PWD/obstacle_racer.launch.py" policy:="$POLICY" config:="$CONFIG" driver:="$DRIVER" \
     >/tmp/obstacle_racer_driver.log 2>&1
   echo -n "waiting for the driver"
   for _ in $(seq 60); do
     if ros2 service list 2>/dev/null | grep -q /obstacle_racer/manual_start; then echo " ok"; break; fi
     echo -n "."; sleep 1
   done
-  python3 gazebo_check.py validate --starts "$STARTS" ${SEEDS:+--seeds "$SEEDS"} ${TIMEOUT:+--timeout "$TIMEOUT"}
+  python3 gazebo_check.py validate --starts "$STARTS" ${SEEDS:+--seeds "$SEEDS"} ${TIMEOUT:+--timeout "$TIMEOUT"} ${MONITOR_CLOUD:+--monitor-cloud}
 elif [[ "$MODE" == "seg-gap" ]]; then
-  python3 gazebo_check.py seg-gap ${POSES:+--poses "$POSES"}
+  python3 gazebo_check.py seg-gap ${POSES:+--poses "$POSES"} ${SEEDS:+--seeds "$SEEDS"} ${HELIX_POSES:+--helix-poses "$HELIX_POSES"}
+elif [[ "$MODE" == "cadence" ]]; then
+  python3 gazebo_check.py cadence ${CADENCE_SECONDS:+--seconds "$CADENCE_SECONDS"}
 else
-  python3 gazebo_check.py "$MODE"
+  if [[ "$MODE" == "helix-surfaces" ]]; then
+    python3 gazebo_check.py surfaces --helix-only
+  elif [[ "$MODE" == "flat-surfaces" ]]; then
+    python3 gazebo_check.py surfaces --flat-only
+  else
+    python3 gazebo_check.py "$MODE"
+  fi
 fi
