@@ -550,6 +550,42 @@ def main():
             super().__init__()
             self.next_at = None
             self.next_ckpt = None
+            self.marks = []
+
+        def _on_rollout_end(self):
+            # ETAs in SB3's table, at the median rate of recent rollouts so
+            # one that paid for a 10 min eval does not skew them.
+            self.marks = (self.marks + [(time.time(), self.num_timesteps)])[-9:]
+            rates = [
+                (s1 - s0) / (t1 - t0)
+                for (t0, s0), (t1, s1) in zip(self.marks, self.marks[1:])
+                if t1 > t0
+            ]
+            if not rates:
+                return
+            rate = float(np.median(rates))
+            self.logger.record("eta/steps_per_s", round(rate, 1))
+            now = time.time()
+            live = dict(pid=os.getpid(), time=now, steps=self.num_timesteps, rate=rate)
+            for name, at in (
+                ("checkpoint", self.next_ckpt if ckpt_every else None),
+                ("eval", self.next_at),
+                ("done", target),
+            ):
+                if at is None:
+                    continue
+                live[f"next_{name}"] = at
+                s = max(0.0, (at - self.num_timesteps) / rate)
+                self.logger.record(
+                    f"eta/{name}",
+                    f"{int(s // 3600)}:{int(s % 3600 // 60):02d} "
+                    f"(at {time.strftime('%H:%M', time.localtime(now + s))})",
+                )
+            # history.json only changes per eval; the rl-train tui reads this
+            # between them.  Replaced whole so a reader never sees half a file.
+            tmp = args.dir / "live.json.tmp"
+            tmp.write_text(json.dumps(live))
+            os.replace(tmp, args.dir / "live.json")
 
         def _on_step(self):
             for info in self.locals.get("infos", []):

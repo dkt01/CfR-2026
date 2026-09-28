@@ -167,6 +167,9 @@ matplotlib gymnasium stable-baselines3 numba torch` (CPU torch).
 
 `tui.py` detects a racer run by its `history.json` and shows it through
 `racer_view.py`, with no container or log parsing. The view shows:
+- steps, rate and countdowns to the next checkpoint, eval and the end, from
+  the `live.json` train.py rewrites every rollout (a few minutes apart;
+  `history.json` only changes per eval)
 - held-out and training finish rate, lap time and progress
 - hoops threaded
 - how held-out runs end (outcome and course section)
