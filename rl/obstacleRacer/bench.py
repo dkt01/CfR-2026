@@ -5,6 +5,7 @@
     python3 bench.py --save base.npz       # record obs/reward/done for --check
     python3 bench.py --check base.npz      # same seed, same results?
     python3 bench.py --policy runs/v5/best_model.zip   # cars driven by a policy
+    python3 bench.py --layouts 10 --policy runs/v7/best_model.zip  # quick load
 
 Random actions drive most cars into a wall; --policy gives the states, and
 so the ray lengths, that training actually meets.
@@ -31,6 +32,9 @@ def main():
     ap.add_argument("--n", type=int, default=256, help="cars")
     ap.add_argument("--steps", type=int, default=200)
     ap.add_argument("--warmup", type=int, default=30)
+    ap.add_argument(
+        "--layouts", type=int, default=None, help="training layouts to load"
+    )
     ap.add_argument("--save", type=Path)
     ap.add_argument("--check", type=Path)
     ap.add_argument("--config", type=Path, default=HERE / "config.yaml")
@@ -48,10 +52,9 @@ def main():
     import layouts
 
     cfg = yaml.safe_load(args.config.read_text())
-    model = course_model.CourseModel(layouts.TRAIN_SEEDS + layouts.HELDOUT_SEEDS)
-    env = env_module.ObstacleEnv(
-        cfg, model, args.n, np.arange(len(layouts.TRAIN_SEEDS)), seed=0
-    )
+    seeds = layouts.TRAIN_SEEDS[: args.layouts] if args.layouts else layouts.TRAIN_SEEDS
+    model = course_model.CourseModel(seeds + layouts.HELDOUT_SEEDS)
+    env = env_module.ObstacleEnv(cfg, model, args.n, np.arange(len(seeds)), seed=0)
 
     spent = defaultdict(float)
 
@@ -72,12 +75,12 @@ def main():
     timed(env_module.O, "prior_steer", "prior")
 
     if args.policy:
-        from stable_baselines3 import PPO
+        import ppo_policy
 
-        policy = PPO.load(args.policy, device="cpu")
+        driver = ppo_policy.Driver(ppo_policy.load(args.policy, device="cpu"), args.n)
 
         def act(obs, k):
-            return policy.predict(obs, deterministic=True)[0]
+            return driver(obs)
     else:
         rng = np.random.default_rng(1)
         actions = rng.uniform(-1.0, 1.0, (args.warmup + args.steps, args.n, 2))

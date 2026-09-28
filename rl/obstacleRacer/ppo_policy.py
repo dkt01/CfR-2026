@@ -13,22 +13,36 @@ parameter.  Not a clamp: v3 clamped, and a clamp passes no gradient at its
 bound, so once the std drifted to the floor (0.082) it could never come back
 up.  The deterministic action is the mean itself; export_policy.py writes
 `output: tanh` so the car's NumpyPolicy squashes it the same way.
+
+From v7 the network is recurrent (train.recurrent): an LSTM carries a hidden
+state from step to step, so the policy can remember what left the camera's
+view -- the Wide Section's exit, hoop posts beside the car -- for as long as
+that pays, not just the second the frame stack covers.
 """
 
 from __future__ import annotations
 
 import math
+import json
+import zipfile
 
+import numpy as np
 import torch as th
 from stable_baselines3.common.distributions import DiagGaussianDistribution
 from stable_baselines3.common.policies import ActorCriticPolicy
 
 
-class SquashedMeanPolicy(ActorCriticPolicy):
+class _SquashedMean:
+    """The squashed mean and bounded std, for either policy class below."""
+
     squashes_mean = True
 
-    def __init__(self, *args, log_std_range=(-2.5, -0.5), **kwargs):
+    def __init__(self, *args, log_std_range=(-2.5, -0.5), log_std_shift=None, **kwargs):
         self.log_std_range = (float(log_std_range[0]), float(log_std_range[1]))
+        # Per action, added to the bounded log std: v8's steering is scaled
+        # by 2 (observation.steer_log_std_shift), so its std runs a factor 2
+        # lower in action units and the same in road-wheel units.
+        self.log_std_shift = tuple(float(v) for v in log_std_shift or ())
         lo, hi = self.log_std_range
         init = float(kwargs.get("log_std_init", 0.0))
         if not lo < init < hi:
@@ -48,7 +62,10 @@ class SquashedMeanPolicy(ActorCriticPolicy):
     @property
     def log_std(self) -> th.Tensor:
         lo, hi = self.log_std_range
-        return lo + (hi - lo) * th.sigmoid(self.log_std_raw)
+        log_std = lo + (hi - lo) * th.sigmoid(self.log_std_raw)
+        if self.log_std_shift:
+            log_std = log_std + th.tensor(self.log_std_shift, dtype=log_std.dtype)
+        return log_std
 
     def _get_action_dist_from_latent(self, latent_pi: th.Tensor):
         mean = th.tanh(self.action_net(latent_pi))
@@ -57,4 +74,61 @@ class SquashedMeanPolicy(ActorCriticPolicy):
     def _get_constructor_parameters(self):
         data = super()._get_constructor_parameters()
         data["log_std_range"] = self.log_std_range
+        if self.log_std_shift:
+            data["log_std_shift"] = self.log_std_shift
         return data
+
+
+class SquashedMeanPolicy(_SquashedMean, ActorCriticPolicy):
+    """v1-v6: a feed-forward MLP over the stacked frames."""
+
+
+try:  # the car runs policy.py alone and needs neither
+    from sb3_contrib.common.recurrent.policies import RecurrentActorCriticPolicy
+except ImportError:  # pragma: no cover
+    RecurrentActorCriticPolicy = None
+
+if RecurrentActorCriticPolicy is not None:
+
+    class SquashedMeanLstmPolicy(_SquashedMean, RecurrentActorCriticPolicy):
+        """v7: the same head behind an LSTM (sb3-contrib's RecurrentPPO)."""
+
+
+def load(path, **kwargs):
+    """A saved checkpoint, as PPO or RecurrentPPO -- whichever it was saved as."""
+    with zipfile.ZipFile(path) as z:
+        # SB3 serializes the policy class, so its name is not plain text in
+        # `data`. The LSTM settings are stored as ordinary policy kwargs.
+        policy_kwargs = json.loads(z.read("data"))["policy_kwargs"]
+        recurrent = "lstm_hidden_size" in policy_kwargs
+    if recurrent:
+        from sb3_contrib import RecurrentPPO
+
+        return RecurrentPPO.load(path, **kwargs)
+    from stable_baselines3 import PPO
+
+    return PPO.load(path, **kwargs)
+
+
+class Driver:
+    """Deterministic actions for a batch of cars, carrying the LSTM state.
+
+    Call it with the observation each step and tell it, via `ended`, which
+    cars' episodes just ended (their env reset them), so their hidden state
+    starts fresh.  An MLP policy ignores the state.
+    """
+
+    def __init__(self, model, n):
+        self.model = model
+        self.state = None
+        self.start = np.ones(n, bool)
+
+    def __call__(self, obs):
+        action, self.state = self.model.predict(
+            obs, state=self.state, episode_start=self.start, deterministic=True
+        )
+        self.start = np.zeros(len(obs), bool)
+        return action
+
+    def ended(self, mask):
+        self.start = np.asarray(mask, bool).copy()

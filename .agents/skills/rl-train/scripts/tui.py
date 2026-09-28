@@ -49,6 +49,8 @@ BOLD = "\x1b[1m"
 DIM = "\x1b[2m"
 RESET = "\x1b[0m"
 GREEN = "\x1b[32m"
+GRAY = "\x1b[90m"
+WHITE = "\x1b[97m"
 YELLOW = "\x1b[33m"
 RED = "\x1b[31m"
 SPARK_LEVELS = "▁▂▃▄▅▆▇█"
@@ -58,12 +60,16 @@ def color(text, code):
     return f"{code}{text}{RESET}"
 
 
-def sparkline(values):
+def sparkline(values, lo=None, hi=None):
+    """Autoscaled to the series unless lo/hi pin the scale (e.g. 0..1 rates)."""
     if not values:
         return ""
-    lo, hi = min(values), max(values)
+    lo = min(values) if lo is None else lo
+    hi = max(values) if hi is None else hi
     span = hi - lo or 1.0
-    return "".join(SPARK_LEVELS[min(7, int((v - lo) / span * 7))] for v in values)
+    return "".join(
+        SPARK_LEVELS[max(0, min(7, int((v - lo) / span * 7)))] for v in values
+    )
 
 
 def bar(fraction, width=30):

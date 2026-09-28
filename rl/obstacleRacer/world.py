@@ -78,7 +78,20 @@ COLLISION_ROLES = [
 # Visuals the sensor model skips.  The start-signal arms are 0.8 m up on a
 # post beside the start straight and move; the ground plane is the surface
 # itself.
-IGNORED_VISUALS = [(r"start_signal_arms", r".*"), (r"ground", r".*")]
+IGNORED_VISUALS = [
+    (r"start_signal_arms", r".*"),
+    (r"ground", r".*"),
+    # A bale's loose straw: wisps with no collision, reaching up to 0.33 m
+    # out from the bale's faces, that the car drives through.  Seen here
+    # they would wall off the lanes; the ZED's depth resolves no surface in
+    # them.
+    (r"course_bales|gap_bale_\d+|wide_bale_\d+", r".*_strands"),
+]
+
+# The bales are drawn as a rounded box (generate_straw_assets.py) the size of
+# their collision box, and the sensor model sees them as that box: the
+# rounding is a few centimeters at the edges, finer than the scan resolves.
+BALE_MESH = "straw_bale.obj"
 
 # Tagged for the sensor model's gate output; the segmenter finds these as
 # gates and does not let their spans block.
@@ -201,6 +214,9 @@ def parse(sdf_path: Path = WORLD_SDF) -> World:
                     elif kind == "mesh":
                         uri = geometry.find("uri").text
                         prim.mesh = uri.rsplit("/", 1)[-1]
+                        if prim.mesh == BALE_MESH:
+                            prim.kind, prim.mesh = "box", ""
+                            prim.size = _obj_size(BALE_MESH)
                     elif kind != "plane":
                         unknown.append(f"{model_name}/{name}: geometry {kind}")
                         continue
@@ -268,6 +284,17 @@ def apply_layout(world: World, layout: dict, spec: dict) -> World:
 
 
 _MESH_CACHE: dict[str, np.ndarray] = {}
+
+
+def _obj_size(name: str) -> tuple:
+    """(x, y, z) extent of a Wavefront OBJ mesh's vertices, centered on it."""
+    rows = [
+        line.split()[1:4]
+        for line in (MESH_DIR / name).read_text().splitlines()
+        if line.startswith("v ")
+    ]
+    v = np.array(rows, dtype=float)
+    return tuple(float(e) for e in v.max(axis=0) - v.min(axis=0))
 
 
 def stl_triangles(name: str) -> np.ndarray:

@@ -1,0 +1,21 @@
+v8 race policy: runs/v8/step_140000k.zip (140M steps), exported with export_policy.py.
+Chosen 2026-09-27 after training ended at 150M, on one start-box lap per car, 256 cars:
+the 32 held-out layouts x4 and 64 never-seen layouts (seeds 5101-5164) x2.
+140M has the best finish rate overall and on never-seen layouts, ~7 points above
+the earlier pick (128M); the two runs of 128M differ by ~1 point, a guide to the noise.
+
+First pass, 116-130M:
+step_116000k.zip   all fin 25.4%  54.5 m lap  89.0 s | held 25.0%  55.5 m | new 25.8%  53.6 m
+step_122000k.zip   all fin 23.8%  55.0 m lap  90.2 s | held 29.7%  57.3 m | new 18.0%  52.6 m
+step_126000k.zip   all fin 24.2%  54.8 m lap  90.3 s | held 30.5%  56.3 m | new 18.0%  53.4 m
+step_128000k.zip   all fin 24.6%  55.5 m lap  94.0 s | held 24.2%  55.7 m | new 25.0%  55.3 m
+step_130000k.zip   all fin 20.3%  53.6 m lap  90.3 s | held 25.0%  55.0 m | new 15.6%  52.3 m
+
+Second pass, 128M and 132-150M:
+step_128000k.zip   all fin 25.4%  55.1 m lap  88.3 s | held 26.6%  54.5 m | new 24.2%  55.7 m
+step_132000k.zip   all fin 21.1%  54.5 m lap  93.5 s | held 21.9%  55.0 m | new 20.3%  54.1 m
+step_138000k.zip   all fin 25.8%  53.6 m lap  89.3 s | held 28.9%  54.7 m | new 22.7%  52.6 m
+step_140000k.zip   all fin 32.0%  57.1 m lap  92.2 s | held 35.9%  58.3 m | new 28.1%  55.9 m
+step_144000k.zip   all fin 30.9%  57.4 m lap  93.5 s | held 35.9%  58.6 m | new 25.8%  56.3 m
+step_148000k.zip   all fin 30.1%  57.3 m lap  84.5 s | held 38.3%  59.6 m | new 21.9%  55.0 m
+step_150000k.zip   all fin 28.1%  56.9 m lap  90.3 s | held 34.4%  58.4 m | new 21.9%  55.5 m

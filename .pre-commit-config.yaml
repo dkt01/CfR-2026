@@ -5,6 +5,9 @@ repos:
     rev: v5.0.0
     hooks:
     -   id: check-added-large-files
+        # The policies the car races with are committed on purpose, so the
+        # sync can deploy them from any checkout (syncSoftware.sh).
+        exclude: ^rl/[^/]+/bestModel/
     -   id: check-case-conflict
     -   id: check-executables-have-shebangs
     -   id: check-merge-conflict

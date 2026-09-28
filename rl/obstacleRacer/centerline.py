@@ -13,8 +13,15 @@ The line is hand-placed anchors through the lane, in driving order, with the
 helix generated from generate_obstacle_course.py's own constants.  One stretch
 depends on the layout: the randomizer opens a different one of four slots in
 the bucket section's east wall (gap_bale_0..3), so the line enters the
-section through whichever one is open.  `python3 centerline.py` checks every
-layout's line against the walls.
+section through whichever one is open.
+
+That hand line runs through the buckets and Wide Section bales wherever the
+randomizer drops them, so given the CourseModel, everything from the tunnel
+exit to the finish is planned per layout instead (line_plan.py): round that
+layout's obstacles with the most clearance it can keep, square through each
+hoop's center, and within a corridor of the hand line.  `python3
+centerline.py` checks every layout's planned line against every obstacle and
+that it meets the obstacles in the hand line's order.
 
 Projection is a windowed nearest-point search per car, vectorized over cars
 with numba.  The window keeps the start line unambiguous (a lap starts and
@@ -222,18 +229,78 @@ def _densify(anchors, spacing):
     return out
 
 
-class Centerline:
-    """One layout's line: points, cumulative arc length, and section marks."""
+def planned_route(layout):
+    """line_plan's route for a layout: via points in driving order, and each
+    hoop's lead-in, center and lead-out.
 
-    def __init__(self, layout=None, spacing: float = SAMPLE_SPACING_M):
-        anchors = (
-            BEFORE_HELIX
-            + _helix_points()
-            + AFTER_HELIX
-            + _bucket_entry(layout)
-            + _after_buckets(layout)
-        )
-        self.points = np.asarray(_densify(anchors, spacing))
+    The via points are the lane anchors that keep a shortest path on the
+    course's route -- down the east corridor, round the gravel run and the
+    bank, back through the potholes -- then the open gap-bale slot and the
+    bucket section's fixed exit.  Between them line_plan finds its own way,
+    round this layout's bales and buckets.
+    """
+    slot = layout["gap_bale"]
+    y = layouts.layout_spec()["gap_bales"][slot]["position"][1]
+    slot_y = y - 0.10 if slot == "gap_bale_0" else y
+    (x0, y0), (x1, y1), (x2, y2) = (
+        layout["hoops"]["hoop_0"],
+        layout["hoops"]["hoop_1"],
+        layout["hoops"]["hoop_2"],
+    )
+    route = [
+        ("via", (7.10, -0.65)),  # out of the tunnel
+        ("via", (7.12, -4.00)),
+        ("via", (2.30, -9.92)),  # gravel pit
+        ("via", (-4.20, -8.70)),  # banked turn
+        ("via", (1.20, -8.30)),  # potholes
+        ("via", (EAST_WALL_X, slot_y)),
+        ("via", BUCKET_EXIT[:2]),
+    ]
+    # hoop_0 and hoop_1 face along x: the car drives west through them;
+    # hoop_2 faces along y: north through it.
+    for (hx, hy), (dx, dy) in (
+        ((x0, y0), (-1, 0)),
+        ((x1, y1), (-1, 0)),
+        ((x2, y2), (0, 1)),
+    ):
+        route += [
+            ("hoop_in", (hx - dx * HOOP_LEAD, hy - dy * HOOP_LEAD)),
+            ("hoop", (hx, hy)),
+            ("hoop_out", (hx + dx * HOOP_LEAD, hy + dy * HOOP_LEAD)),
+        ]
+    route.append(("via", AFTER_HOOPS[-1][:2]))  # the finish line
+    return [(k, (float(a), float(b))) for k, (a, b) in route]
+
+
+class Centerline:
+    """One layout's line: points, cumulative arc length, and section marks.
+
+    With the CourseModel (and the layout's index in it), everything from the
+    tunnel exit to the finish is planned round this layout's obstacles by
+    line_plan.  Without it, the line is the hand-placed one.
+    """
+
+    def __init__(
+        self, layout=None, spacing: float = SAMPLE_SPACING_M, model=None, lay=None
+    ):
+        if model is not None:
+            import line_plan
+
+            fixed = BEFORE_HELIX + _helix_points() + AFTER_HELIX[:3]
+            head = np.asarray(_densify(fixed, spacing))
+            guide = Centerline(layout, spacing).points[:, :2]
+            xy = line_plan.planned_xy(model, lay, planned_route(layout), guide, spacing)
+            tail = np.c_[xy[1:], np.zeros(len(xy) - 1)]
+            self.points = np.concatenate([head, tail])
+        else:
+            anchors = (
+                BEFORE_HELIX
+                + _helix_points()
+                + AFTER_HELIX
+                + _bucket_entry(layout)
+                + _after_buckets(layout)
+            )
+            self.points = np.asarray(_densify(anchors, spacing))
         steps = np.linalg.norm(np.diff(self.points, axis=0), axis=1)
         self.arc = np.concatenate([[0.0], np.cumsum(steps)])
         self.lap_length = float(self.arc[-1])
@@ -263,8 +330,12 @@ class Centerline:
 class Centerlines:
     """Every layout's line, padded into arrays the numba projection reads."""
 
-    def __init__(self, layout_list):
-        self.lines = [Centerline(layout) for layout in layout_list]
+    def __init__(self, layout_list, model=None):
+        """Pass the CourseModel the layouts came from to plan each line."""
+        self.lines = [
+            Centerline(layout, model=model, lay=k if model is not None else None)
+            for k, layout in enumerate(layout_list)
+        ]
         n = max(len(c.points) for c in self.lines)
         self.points = np.zeros((len(self.lines), n, 3))
         self.arc = np.zeros((len(self.lines), n))
@@ -331,10 +402,6 @@ def _project(points, arc, count, lay, index, x, y, z, back, ahead):
     return out_i, out_s, out_d
 
 
-def _in_bucket_section(x, y) -> bool:
-    return -0.66 <= x <= 3.01 and -4.63 <= y <= -0.88
-
-
 @functools.lru_cache(maxsize=1)
 def _wide_bale_size():
     return tuple(float(v) for v in layouts.layout_spec()["wide_bales"]["size"])
@@ -363,45 +430,60 @@ def near_wide_bale(layout, x, y, margin=0.0) -> bool:
 
 
 def main() -> int:
-    """Check every layout's line clears the walls and runs monotone."""
+    """Check every layout's planned line clears everything and keeps the route."""
     import course_model
+    import env as env_module
 
     seeds = layouts.TRAIN_SEEDS + layouts.HELDOUT_SEEDS
     model = course_model.CourseModel(seeds)
     SUP, OBS, _ = model.tables()
+    lines = Centerlines(model.layouts, model=model)
+    hand = Centerlines(model.layouts)
+    names, planned_zones = env_module.zone_labels(lines.lines)
+    hand_names, hand_zones = env_module.zone_labels(hand.lines)
+
+    def order(names, labels):
+        seen = []
+        for label in labels:
+            name = names[label]
+            if not name.startswith("after_") and name not in seen:
+                seen.append(name)
+        return seen
+
     failures = 0
     for lay, seed in enumerate(seeds):
-        line = Centerline(model.layouts[lay])
+        line = lines.lines[lay]
         worst = (9.0, None)
         for x, y, z in line.points:
             zs, _ = course_model.support_below(SUP, lay, x, y, z + 0.08)
-            # A wall at car-body height within 0.10 m of the line fails it.
-            # Buckets and Wide Section bales are excused: they stand anywhere
-            # in their sections and the line there is a progress coordinate,
-            # not a path round them.
+            # A wall, bucket or bale at car-body height within 0.10 m of the
+            # line fails it.
             for r in (0.10, 0.20):
                 for a in np.linspace(0, 2 * math.pi, 16, endpoint=False):
                     px, py = x + r * math.cos(a), y + r * math.sin(a)
-                    if _in_bucket_section(px, py) or near_wide_bale(
-                        model.layouts[lay], px, py, 0.05
-                    ):
-                        continue
                     if course_model.obstacle_overlap(
                         OBS, lay, px, py, zs + 0.05, zs + 0.15
                     ):
                         if r < worst[0]:
                             worst = (r, (round(x, 2), round(y, 2), round(z, 2)))
-        ok = worst[1] is None or worst[0] > 0.10
+        # Every obstacle in the hand line's order: the plan kept the route.
+        route_ok = order(names, planned_zones[lay]) == order(
+            hand_names, hand_zones[lay]
+        )
+        ok = (worst[1] is None or worst[0] > 0.10) and route_ok
         failures += not ok
         print(
-            f"seed {seed}: lap {line.lap_length:6.2f} m, {model.layouts[lay]['gap_bale']}"
+            f"seed {seed}: lap {line.lap_length:6.2f} m "
+            f"(hand {hand.lines[lay].lap_length:6.2f}), {model.layouts[lay]['gap_bale']}"
             + (
                 ""
                 if worst[1] is None
-                else f", wall within {worst[0]:.2f} m at {worst[1]}"
+                else f", obstacle within {worst[0]:.2f} m at {worst[1]}"
             )
+            + ("" if route_ok else ", obstacles out of order")
             + ("" if ok else "  FAIL")
         )
+    print(f"{len(seeds) - failures}/{len(seeds)} layouts pass")
     return 1 if failures else 0
 
 

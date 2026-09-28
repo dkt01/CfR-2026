@@ -42,12 +42,15 @@ BALE_WIDTH = 18 * INCH
 BALE_HEIGHT = 14 * INCH
 BALE_Z = BALE_HEIGHT / 2
 
-# Straw bales are soft and grab the car rather than let it slide past.
-# Well above the wheel-floor grip (mu 1.0-1.2 -- see the wheel and floor
-# collisions in speed_course.sdf) so a car pressed into a bale wall can't
-# out-drive the friction and stalls instead of sliding along it.  Matches
-# BALE_FRICTION in generate_obstacle_course.py.
-BALE_FRICTION = 50
+# Straw on a rubber tire: a car scrubbing along a bale wall should drag, but a
+# tire that catches a bale at a shallow angle should not climb it.  One
+# isotropic mu could not do both -- at 50 a driven tire brushing a bale
+# climbed it and rolled the car.  See BALE_FRICTION_CLIMB/_ALONG in
+# generate_obstacle_course.py, which this matches: CLIMB is the proven-safe
+# 0.5 that stopped the climbing, along the bale's own vertical (`fdir1`
+# below); ALONG is the along-wall drag, capped only by the tires' own mu (1).
+BALE_FRICTION_CLIMB = 0.5
+BALE_FRICTION_ALONG = 1.0
 FOOT = 0.3048
 PACKAGE = Path(__file__).parents[1] / "cfr_arduino_bridge"
 WORLD_FILE = PACKAGE / "worlds/speed_course.sdf"
@@ -87,10 +90,14 @@ def bale_xml(index: int, x: float, y: float, yaw: float, strands: bool = True) -
     geometry = (
         f"<box><size>{BALE_LENGTH:.4f} {BALE_WIDTH:.4f} {BALE_HEIGHT:.4f}</size></box>"
     )
+    # fdir1 is in the bale's own local frame, so the yaw in `pose` above
+    # carries it to "up the bale" -- the climb direction -- for any bale,
+    # whichever way it faces along the wall.
     surface = (
-        f"<surface><friction><ode><mu>{BALE_FRICTION}</mu><mu2>{BALE_FRICTION}</mu2></ode>"
-        f"<bullet><friction>{BALE_FRICTION}</friction><friction2>{BALE_FRICTION}</friction2>"
-        "</bullet></friction></surface>"
+        f"<surface><friction><ode><mu>{BALE_FRICTION_CLIMB}</mu>"
+        f"<mu2>{BALE_FRICTION_ALONG}</mu2><fdir1>0 0 1</fdir1></ode>"
+        f"<bullet><friction>{BALE_FRICTION_CLIMB}</friction>"
+        f"<friction2>{BALE_FRICTION_ALONG}</friction2></bullet></friction></surface>"
     )
     # The straw look -- textured rounded body and loose strands -- is shared
     # with the Obstacle Course: generate_straw_assets.bale_visuals.

@@ -340,7 +340,7 @@ def contact_checks(cfg, model):
     failures = 0
     import centerline as centerline_module
 
-    line = centerline_module.Centerlines(model.layouts).lines[0]
+    line = centerline_module.Centerlines(model.layouts, model=model).lines[0]
     x, y, _, yaw = line.pose_at(18.0)
     head_on = (x, y, yaw + math.pi / 2, 1.0)
     glance = (x, y, yaw + math.radians(12), 2.0)
@@ -356,7 +356,7 @@ def contact_checks(cfg, model):
         for k in range(2):
             if touched[k] and first[k] is None:
                 first[k] = i
-        inside += int(P.body_contact(pl.OBS, pl.lay, pl.state, 0.03).sum())
+        inside += int(P.body_contact(pl.OBS, pl.lay, pl.state, P.CONTACT_SPACING).sum())
         if first[1] is not None:
             speed_after.append(pl.state[1, P.S_V])
     failures += check(
@@ -379,6 +379,34 @@ def contact_checks(cfg, model):
         "at a glancing angle it slides along, keeping most of its speed",
         held > 1.2,
         f"{held:.2f} m/s over the 0.75 s after touching",
+    )
+    # The head-on car set down 3 cm into the side it stopped against, as a
+    # slope's settling can leave one: reversing has to back it out (judged
+    # strictly from clear, every move hit and it froze there), and pushing
+    # on must not take it any deeper.  The lane's other side is ~0.3 m
+    # behind it, so backing out means getting clear and that far back.
+    sx, sy, syaw = (pl.state[0, k] for k in (P.S_X, P.S_Y, P.S_YAW))
+    sx, sy = sx + 0.03 * math.cos(syaw), sy + 0.03 * math.sin(syaw)
+    pin = _plant_at(cfg, model, [(sx, sy, syaw, 0.0), (sx, sy, syaw, 0.0)])
+    start = int(P.body_contact(pin.OBS, pin.lay, pin.state, P.CONTACT_SPACING).sum())
+    depth0 = P._outline_count(pin.OBS, 0, pin.state[1], 0.0, P.CONTACT_SPACING)
+    depth = 0
+    for _ in range(int(3.0 / dt)):
+        pin.step(np.zeros(2), np.array([-1.0, 1.0]), 10)
+        depth = max(
+            depth, P._outline_count(pin.OBS, 0, pin.state[1], 0.0, P.CONTACT_SPACING)
+        )
+    backed = math.hypot(pin.state[0, P.S_X] - sx, pin.state[0, P.S_Y] - sy)
+    out = not P.body_contact(pin.OBS, pin.lay[:1], pin.state[:1], P.CONTACT_SPACING)[0]
+    failures += check(
+        "a car set down inside what it hit can back out of it",
+        start == 2 and backed > 0.2 and out,
+        f"both inside at the start: {start == 2}; backed {backed:.2f} m, clear {out}",
+    )
+    failures += check(
+        "...and pushing on takes it no deeper",
+        depth0 > 0 and depth <= depth0,
+        f"{depth0} outline points inside at the start, at most {depth} since",
     )
     return failures
 
@@ -419,6 +447,97 @@ def memory_checks(cfg):
         "mean speed follows the tach, signed",
         out[19][1] > 0 and out[59][1] < out[49][1],
         f"{out[19][1]:+.3f} driving, {out[59][1]:+.3f} backing",
+    )
+    head = O.Heading(1, cfg)
+    head.reset(np.array([0]), 0.0)
+    for _ in range(int(round(2.0 / dt))):
+        hs = head.update(np.array([math.pi / 2]))  # 90 deg/s for 2 s
+    failures += check(
+        "heading integrates the yaw rate and wraps",
+        abs(hs[0, 0]) < 1e-6 and abs(hs[0, 1] + 1.0) < 1e-6,
+        f"after 180 deg: sin {hs[0, 0]:+.4f} cos {hs[0, 1]:+.4f}",
+    )
+    return failures
+
+
+def camera_checks(cfg, model):
+    """The policy sees camera_hz frames, each latency_s old, held between."""
+    from copy import deepcopy
+
+    import env as env_module
+
+    failures = 0
+    if "camera_hz" not in cfg["sensor"]:
+        return failures
+    env = env_module.ObstacleEnv(cfg, model, 64, np.array([0]), seed=3)
+    env.reset()
+    held = env.scan_held.copy()
+    changed = 0
+    steps = 200
+    for _ in range(steps):
+        env.step(np.tile([0.0, 0.3], (env.n, 1)))
+        changed += (np.abs(env.scan_held - held).max(1) > 0).sum()
+        held = env.scan_held.copy()
+    rate = changed / env.n / (steps * env.dt)
+    want = float(cfg["sensor"]["camera_hz"])
+    failures += check(
+        "new scans reach the policy at the camera's rate",
+        rate <= want * 1.02 and rate >= want * 0.8,
+        f"{rate:.1f} Hz, camera {want:.0f} Hz",
+    )
+    lo, hi = env.lat_steps
+    failures += check(
+        "each run draws a latency inside latency_s",
+        env.cam_lat.min() >= lo and env.cam_lat.max() <= hi,
+        f"steps {env.cam_lat.min()}..{env.cam_lat.max()}, allowed {lo}..{hi}",
+    )
+    # Compare skipped captures with a reference that renders every car on
+    # every step.  Every frame that reaches the policy must be identical.
+    env.scan_hist[:] = 0
+    env.gate_hist[:] = 0
+    env.scan_held[:] = 0
+    env.gate_held[:] = 0
+    phase = env.cam_phase.copy()
+    scan_hist = env.scan_hist.copy()
+    gate_hist = env.gate_hist.copy()
+    scan_held = env.scan_held.copy()
+    gate_held = env.gate_held.copy()
+    rng = np.random.default_rng(41)
+    same = True
+    for _ in range(30):
+        scan = rng.normal(size=env.scan_held.shape)
+        gate = rng.normal(size=env.gate_held.shape)
+        rows = env._capture_rows()
+        actual_scan, actual_gate = env._camera(scan[rows], gate[rows], rows)
+        scan_hist = np.roll(scan_hist, 1, axis=1)
+        gate_hist = np.roll(gate_hist, 1, axis=1)
+        scan_hist[:, 0] = scan
+        gate_hist[:, 0] = gate
+        phase += env.dt
+        due = phase >= env.cam_period
+        phase[due] -= env.cam_period
+        received = np.flatnonzero(due)
+        scan_held[received] = scan_hist[received, env.cam_lat[received]]
+        gate_held[received] = gate_hist[received, env.cam_lat[received]]
+        same &= (
+            np.array_equal(actual_scan, scan_held)
+            and np.array_equal(actual_gate, gate_held)
+            and np.array_equal(env.cam_phase, phase)
+        )
+    failures += check("skipped captures preserve delivered camera frames", same)
+    rng_state = deepcopy(env.rng.bit_generator.state)
+    env.sensor.read(env.plant.lay, env.plant.state)
+    full_rng_state = deepcopy(env.rng.bit_generator.state)
+    env.rng.bit_generator.state = rng_state
+    env.sensor.read(
+        env.plant.lay,
+        env.plant.state,
+        np.arange(0, env.n, 2),
+        draw_for_all=True,
+    )
+    failures += check(
+        "skipped captures preserve the episode RNG stream",
+        env.rng.bit_generator.state == full_rng_state,
     )
     return failures
 
@@ -579,6 +698,36 @@ def coverage_checks(cfg, model):
     )
     env.practice_met[:] = 0.0
     env.practice_fail[:] = 0.0
+    # A section start for an obstacle is not inside another one: v5 dealt
+    # its bucket starts inside the Wide Section and its hoop starts inside
+    # the buckets, so neither got practiced until what came before was.
+    # Both the training deal (any hoop) and the eval deal (2 m back).
+    strays, hoops_seen = Counter(), set()
+    hoops = env.zone_names.index("hoops")
+    for k in range(len(env.section_s)):
+        for z in env.section_s[k]:
+            for trial in range(40):
+                any_hoop = trial % 2 == 0
+                back = None if any_hoop else 2.0
+                target, floor = env.section_target(k, z, back, any_hoop=any_hoop)
+                s0 = env.snap(k, target, floor)
+                i = env.lines.index_at(np.array([k]), np.array([s0]))[0]
+                at = int(env.zone_of[k, i])
+                if at in env.section_s[k] and at != z:
+                    strays[f"{env.zone_names[z]} in {env.zone_names[at]}"] += 1
+                if z == hoops and any_hoop:
+                    ahead = env.hoop_s[k] - s0
+                    hoops_seen.add(int(np.argmin(np.where(ahead >= 0, ahead, np.inf))))
+    failures += check(
+        "section starts land outside every other obstacle",
+        not strays,
+        str(dict(strays)),
+    )
+    failures += check(
+        "hoop section starts go before each of the three hoops",
+        len(hoops_seen) == 3,
+        f"nearest hoops {sorted(hoops_seen)}",
+    )
     # An obstacle is where the car drives through it, not every point inside
     # its 2D outline: each is one unbroken stretch of the line, and where the
     # deck crosses over the tunnel the label follows the line's height.
@@ -757,6 +906,7 @@ def main() -> int:
     failures += contact_checks(cfg, model)
     print("observation memory and recovery")
     failures += memory_checks(cfg)
+    failures += camera_checks(cfg, model)
     failures += recovery_checks(cfg, model)
     print("hoops")
     failures += hoop_incentives(cfg, model)
