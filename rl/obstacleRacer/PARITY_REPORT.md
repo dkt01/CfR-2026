@@ -3,7 +3,8 @@
 ## Follow-up, 2026-09-28 (machine idle, no training running)
 
 Three of the findings below changed once they were measured differently.
-The Gazebo side was fixed. The numpy plant is unchanged.
+The Gazebo side was fixed. The numpy plant is unchanged. The last two rows
+were added after v9's refinement run (v8 140M → 200M).
 
 | Check | Evidence | Change |
 | --- | --- | --- |
@@ -13,8 +14,12 @@ The Gazebo side was fixed. The numpy plant is unchanged.
 | Grade | `sim_vehicle_node` set the wheel speed, and Gazebo's unlimited-torque wheels held it. A coasting car therefore braked perfectly down the helix: v8 fell from 1.8 to 0.9 m/s where plant.py gained speed. The node now applies plant.py's climbing term, g·tan(pitch), while rolling. It can stop the car but not roll it back through zero. Pitch comes from `pose` (`/zed/zed_node/pose` in simulation.launch.py). With `--surfaces`, ramp and deck passes at 1–2 m/s match within 0.06–0.11 m/s speed RMS and ≤4 cm end position. Helix passes match within 0.5 cm height RMS and 1° roll RMS. | Fixed in Gazebo. Launches without a pose remap (characterize, training) see zero pitch, as before. |
 | v8 in Gazebo | `bestModel/v8` (140M), seeds 201/202/208/218 × 2 starts, 150 s: 0/8 laps with 0% stale. Six runs wedged at the helix exit against the tunnel-mouth wall (6.80, 1.46), and two rolled at the helix entry. The numpy plant is also blocked at that pose. The numpy sim finishes 10.9% of 64 starts on the same seeds, and 25 of those runs end in the Wide Section. | Now a closed-loop policy-robustness gap at the helix, not a sensor-timing artifact. |
 
+| Contact stall | In the six wedged v8/v9 runs, the tach read 0.7–1.0 m/s for 5 s while the car sat still. `sim_vehicle_node` reported its own wheel speed, and Gazebo's velocity-driven wheels spun against the wall. plant.py zeroes the speed on contact, so in numpy the tach reads stopped and v9 backs off (its numpy trace hits the same wall at 9.8 s and reverses out). | `sim_vehicle_node` now takes the ground speed from `pose`. When the car makes under `contact_stall_ratio` (0.3) of the wheel speed for `contact_stall_time` (0.1 s), the wheels and tach drop to the ground speed, as a stalled motor would. With 0.25 s the tach averaged 0.4 m/s through the wedge and v9 kept pushing. The reverse pass is unchanged with the stall on or off. |
+| v9 in Gazebo | `runs/v9` best (198M), same 8 starts. Without the stall: 0/8, 6 wedged at (6.80, 1.46), 2 rolled at the helix entry (`validate_20260928_110734.json`). With it: 0/8, but 7 backed off the helix exit and drove the tunnel. 4 of those ended at the tunnel's south end near (7.1, −7.9). The two traces checked there turned tighter than numpy at full lock, clipped the inside corner near (6.8, −8.7) and stopped facing a wall. The other 3 ended in the tunnel at y −3 to −6, after 50–135 s. 1 rolled at the helix entry (`validate_20260928_114452.json`). In numpy, v9 finishes 28.1% of 64 starts on these seeds, against v8's 10.9% (`numba_20260928_055148.json`). | The next gap is at full-lock steering at low speed, where Gazebo turns faster than the plant (see Yaw lag). Rollovers at the helix entry are still open. |
+
 Still open: contact (plant.py slides along walls, Gazebo wedges and can
-roll), the ramp crest at 3 m/s, and the car-wash lip at 2–3 m/s.
+roll), yaw at full lock and low speed, the ramp crest at 3 m/s, and the
+car-wash lip at 2–3 m/s.
 
 ---
 

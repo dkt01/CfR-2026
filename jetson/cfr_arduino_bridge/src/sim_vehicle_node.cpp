@@ -55,6 +55,16 @@ namespace cfr_arduino_bridge {
       // perfect motor.  The car has neither, and rl/obstacleRacer/plant.py
       // applies the same term (grade_force), so on the helix the two agree.
       grade_ = declare_parameter<bool>("grade", true);
+      // A car pinned against something: Gazebo's velocity-driven wheels keep
+      // spinning at the commanded speed, so the tach kept reading ~0.8 m/s
+      // while the car sat still, and a policy that backs off when its tach
+      // reads stopped (as it learned to in plant.py, which zeroes the speed
+      // on contact) pushed on forever.  When the pose shows the car making
+      // less than contact_stall_ratio of the wheel speed for
+      // contact_stall_time, the wheels take the ground speed instead, as a
+      // stalled motor would.  Needs `pose`; zero time disables it.
+      contact_stall_time_ = declare_parameter<double>("contact_stall_time", 0.1);
+      contact_stall_ratio_ = declare_parameter<double>("contact_stall_ratio", 0.3);
 
       // Zero means "coast only", which is what the car does today.  It is a
       // parameter rather than a constant so that a firmware fix to the brake
@@ -135,6 +145,23 @@ namespace cfr_arduino_bridge {
             const auto& q = msg->pose.orientation;
             // REP-103 pitch is nose-down positive.
             pitch_up_ = -std::asin(std::clamp(2.0 * (q.w * q.y - q.z * q.x), -1.0, 1.0));
+            const rclcpp::Time stamp(msg->header.stamp);
+            const double yaw = std::atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z));
+            const double dt = pose_time_.nanoseconds() == 0 ? 0.0 : (stamp - pose_time_).seconds();
+            if (dt > 1e-3 && dt < 0.5) {
+              const double dx = msg->pose.position.x - pose_x_;
+              const double dy = msg->pose.position.y - pose_y_;
+              const double forward = (dx * std::cos(yaw) + dy * std::sin(yaw)) / dt;
+              // ~50 ms low-pass: pose steps are noisy at a few cm/s.
+              const double a = std::min(1.0, dt / 0.05);
+              ground_speed_ += a * (forward - ground_speed_);
+            }
+            if (dt != 0.0) {
+              pose_received_ = now();
+            }
+            pose_time_ = stamp;
+            pose_x_ = msg->pose.position.x;
+            pose_y_ = msg->pose.position.y;
           });
       command_subscription_ = create_subscription<cfr_interfaces::msg::DriveCommand>(
           "~/drive_cmd", rclcpp::SensorDataQoS(), [this](const cfr_interfaces::msg::DriveCommand::SharedPtr msg) {
@@ -152,6 +179,22 @@ namespace cfr_arduino_bridge {
       rclcpp::Time time;
       cfr_interfaces::msg::DriveCommand command;
     };
+
+    // See contact_stall_time.  Only while the pose is current: launches that
+    // do not remap `pose` keep the old behavior.
+    void ApplyContactStall(const rclcpp::Time& stamp, double elapsed) {
+      const bool pose_fresh = pose_received_.nanoseconds() != 0 && (stamp - pose_received_).seconds() < 0.2;
+      const double wheel = std::abs(simulated_speed_);
+      if (contact_stall_time_ <= 0.0 || !pose_fresh || wheel < 0.15 ||
+          std::abs(ground_speed_) >= contact_stall_ratio_ * wheel) {
+        stalled_for_ = 0.0;
+        return;
+      }
+      stalled_for_ += elapsed;
+      if (stalled_for_ >= contact_stall_time_) {
+        simulated_speed_ = std::copysign(std::min(std::abs(ground_speed_), wheel), simulated_speed_);
+      }
+    }
 
     void OnTimer() {
       const rclcpp::Time stamp = now();
@@ -173,6 +216,7 @@ namespace cfr_arduino_bridge {
         }
         ApproachTarget(DirectedTarget(SlewTarget(std::clamp(target, -max_speed_, max_speed_), elapsed), stamp),
                        elapsed);
+        ApplyContactStall(stamp, elapsed);
         AdvanceTachometer(elapsed);
 
         const double steering = EffectiveSteeringAngle(static_cast<double>(effective.steering));
@@ -471,6 +515,14 @@ namespace cfr_arduino_bridge {
     static constexpr double kGravity = 9.81;
     bool grade_ = true;
     double pitch_up_ = 0.0;
+    double contact_stall_time_ = 0.1;
+    double contact_stall_ratio_ = 0.3;
+    double stalled_for_ = 0.0;
+    double ground_speed_ = 0.0;
+    double pose_x_ = 0.0;
+    double pose_y_ = 0.0;
+    rclcpp::Time pose_time_{0, 0, RCL_ROS_TIME};
+    rclcpp::Time pose_received_{0, 0, RCL_ROS_TIME};
     int direction_ = 0;
     rclcpp::Time last_moving_time_{0, 0, RCL_ROS_TIME};
     TachModel tach_;
