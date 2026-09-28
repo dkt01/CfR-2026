@@ -10,6 +10,14 @@
 #   ./validate.sh --flat-surfaces                  # steering on open floor
 #   ./validate.sh --helix-surfaces                 # short passes on the helix
 #   ./validate.sh --cadence                        # raw and processed cloud timing
+#   ./validate.sh --step-steer                     # yaw lag from a settled speed
+#   ./validate.sh --reverse                        # coast, direction wait, back up
+#   ./validate.sh --rtf 0.25 ...                   # cap Gazebo's real-time factor
+#
+# The Sensors system holds each step until the ZED has rendered, so the
+# camera keeps its 12 Hz in sim time and Gazebo runs slower than real time
+# instead.  --rtf caps it lower still, for when a busy CPU starves the ROS
+# nodes; check with --cadence at the same --rtf.
 #
 # Run inside the sim container (sim-launch skill) with the workspace built:
 #   docker exec -it <container> bash -lc 'cd /repo/rl/obstacleRacer && ./validate.sh'
@@ -32,6 +40,7 @@ POSES=""
 HELIX_POSES=""
 MONITOR_CLOUD=""
 CADENCE_SECONDS=""
+RTF=1.0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --policy) POLICY="$(realpath "$2")"; shift 2;;
@@ -45,6 +54,9 @@ while [[ $# -gt 0 ]]; do
     --monitor-cloud) MONITOR_CLOUD=1; shift;;
     --seconds) CADENCE_SECONDS="$2"; shift 2;;
     --cadence) MODE=cadence; shift;;
+    --rtf) RTF="$2"; shift 2;;
+    --step-steer) MODE=step-steer; shift;;
+    --reverse) MODE=reverse; shift;;
     --seg-gap) MODE=seg-gap; shift;;
     --surfaces) MODE=surfaces; shift;;
     --helix-surfaces) MODE=helix-surfaces; shift;;
@@ -86,7 +98,12 @@ if timeout 12 ros2 node list --no-daemon 2>/dev/null | grep -q sim_vehicle; then
   exit 1
 fi
 
-echo "starting the Obstacle Course (sensors on, 1 lap)..."
+# build.sh copies the world into the install tree; write it fresh from the
+# source with this run's real-time factor (1.0 restores the stock world).
+WORLD="$WS/install/cfr_arduino_bridge/share/cfr_arduino_bridge/worlds/obstacle_course.sdf"
+sed "s|<real_time_factor>[^<]*</real_time_factor>|<real_time_factor>$RTF</real_time_factor>|"   "$REPO/jetson/cfr_arduino_bridge/worlds/obstacle_course.sdf" >"$WORLD"
+
+echo "starting the Obstacle Course (sensors on, 1 lap, rtf $RTF)..."
 spawn ros2 launch cfr_arduino_bridge obstacle_course.launch.py \
   sensors:=true path_follower:=false cmd_vel_to_drive:=false laps:=1 \
   >/tmp/obstacle_racer_sim.log 2>&1

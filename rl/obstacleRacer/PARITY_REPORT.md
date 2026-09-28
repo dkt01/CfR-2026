@@ -1,5 +1,23 @@
 # Obstacle Racer Numba–Gazebo parity audit
 
+## Follow-up, 2026-09-28 (machine idle, no training running)
+
+Three of the findings below changed once they were measured differently.
+The Gazebo side was fixed. The numpy plant is unchanged.
+
+| Check | Evidence | Change |
+| --- | --- | --- |
+| Cloud delivery | The slow camera was DDS, not rendering. With best-effort subscribers an idle machine still got 6.8 Hz raw and 3.2 Hz processed clouds, p90 gap 0.66 s. With reliable depth-1 subscribers (cloud_segmentation already used them), both read 12.0 Hz in sim time. Gazebo's Sensors system holds each step until the ZED renders, so the sim runs at RTF ≈0.47 instead of dropping frames. A best-effort reader loses most of a multi-MB cloud's UDP fragments. A lower `real_time_factor` gave *fewer* frames per sim second. | `obstacle_racer_node` subscribes reliable, depth 1 (`cloud_reliable`, default true), and so does `gazebo_check`. In the v8 Gazebo runs, stale ticks fell from 38–44% to 0%. On the car, the ZED wrapper publishes reliable, so the same subscription applies. |
+| Yaw lag | `validate.sh --step-steer` holds a speed for 2.5 s, then steps the steering, and aligns both traces to the command. Over 16 passes (1–2.5 m/s, ±0.3 and ±0.6), the fitted `yaw_response_tau` has a median of 0.357 s against the nominal 0.340 s. The 0.103 s fit below came from starts at rest, where speed error dominates. Gazebo's lag depends on step size: ±0.3 fits 0.41–0.53 s, −0.6 about 0.28 s, and +0.6 0.05–0.18 s. Steady yaw gain is 0.93–1.09 of the plant's. | The plant nominal and randomization stay as they are. A single first-order lag cannot match this amplitude dependence, and the real car remains unmeasured. |
+| Reverse | `sim_vehicle_node` now follows the firmware's SpeedController. A target against the last-driven direction counts as zero until the tach has read stopped for `direction_settle` (0.1 s). The tach sign comes from that direction. `validate.sh --reverse` from 1, 2 and 3 m/s: Gazebo and plant stop at 1.60/1.65, 2.87/2.90 and 3.94/3.95 s, and reach −0.3 m/s at 1.80/1.80, 3.07/3.05 and 4.25/4.15 s. Both settle at −1.00 m/s. | Fixed in Gazebo. |
+| Grade | `sim_vehicle_node` set the wheel speed, and Gazebo's unlimited-torque wheels held it. A coasting car therefore braked perfectly down the helix: v8 fell from 1.8 to 0.9 m/s where plant.py gained speed. The node now applies plant.py's climbing term, g·tan(pitch), while rolling. It can stop the car but not roll it back through zero. Pitch comes from `pose` (`/zed/zed_node/pose` in simulation.launch.py). With `--surfaces`, ramp and deck passes at 1–2 m/s match within 0.06–0.11 m/s speed RMS and ≤4 cm end position. Helix passes match within 0.5 cm height RMS and 1° roll RMS. | Fixed in Gazebo. Launches without a pose remap (characterize, training) see zero pitch, as before. |
+| v8 in Gazebo | `bestModel/v8` (140M), seeds 201/202/208/218 × 2 starts, 150 s: 0/8 laps with 0% stale. Six runs wedged at the helix exit against the tunnel-mouth wall (6.80, 1.46), and two rolled at the helix entry. The numpy plant is also blocked at that pose. The numpy sim finishes 10.9% of 64 starts on the same seeds, and 25 of those runs end in the Wide Section. | Now a closed-loop policy-robustness gap at the helix, not a sensor-timing artifact. |
+
+Still open: contact (plant.py slides along walls, Gazebo wedges and can
+roll), the ramp crest at 3 m/s, and the car-wash lip at 2–3 m/s.
+
+---
+
 2026-09-27. Policy: the main repository's `runs/v8/best_model.zip` at 122,000,896
 training steps, exported to `runs/v8/policy.npz`. The checkpoint's saved
 `config.yaml` has the same settings as this checkout. The export's largest

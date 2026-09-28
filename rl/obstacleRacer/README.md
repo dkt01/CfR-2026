@@ -185,6 +185,8 @@ In the sim container, with the workspace built:
 ./validate.sh --flat-surfaces   # open-floor steering baseline
 ./validate.sh --helix-surfaces  # upper, middle, lower helix steering passes
 ./validate.sh --cadence --seconds 20  # raw and processed cloud timing
+./validate.sh --step-steer      # yaw lag from a settled speed, command-aligned
+./validate.sh --reverse         # coast, direction wait, back up: Gazebo vs plant
 ```
 
 The surface checks save paired Gazebo and Numba pose traces under

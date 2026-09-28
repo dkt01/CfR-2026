@@ -51,7 +51,12 @@ from geometry_msgs.msg import PoseStamped
 from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
 from rcl_interfaces.srv import SetParameters
 from rclpy.node import Node
-from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
+from rclpy.qos import (
+    DurabilityPolicy,
+    QoSProfile,
+    ReliabilityPolicy,
+    qos_profile_sensor_data,
+)
 from sensor_msgs.msg import PointCloud2
 from sensor_msgs_py import point_cloud2
 from std_msgs.msg import Bool
@@ -70,6 +75,8 @@ import plant as P  # noqa: E402
 import sensor as S  # noqa: E402
 
 LATCHED = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+# As obstacle_racer_node reads clouds: best effort loses most whole clouds.
+CLOUD_QOS = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE)
 TELEPORT_URL = "http://127.0.0.1:9003/api/sim/teleport"
 OUT = HERE / "runs" / "gazebo"
 
@@ -116,14 +123,14 @@ class Sim(Node):
                 PointCloud2,
                 "/zed/zed_node/point_cloud/cloud_registered",
                 self.on_cloud,
-                qos_profile_sensor_data,
+                CLOUD_QOS,
             )
         if need_raw:
             self.create_subscription(
                 PointCloud2,
                 "/zed/gz/rgbd/points",
                 self.on_raw_cloud,
-                qos_profile_sensor_data,
+                CLOUD_QOS,
             )
         self.create_subscription(HoopStatus, "/hoop_monitor/status", self.on_hoops, 10)
         self.create_subscription(Bool, "/lap_counter/done", self.on_done, LATCHED)
@@ -691,6 +698,226 @@ def surfaces(sim, args):
     return 0 if ok else 1
 
 
+# ----------------------------------------------------------- step-steer
+
+FLAT_START = (0.0, -20.0, 0.0, 0.0)  # open floor beside the course
+
+
+def _drive(sim, schedule):
+    """Publish (seconds, steering, velocity) legs at 20 Hz; log pose and tach.
+
+    Returns the pose track, the tach track and the sim time each leg began,
+    so traces align to the command rather than to the first pose sample.
+    """
+    sim.pose_log = []
+    tach = []
+    starts = []
+    for seconds, steer, velocity in schedule:
+        starts.append(sim.now())
+        t0 = sim.now()
+        while sim.now() - t0 < seconds:
+            sim.command(steer, velocity)
+            sim.spin_for(0.05)
+            if sim.status is not None:
+                tach.append((sim.now(), float(sim.status.speed)))
+    sim.command(0.0, 0.0)
+    track = np.array(sim.pose_log)
+    sim.pose_log = None
+    return track, np.array(tach), starts
+
+
+def _plant_replay(cfg, model, first, speed, schedule, tau=None):
+    """The same command schedule through plant.py from Gazebo's pose."""
+    pl = P.Plant(cfg, model, 1, np.random.default_rng(0))
+    pl.reset(
+        np.arange(1),
+        0,
+        np.array([first[1]]),
+        np.array([first[2]]),
+        np.array([max(0.0, first[3] - 0.02)]),
+        np.array([first[4]]),
+        np.array([speed]),
+    )
+    if tau is not None:
+        pl.params[0, P.P_YAW_TAU] = tau
+    hz = float(cfg["env"]["control_hz"])
+    steps = int(cfg["env"]["substeps"])
+    t, yaw, v = [], [], []
+    k = 0
+    for seconds, steer, velocity in schedule:
+        for _ in range(int(round(seconds * hz))):
+            pl.step(np.array([steer]), np.array([velocity]), steps)
+            k += 1
+            s = pl.state[0]
+            t.append(k / hz)
+            yaw.append(s[P.S_YAW])
+            v.append(s[P.S_V])
+    return np.array(t), np.unwrap(np.array(yaw)), np.array(v)
+
+
+def _yaw_rate(t, yaw, dt=0.01, win_s=0.15):
+    from scipy.signal import savgol_filter
+
+    grid = np.arange(t[0], t[-1], dt)
+    y = np.interp(grid, t, np.unwrap(yaw))
+    win = int(win_s / dt) | 1
+    return grid, savgol_filter(y, win, 3, deriv=1, delta=dt)
+
+
+def step_steer(sim, args):
+    """Steady straight run, then a steering step, in Gazebo and in plant.py.
+
+    The car first holds `speed` straight for 2.5 s, so the step starts from a
+    settled speed rather than from rest (where speed error swamps yaw lag).
+    The plant starts from Gazebo's pose and speed at the step, with the same
+    dead time and schedule, and yaw_response_tau is fitted to Gazebo's yaw
+    rate over the 1.5 s after the step.  This fits Gazebo, not the car.
+    """
+    from scipy.optimize import minimize_scalar
+
+    cfg = load_cfg()
+    cfg["randomize"]["enabled"] = False
+    model = course_model.CourseModel([SURFACE_SEED])
+    sim.set_layout(SURFACE_SEED)
+    nominal = float(cfg["plant"]["yaw_response_tau"])
+    speeds = [float(v) for v in args.speeds.split(",")]
+    steers = [float(v) for v in args.steers.split(",")]
+    results = []
+    for v in speeds:
+        for steer in steers:
+            x, y, z, yaw = FLAT_START
+            if not sim.place(x, y, yaw, z):
+                print(f"  {v} m/s steer {steer:+.2f}: car did not settle -- skipped")
+                continue
+            track, _, starts = _drive(sim, [(2.5, 0.0, v), (1.5, steer, v)])
+            t_step = starts[1]
+            before = track[track[:, 0] <= t_step]
+            if len(before) < 5:
+                continue
+            first = before[-1]
+            gv = np.hypot(*(before[-1, 1:3] - before[-5, 1:3])) / (
+                before[-1, 0] - before[-5, 0]
+            )
+            gt, grate = _yaw_rate(track[:, 0] - t_step, track[:, 4])
+            keep = (gt >= 0.0) & (gt <= 1.5)
+            gt, grate = gt[keep], grate[keep]
+            schedule = [(1.5, steer, v)]
+
+            def model_rate(tau=None):
+                mt, myaw, _ = _plant_replay(cfg, model, first, gv, schedule, tau)
+                return _yaw_rate(
+                    np.concatenate([[0.0], mt]), np.concatenate([[first[4]], myaw])
+                )
+
+            def rms(tau):
+                mt, mrate = model_rate(tau)
+                return float(np.sqrt(np.mean((np.interp(gt, mt, mrate) - grate) ** 2)))
+
+            fit = minimize_scalar(rms, bounds=(0.0, 0.8), method="bounded")
+            mt, mrate = model_rate()
+            steady_g = float(np.mean(grate[gt >= 1.0]))
+            steady_m = float(np.mean(mrate[mt >= 1.0]))
+            half = 0.5 * abs(steady_g)
+            t_half_g = float(gt[np.argmax(np.abs(grate) >= half)])
+            t_half_m = float(mt[np.argmax(np.abs(mrate) >= half)])
+            row = dict(
+                speed=v,
+                steer=steer,
+                entry_speed=float(gv),
+                tau_fit=float(fit.x),
+                rms_fit=float(fit.fun),
+                rms_nominal=rms(nominal),
+                steady_rate_gazebo=steady_g,
+                steady_rate_model=steady_m,
+                t_half_gazebo=t_half_g,
+                t_half_model=t_half_m,
+                gazebo=dict(t=gt.tolist(), rate=grate.tolist()),
+                model=dict(t=mt.tolist(), rate=mrate.tolist()),
+            )
+            results.append(row)
+            print(
+                f"  {v:.1f} m/s steer {steer:+.2f} (entry {gv:.2f}): tau fit {fit.x:.3f} s "
+                f"rms {fit.fun:.3f} vs nominal {row['rms_nominal']:.3f} rad/s | steady "
+                f"{steady_g:+.2f}/{steady_m:+.2f} rad/s | half-rate {t_half_g:.2f}/{t_half_m:.2f} s",
+                flush=True,
+            )
+    OUT.mkdir(parents=True, exist_ok=True)
+    path = OUT / f"step_steer_{time.strftime('%Y%m%d_%H%M%S')}.json"
+    path.write_text(json.dumps(results))
+    if results:
+        taus = np.array([r["tau_fit"] for r in results])
+        print(
+            f"tau fit median {np.median(taus):.3f} s, range {taus.min():.3f}-{taus.max():.3f} s "
+            f"(nominal {nominal:.3f} s)"
+        )
+    print(f"traces: {path}")
+    return 0 if results else 1
+
+
+def reverse(sim, args):
+    """Forward at speed, then a reverse command: time to stop and to back up.
+
+    The car coasts (no brakes), waits for the tach to read stopped, and only
+    then drives backwards -- in the Arduino, in sim_vehicle_node and in
+    plant.py.  Compares when each stops and starts moving backwards.
+    """
+    cfg = load_cfg()
+    cfg["randomize"]["enabled"] = False
+    model = course_model.CourseModel([SURFACE_SEED])
+    sim.set_layout(SURFACE_SEED)
+    results = []
+    for v in [float(s) for s in args.speeds.split(",")]:
+        x, y, z, yaw = FLAT_START
+        if not sim.place(x, y, yaw, z):
+            continue
+        schedule = [(2.5, 0.0, v), (5.0, 0.0, -1.0)]
+        track, tach, starts = _drive(sim, schedule)
+        t_rev = starts[1]
+        heading = np.array([math.cos(yaw), math.sin(yaw)])
+        along = (track[:, 1:3] - track[0, 1:3]) @ heading
+        t = track[:, 0] - t_rev
+        gv = np.convolve(np.gradient(along, track[:, 0]), np.ones(7) / 7, "same")
+        keep = t >= 0.0
+        first = track[np.argmin(np.abs(t))]
+        entry = float(np.interp(0.0, t, gv))
+        mt, _, mv = _plant_replay(cfg, model, first, entry, schedule[1:])
+        mt = np.concatenate([[0.0], mt])
+        mv = np.concatenate([[entry], mv])
+
+        def crossing(tt, vv, level):
+            below = np.nonzero(vv <= level)[0]
+            return float(tt[below[0]]) if len(below) else float("nan")
+
+        row = dict(
+            speed=v,
+            entry_speed=entry,
+            t_stop_gazebo=crossing(t[keep], gv[keep], 0.05),
+            t_stop_model=crossing(mt, mv, 0.05),
+            t_back_gazebo=crossing(t[keep], gv[keep], -0.3),
+            t_back_model=crossing(mt, mv, -0.3),
+            # Clear of the smoothing window's edge at the end of the trace.
+            end_v_gazebo=float(gv[keep][-12:-4].mean()),
+            end_v_model=float(mv[-5:].mean()),
+            gazebo=dict(t=t.tolist(), v=gv.tolist()),
+            tach=dict(t=(tach[:, 0] - t_rev).tolist(), v=tach[:, 1].tolist())
+            if len(tach)
+            else None,
+            model=dict(t=mt.tolist(), v=mv.tolist()),
+        )
+        results.append(row)
+        print(
+            f"  {v:.1f} m/s -> -1: stopped {row['t_stop_gazebo']:.2f}/{row['t_stop_model']:.2f} s, "
+            f"backing at -0.3 m/s {row['t_back_gazebo']:.2f}/{row['t_back_model']:.2f} s, "
+            f"end {row['end_v_gazebo']:+.2f}/{row['end_v_model']:+.2f} m/s (gazebo/model)",
+            flush=True,
+        )
+    OUT.mkdir(parents=True, exist_ok=True)
+    path = OUT / f"reverse_{time.strftime('%Y%m%d_%H%M%S')}.json"
+    path.write_text(json.dumps(results))
+    print(f"traces: {path}")
+    return 0 if results else 1
+
+
 # ------------------------------------------------------------- validate
 
 
@@ -874,6 +1101,11 @@ def main() -> int:
     c.add_argument("--monitor-cloud", action="store_true")
     d = sub.add_parser("cadence")
     d.add_argument("--seconds", type=float, default=20.0)
+    e = sub.add_parser("step-steer")
+    e.add_argument("--speeds", default="1.0,1.5,2.0,2.5")
+    e.add_argument("--steers", default="0.3,-0.3,0.6,-0.6")
+    f = sub.add_parser("reverse")
+    f.add_argument("--speeds", default="1.0,2.0,3.0")
     args = ap.parse_args()
     rclpy.init()
     sim = Sim(
@@ -893,6 +1125,8 @@ def main() -> int:
             "surfaces": surfaces,
             "validate": validate,
             "cadence": cadence,
+            "step-steer": step_steer,
+            "reverse": reverse,
         }[args.cmd](sim, args)
     finally:
         sim.destroy_node()
