@@ -2,7 +2,9 @@
 
 An RL driver for the Obstacle Course. It drives one lap through all three
 hoops, as fast as it can. It is trained in numpy, the way `rl/formulaOne`
-trains the Speed Course, and Gazebo only checks the result.
+trains the Speed Course, and Gazebo checks the result; since v10 a few
+Gazebo cars also train beside the numpy ones (see "Refining with Gazebo
+cars").
 
 ## What the policy gets and gives
 
@@ -175,6 +177,37 @@ uv pip install --python .venv/Scripts/python.exe numpy scipy pyyaml matplotlib g
 .venv/Scripts/python.exe export_policy.py runs/v1/best_model.zip -o runs/v1/policy.npz
 ```
 
+### Refining with Gazebo cars (v10)
+
+A policy that laps in numpy can still fail in Gazebo (v9: 0/8, wedged at the
+helix exit or turned too tight at the tunnel's south end). `train.py
+--gazebo N` (or `gazebo.instances`) trains N Gazebo cars beside a smaller
+numpy batch (`gazebo.numpy_envs`), so the policy has to drive both:
+
+```bash
+.venv/Scripts/python.exe train.py --dir runs/v10 --config runs/v10/config.src.yaml \
+    --resume runs/v9/step_196001k.zip
+.venv/Scripts/python.exe grade.py "runs/v10/step_*.zip" runs/v9/step_196001k.zip
+```
+
+Each Gazebo car is one sim container (`cfr-racer-gz1`, `-gz2`, ...,
+created and built on first use), running `gazebo_stack.sh` (the course with
+the ZED rendered) and `gazebo_env.py serve`, which talks to the trainer over
+the pipe of a `docker exec -i` (`gazebo_vec.py`). `gazebo_env.py` is
+`ObstacleEnv` with Gazebo underneath: the reward, terminations and start
+deal are ObstacleEnv's own code; the world stays paused and runs exactly one
+control period per step; the policy sees the real rendered cloud through
+the real segmenter, with the run's latency. A car that stops answering is
+restarted with its container, and its episode ends as a time-limit cut.
+
+The cars are slow: about 0.31 s a step with two (software rendering is
+CPU-bound, so a third adds little), against 12 ms for 30 numpy cars. Size a
+run by that pace. Gazebo episodes appear in the log's `[gazebo]` line and in
+`history.json`'s `gazebo` record, start-box runs separately as the lap
+check. Each container gets its own `GZ_PARTITION` and `ROS_DOMAIN_ID`:
+containers on Docker's bridge network otherwise share one Gazebo transport
+and one ROS graph, and a teleport lands in the other world.
+
 In the sim container, with the workspace built:
 
 ```bash
@@ -245,3 +278,4 @@ Other checks:
 | `python3 layouts.py --check` | Exported layouts match the randomizer |
 | `python3 bench.py --policy runs/v5/best_model.zip` | Env steps/s and where a step's time goes; `--save`/`--check` for a speedup that must change nothing |
 | `python3 bench_ppo.py runs/v7/best_model.zip` | Time recurrent PPO updates on one real rollout with the default and tuned CPU settings; leaves the checkpoint untouched |
+| `python3 gazebo_env.py smoke --policy P --box` | In a sim container with `gazebo_stack.sh` up: start-box episodes of an exported policy through the Gazebo training env |

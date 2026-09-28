@@ -242,3 +242,19 @@ train:
   # Per obstacle, on the held-out layouts: dealt just before it, does the
   # policy get through?  Measures every obstacle before laps finish.
   section_eval_per_layout: 1
+
+# Gazebo cars trained beside the numpy batch (train.py --gazebo N, or
+# instances here): each is one car in its own sim container, stepped paused
+# one control period at a time (gazebo_env.py, gazebo_vec.py).  Gazebo runs
+# ~5 steps/s against the numpy batch's thousands, so with Gazebo on the numpy
+# batch shrinks to numpy_envs and PPO's batch shrinks with it.
+gazebo:
+  instances: 0
+  numpy_envs: 64
+  container_prefix: cfr-racer-gz   # cfr-racer-gz1, -gz2, ...
+  layouts: 40                     # a spread of the training layouts
+  layout_every: 4                 # episodes per layout (randomizing takes s)
+  start_box_prob: 0.3             # its start-box runs are the Gazebo lap check
+  rtf: 1.0                        # world real-time cap while a step runs
+  checkpoint_every_steps: 100000  # ~35 min at the Gazebo pace; the full eval
+                                  # (~10 min) stays at train.eval_every_steps
