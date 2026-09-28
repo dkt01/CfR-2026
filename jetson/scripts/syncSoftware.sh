@@ -27,6 +27,7 @@ set -euo pipefail
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly SOURCE_DIR="$(dirname "${SCRIPT_DIR}")"
 readonly F1_DIR="$(dirname "${SOURCE_DIR}")/rl/formulaOne"
+readonly F3_DIR="$(dirname "${SOURCE_DIR}")/rl/formulaThree"
 readonly F2_DIR="$(dirname "${SOURCE_DIR}")/rl/formulaTwo"
 readonly RACER_DIR="$(dirname "${SOURCE_DIR}")/rl/obstacleRacer"
 
@@ -40,6 +41,9 @@ F1_RUN="${F1_RUN:-v12}"
 F2_RUN="${F2_RUN:-f2_v3_59M}"
 SYNC_F1=true
 SYNC_F2=true
+F3_RUN="${F3_RUN:-}"
+SYNC_F3=false
+[[ -n "${F3_RUN}" ]] && SYNC_F3=true
 # The obstacle racer's policy, from rl/obstacleRacer/runs/<run>/ (policy.npz,
 # made by export_policy.py, and the run's config.yaml).  Empty syncs the code
 # and the tree's config.yaml only -- enough for driver:=prior, and it leaves
@@ -96,6 +100,9 @@ Options:
   -p, --policy RUN  formulaOne policy to deploy (env F1_RUN, default: v12)
       --f2-policy RUN
                     formulaTwo policy to deploy (env F2_RUN, default: f2_v3_59M)
+      --f3-policy RUN
+                    Sync formulaThree and this policy (opt-in; env F3_RUN)
+      --no-f3       Do not sync formulaThree
       --no-f1       Do not sync formulaOne or its policy
       --no-f2       Do not sync formulaTwo or its policy
   -r, --racer-policy RUN
@@ -137,6 +144,15 @@ while [[ $# -gt 0 ]]; do
     --f2-policy)
       F2_RUN="$2"
       shift 2
+      ;;
+    --f3-policy)
+      F3_RUN="$2"
+      SYNC_F3=true
+      shift 2
+      ;;
+    --no-f3)
+      SYNC_F3=false
+      shift
       ;;
     --no-f1)
       SYNC_F1=false
@@ -287,6 +303,11 @@ if [[ "${SYNC_F2}" == true ]]; then
   echo "formulaTwo policy: ${F2_POLICY_DIR#"${REPO_ROOT}"/}"
 fi
 
+if [[ "${SYNC_F3}" == true ]]; then
+  F3_POLICY_DIR="$(resolve_policy "${F3_DIR}" "${F3_RUN}")"
+  echo "formulaThree policy: ${F3_POLICY_DIR#"${REPO_ROOT}"/}"
+fi
+
 if [[ "${SYNC_RACER}" == true && -n "${RACER_RUN}" ]]; then
   RACER_POLICY_DIR="${RACER_DIR}/runs/${RACER_RUN}"
   if [[ ! -f "${RACER_POLICY_DIR}/policy.npz" || ! -f "${RACER_POLICY_DIR}/config.yaml" ]]; then
@@ -421,6 +442,10 @@ if [[ "${SYNC_F2}" == true ]]; then
   deploy_driver formulaTwo "${F2_DIR}" "${F2_RUN}" "${F2_POLICY_DIR}"
 fi
 
+if [[ "${SYNC_F3}" == true ]]; then
+  deploy_driver formulaThree "${F3_DIR}" "${F3_RUN}" "${F3_POLICY_DIR}"
+fi
+
 if [[ "${SYNC_RACER}" == true ]]; then
   RACER_REMOTE="${REMOTE_DIR}/obstacleRacer"
   # The driver and its launch files.  runs/ and .venv are gitignored, so
@@ -446,8 +471,8 @@ if [[ "${SYNC_RACER}" == true ]]; then
   fi
 fi
 
-if [[ "${SYNC_F1}" == true || "${SYNC_F2}" == true || "${SYNC_RACER}" == true ]]; then
-  # All three drivers resolve the course files and record_run.py as
+if [[ "${SYNC_F1}" == true || "${SYNC_F2}" == true || "${SYNC_F3}" == true || "${SYNC_RACER}" == true ]]; then
+  # All drivers resolve the course files and record_run.py as
   # <two dirs above themselves>/jetson/..., which is the repo's layout.  Here
   # that is ~/jetson, so point it at the synced jetson/ tree.  Never replaces
   # a real directory of that name.
@@ -523,5 +548,8 @@ if [[ "${SYNC_F2}" == true ]]; then
 fi
 if [[ "${SYNC_RACER}" == true ]]; then
   echo "  obstacleRacer: ${REMOTE_DIR}/scripts/launchObstacleRacer.sh  (${RACER_RUN:-policy already on the Orin}, speed_scale 0.3 by default)"
+fi
+if [[ "${SYNC_F3}" == true ]]; then
+  echo "  formulaThree: ${REMOTE_DIR}/scripts/launchFormulaThree.sh (${F3_RUN}, speed_scale 0.3 by default)"
 fi
 echo "  (one driver at a time -- all publish /drive_cmd)"
