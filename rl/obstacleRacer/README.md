@@ -181,7 +181,20 @@ In the sim container, with the workspace built:
 ./validate.sh --seg-gap      # sensor model vs the real segmenter
 ./validate.sh --surfaces     # plant pitch/roll/z vs Gazebo on ramps, potholes, bank, gravel
 ./validate.sh --policy runs/v1/policy.npz   # held-out layouts x 5 noisy starts
+./validate.sh --seg-gap --seeds 201 --poses 1 --helix-poses 5  # scan along the helix
+./validate.sh --flat-surfaces   # open-floor steering baseline
+./validate.sh --helix-surfaces  # upper, middle, lower helix steering passes
+./validate.sh --cadence --seconds 20  # raw and processed cloud timing
 ```
+
+The surface checks save paired Gazebo and Numba pose traces under
+`runs/gazebo/`. The policy check saves a pose, command, tachometer, policy
+action, and current scan trace for every run. Compare the exported policy on
+the same layout seeds in Numba with `python3 parity_eval.py
+runs/v8/policy.npz --seeds 201,202,208,218 --starts 5`. The starts are drawn
+independently, so compare rates over several starts rather than treating two
+individual trajectories as paired. `fit_yaw_parity.py` measures what yaw lag
+would match an open-floor Gazebo trace; it does not measure the real car.
 
 To watch a run the way it happens on race day (the driver waits for the start
 signal and takes the throttle off when lap_counter reports the laps):

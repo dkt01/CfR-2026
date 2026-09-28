@@ -368,8 +368,14 @@ class ObstacleRacer(Node):
         # Steering stays live after the finish, while the car coasts.
         self.send(steer[0] if (self.go and not stale) else 0.0, velocity_out)
         if stale and self.go and not self.done:
+            pose_age = (
+                now - self.pose_time if self.pose_time is not None else float("inf")
+            )
+            cloud_age = (
+                now - self.cloud_time if self.cloud_time is not None else float("inf")
+            )
             self.get_logger().warn(
-                "pose or cloud stale -- holding at zero speed",
+                f"pose age {pose_age:.2f} s, cloud age {cloud_age:.2f} s -- holding at zero speed",
                 throttle_duration_sec=2.0,
             )
 
