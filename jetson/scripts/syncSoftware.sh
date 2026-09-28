@@ -45,7 +45,7 @@ SYNC_F2=true
 # and the run's config.yaml).  Empty (--racer-policy '') syncs the code and the
 # tree's config.yaml only -- enough for driver:=prior, and it leaves any policy
 # already on the Orin alone.
-RACER_RUN="${RACER_RUN-v8}"
+RACER_RUN="${RACER_RUN-v9}"
 SYNC_RACER=true
 
 DRY_RUN=false
@@ -101,7 +101,7 @@ Options:
       --no-f2       Do not sync formulaTwo or its policy
   -r, --racer-policy RUN
                     obstacleRacer policy to deploy, from rl/obstacleRacer/
-                    bestModel/RUN or runs/RUN (env RACER_RUN, default: v8;
+                    bestModel/RUN or runs/RUN (env RACER_RUN, default: v9;
                     '' for code and config only)
       --no-racer    Do not sync obstacleRacer
   -n, --dry-run    Show what would transfer without changing anything
@@ -114,7 +114,7 @@ Examples:
   $(basename "$0") --dry-run
   $(basename "$0") --host orin.local --build
   ORIN_HOST=tejam@192.168.55.1 $(basename "$0") --build --test
-  $(basename "$0") --racer-policy v8 --build
+  $(basename "$0") --racer-policy v9 --build
 EOF
 }
 

@@ -11,8 +11,8 @@ pose round a loop only while the racer commands a speed.
 
     source ~/ros2_ws/install/setup.bash
     ros2 launch rl/obstacleRacer/obstacle_racer_car.launch.py record:=false \\
-        policy:=rl/obstacleRacer/bestModel/v8/policy.npz \\
-        config:=rl/obstacleRacer/bestModel/v8/config.yaml
+        policy:=rl/obstacleRacer/bestModel/v9/policy.npz \\
+        config:=rl/obstacleRacer/bestModel/v9/config.yaml
     python3 rl/obstacleRacer/check_car_chain.py --start visual   # or manual
 
 It checks that the car holds zero speed until the start, drives after it,

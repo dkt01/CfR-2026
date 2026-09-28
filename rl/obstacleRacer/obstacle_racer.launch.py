@@ -1,6 +1,6 @@
 """Run the obstacle racer against whatever stack is already up.
 
-    ros2 launch rl/obstacleRacer/obstacle_racer.launch.py policy:=bestModel/v8/policy.npz
+    ros2 launch rl/obstacleRacer/obstacle_racer.launch.py policy:=bestModel/v9/policy.npz
 
 Brings up only the driver.  It assumes something else is publishing the ZED
 cloud and pose and consuming /drive_cmd: `obstacle_course.launch.py

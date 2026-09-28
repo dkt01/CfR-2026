@@ -214,6 +214,8 @@ def generate_launch_description():
             ("~/drive_cmd", "/drive_cmd"),
             ("~/status", "/arduino_bridge/status"),
             ("cmd_vel", "/sim/cmd_vel"),
+            # Ground-truth pose, for the pitch its grade term needs.
+            ("pose", "/zed/zed_node/pose"),
         ],
     )
 
