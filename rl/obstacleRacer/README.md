@@ -210,7 +210,7 @@ ros2 service call /obstacle_randomizer/start_signal std_srvs/srv/SetBool "{data:
 
 # Send it to the Orin: the code to ~/software/obstacleRacer, and the race
 # policy's policy.npz and config.yaml to its top level.  The race policy is
-# committed in bestModel/v8/ and is the sync's default; --racer-policy RUN
+# committed in bestModel/v9/ and is the sync's default; --racer-policy RUN
 # sends another from bestModel/RUN or runs/RUN (export_policy.py first)
 jetson/scripts/syncSoftware.sh --build
 

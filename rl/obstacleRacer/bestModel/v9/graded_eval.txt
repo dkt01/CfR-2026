@@ -1,0 +1,18 @@
+v9 race policy: runs/v9/step_196001k.zip (196M steps), exported with export_policy.py.
+v9 is a refinement of v8's 140M checkpoint, trained to 200M at learning_rate 1e-4.
+Chosen 2026-09-28 after training ended, on one start-box lap per car, 256 cars:
+the 32 held-out layouts x4 and 64 never-seen layouts (seeds 5101-5164) x2.
+196M has the best finish rate overall and on never-seen layouts, and v8's 140M
+is rescored on the same laps for comparison. 194-198M sit within a point
+overall; 198M is best on held-out alone.
+
+v8 step_140000k.zip all fin 29.7%  56.6 m lap  88.3 s | held 34.4%  57.8 m | new 25.0%  55.4 m
+step_160001k.zip   all fin 35.2%  59.4 m lap  89.6 s | held 41.4%  60.8 m | new 28.9%  58.0 m
+step_172001k.zip   all fin 32.8%  58.4 m lap  88.7 s | held 37.5%  59.5 m | new 28.1%  57.3 m
+step_180001k.zip   all fin 34.4%  59.3 m lap  86.7 s | held 37.5%  59.4 m | new 31.2%  59.2 m
+step_188001k.zip   all fin 34.4%  59.0 m lap  88.6 s | held 39.1%  60.4 m | new 29.7%  57.7 m
+step_190001k.zip   all fin 32.0%  57.2 m lap  83.5 s | held 38.3%  59.7 m | new 25.8%  54.8 m
+step_194001k.zip   all fin 39.5%  60.8 m lap  85.2 s | held 41.4%  62.3 m | new 37.5%  59.2 m
+step_196001k.zip   all fin 39.8%  60.1 m lap  84.1 s | held 41.4%  60.1 m | new 38.3%  60.0 m
+step_198001k.zip   all fin 39.5%  59.7 m lap  87.1 s | held 45.3%  62.1 m | new 33.6%  57.3 m
+step_200031k.zip   all fin 37.1%  59.6 m lap  84.0 s | held 40.6%  61.5 m | new 33.6%  57.7 m
