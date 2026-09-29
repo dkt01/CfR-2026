@@ -7,6 +7,17 @@
 #   ./validate.sh --prior                          # the steering prior alone
 #   ./validate.sh --seg-gap [--poses 150]          # sensor model vs segmenter
 #   ./validate.sh --surfaces                       # plant vs Gazebo's body motion
+#   ./validate.sh --flat-surfaces                  # steering on open floor
+#   ./validate.sh --helix-surfaces                 # short passes on the helix
+#   ./validate.sh --cadence                        # raw and processed cloud timing
+#   ./validate.sh --step-steer                     # yaw lag from a settled speed
+#   ./validate.sh --reverse                        # coast, direction wait, back up
+#   ./validate.sh --rtf 0.25 ...                   # cap Gazebo's real-time factor
+#
+# The Sensors system holds each step until the ZED has rendered, so the
+# camera keeps its 12 Hz in sim time and Gazebo runs slower than real time
+# instead.  --rtf caps it lower still, for when a busy CPU starves the ROS
+# nodes; check with --cadence at the same --rtf.
 #
 # Run inside the sim container (sim-launch skill) with the workspace built:
 #   docker exec -it <container> bash -lc 'cd /repo/rl/obstacleRacer && ./validate.sh'
@@ -19,22 +30,37 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 REPO=$(cd ../.. && pwd)
 
 POLICY="$PWD/runs/v1/policy.npz"
+CONFIG="$PWD/config.yaml"
 MODE=validate
 DRIVER=policy
 STARTS=5
 SEEDS=""
 TIMEOUT=""
 POSES=""
+HELIX_POSES=""
+MONITOR_CLOUD=""
+CADENCE_SECONDS=""
+RTF=1.0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --policy) POLICY="$(realpath "$2")"; shift 2;;
+    --config) CONFIG="$(realpath "$2")"; shift 2;;
     --prior) DRIVER=prior; shift;;
     --starts) STARTS="$2"; shift 2;;
     --seeds) SEEDS="$2"; shift 2;;
     --timeout) TIMEOUT="$2"; shift 2;;
     --poses) POSES="$2"; shift 2;;
+    --helix-poses) HELIX_POSES="$2"; shift 2;;
+    --monitor-cloud) MONITOR_CLOUD=1; shift;;
+    --seconds) CADENCE_SECONDS="$2"; shift 2;;
+    --cadence) MODE=cadence; shift;;
+    --rtf) RTF="$2"; shift 2;;
+    --step-steer) MODE=step-steer; shift;;
+    --reverse) MODE=reverse; shift;;
     --seg-gap) MODE=seg-gap; shift;;
     --surfaces) MODE=surfaces; shift;;
+    --helix-surfaces) MODE=helix-surfaces; shift;;
+    --flat-surfaces) MODE=flat-surfaces; shift;;
     *) echo "unknown argument: $1"; exit 1;;
   esac
 done
@@ -72,7 +98,12 @@ if timeout 12 ros2 node list --no-daemon 2>/dev/null | grep -q sim_vehicle; then
   exit 1
 fi
 
-echo "starting the Obstacle Course (sensors on, 1 lap)..."
+# build.sh copies the world into the install tree; write it fresh from the
+# source with this run's real-time factor (1.0 restores the stock world).
+WORLD="$WS/install/cfr_arduino_bridge/share/cfr_arduino_bridge/worlds/obstacle_course.sdf"
+sed "s|<real_time_factor>[^<]*</real_time_factor>|<real_time_factor>$RTF</real_time_factor>|"   "$REPO/jetson/cfr_arduino_bridge/worlds/obstacle_course.sdf" >"$WORLD"
+
+echo "starting the Obstacle Course (sensors on, 1 lap, rtf $RTF)..."
 spawn ros2 launch cfr_arduino_bridge obstacle_course.launch.py \
   sensors:=true path_follower:=false cmd_vel_to_drive:=false laps:=1 \
   >/tmp/obstacle_racer_sim.log 2>&1
@@ -84,16 +115,24 @@ for _ in $(seq 90); do
 done
 
 if [[ "$MODE" == "validate" ]]; then
-  spawn ros2 launch "$PWD/obstacle_racer.launch.py" policy:="$POLICY" driver:="$DRIVER" \
+  spawn ros2 launch "$PWD/obstacle_racer.launch.py" policy:="$POLICY" config:="$CONFIG" driver:="$DRIVER" \
     >/tmp/obstacle_racer_driver.log 2>&1
   echo -n "waiting for the driver"
   for _ in $(seq 60); do
     if ros2 service list 2>/dev/null | grep -q /obstacle_racer/manual_start; then echo " ok"; break; fi
     echo -n "."; sleep 1
   done
-  python3 gazebo_check.py validate --starts "$STARTS" ${SEEDS:+--seeds "$SEEDS"} ${TIMEOUT:+--timeout "$TIMEOUT"}
+  python3 gazebo_check.py validate --starts "$STARTS" ${SEEDS:+--seeds "$SEEDS"} ${TIMEOUT:+--timeout "$TIMEOUT"} ${MONITOR_CLOUD:+--monitor-cloud}
 elif [[ "$MODE" == "seg-gap" ]]; then
-  python3 gazebo_check.py seg-gap ${POSES:+--poses "$POSES"}
+  python3 gazebo_check.py seg-gap ${POSES:+--poses "$POSES"} ${SEEDS:+--seeds "$SEEDS"} ${HELIX_POSES:+--helix-poses "$HELIX_POSES"}
+elif [[ "$MODE" == "cadence" ]]; then
+  python3 gazebo_check.py cadence ${CADENCE_SECONDS:+--seconds "$CADENCE_SECONDS"}
 else
-  python3 gazebo_check.py "$MODE"
+  if [[ "$MODE" == "helix-surfaces" ]]; then
+    python3 gazebo_check.py surfaces --helix-only
+  elif [[ "$MODE" == "flat-surfaces" ]]; then
+    python3 gazebo_check.py surfaces --flat-only
+  else
+    python3 gazebo_check.py "$MODE"
+  fi
 fi

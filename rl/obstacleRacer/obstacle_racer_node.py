@@ -30,7 +30,7 @@ cloud_segmentation_node runs and the fixtures score), then
 `scan_from_segmentation` and the segmenter's gates, then observation.py -- the
 module the trainer built every training observation with.
 
-    ros2 launch rl/obstacleRacer/obstacle_racer.launch.py policy:=bestModel/v8/policy.npz
+    ros2 launch rl/obstacleRacer/obstacle_racer.launch.py policy:=bestModel/v9/policy.npz
 
 driver:=prior drives the map-free steering prior alone at a fixed speed, for
 checking the whole chain before a policy exists.
@@ -47,7 +47,12 @@ import rclpy
 import yaml
 from geometry_msgs.msg import PoseStamped
 from rclpy.node import Node
-from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
+from rclpy.qos import (
+    DurabilityPolicy,
+    QoSProfile,
+    ReliabilityPolicy,
+    qos_profile_sensor_data,
+)
 from sensor_msgs.msg import PointCloud2
 from sensor_msgs_py import point_cloud2
 from std_msgs.msg import Bool
@@ -115,6 +120,11 @@ class ObstacleRacer(Node):
             "cloud_stride", 2
         )  # every other point, as the node's viewer copy
         self.declare_parameter("yaw_rate_filter", 0.5)
+        # Reliable, depth 1, as cloud_segmentation reads the same topic
+        # (cloud_msg.hpp CloudQoS).  A whole cloud is several MB of UDP
+        # fragments: best effort dropped about two in three in Gazebo, each
+        # drop a gap the cloud_timeout hold turns into a stop.
+        self.declare_parameter("cloud_reliable", True)
         # Start on the Arduino's Manual Start bit as well as the signal.
         self.declare_parameter("arduino_manual_start", True)
 
@@ -161,7 +171,9 @@ class ObstacleRacer(Node):
             PointCloud2,
             "/zed/zed_node/point_cloud/cloud_registered",
             self.on_cloud,
-            qos_profile_sensor_data,
+            QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE)
+            if self.param("cloud_reliable")
+            else qos_profile_sensor_data,
         )
         self.create_subscription(
             PoseStamped, "/zed/zed_node/pose", self.on_pose, qos_profile_sensor_data
@@ -368,8 +380,14 @@ class ObstacleRacer(Node):
         # Steering stays live after the finish, while the car coasts.
         self.send(steer[0] if (self.go and not stale) else 0.0, velocity_out)
         if stale and self.go and not self.done:
+            pose_age = (
+                now - self.pose_time if self.pose_time is not None else float("inf")
+            )
+            cloud_age = (
+                now - self.cloud_time if self.cloud_time is not None else float("inf")
+            )
             self.get_logger().warn(
-                "pose or cloud stale -- holding at zero speed",
+                f"pose age {pose_age:.2f} s, cloud age {cloud_age:.2f} s -- holding at zero speed",
                 throttle_duration_sec=2.0,
             )
 

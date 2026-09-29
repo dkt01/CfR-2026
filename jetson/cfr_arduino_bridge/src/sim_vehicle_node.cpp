@@ -14,6 +14,7 @@
 
 #include "cfr_interfaces/msg/arduino_status.hpp"
 #include "cfr_interfaces/msg/drive_command.hpp"
+#include "geometry_msgs/msg/pose_stamped.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "rclcpp/rclcpp.hpp"
 
@@ -44,6 +45,26 @@ namespace cfr_arduino_bridge {
       // stands in for the bridge.  Without it the simulated car reached
       // 3 m/s ~0.7 s sooner than the car it models.  Zero disables it.
       speed_slew_rate_ = declare_parameter<double>("speed_slew_rate", 2.0);
+      // SpeedController's SPEED_SETTLE_MS: the tach must read stopped this long
+      // before the controller's direction flips.  Zero disables the wait.
+      direction_settle_ = declare_parameter<double>("direction_settle", 0.1);
+      // Gravity along a slope, from the car's pitch on the `pose` topic.  This
+      // node sets the wheel speed and Gazebo's wheels hold it with unlimited
+      // torque, so without this term a coasting car could not roll faster down
+      // a ramp or lose speed up one: the wheels were perfect brakes and a
+      // perfect motor.  The car has neither, and rl/obstacleRacer/plant.py
+      // applies the same term (grade_force), so on the helix the two agree.
+      grade_ = declare_parameter<bool>("grade", true);
+      // A car pinned against something: Gazebo's velocity-driven wheels keep
+      // spinning at the commanded speed, so the tach kept reading ~0.8 m/s
+      // while the car sat still, and a policy that backs off when its tach
+      // reads stopped (as it learned to in plant.py, which zeroes the speed
+      // on contact) pushed on forever.  When the pose shows the car making
+      // less than contact_stall_ratio of the wheel speed for
+      // contact_stall_time, the wheels take the ground speed instead, as a
+      // stalled motor would.  Needs `pose`; zero time disables it.
+      contact_stall_time_ = declare_parameter<double>("contact_stall_time", 0.1);
+      contact_stall_ratio_ = declare_parameter<double>("contact_stall_ratio", 0.3);
 
       // Zero means "coast only", which is what the car does today.  It is a
       // parameter rather than a constant so that a firmware fix to the brake
@@ -119,6 +140,29 @@ namespace cfr_arduino_bridge {
 
       twist_publisher_ = create_publisher<geometry_msgs::msg::Twist>("cmd_vel", rclcpp::QoS(10));
       status_publisher_ = create_publisher<cfr_interfaces::msg::ArduinoStatus>("~/status", rclcpp::QoS(10));
+      pose_subscription_ = create_subscription<geometry_msgs::msg::PoseStamped>(
+          "pose", rclcpp::SensorDataQoS(), [this](const geometry_msgs::msg::PoseStamped::SharedPtr msg) {
+            const auto& q = msg->pose.orientation;
+            // REP-103 pitch is nose-down positive.
+            pitch_up_ = -std::asin(std::clamp(2.0 * (q.w * q.y - q.z * q.x), -1.0, 1.0));
+            const rclcpp::Time stamp(msg->header.stamp);
+            const double yaw = std::atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z));
+            const double dt = pose_time_.nanoseconds() == 0 ? 0.0 : (stamp - pose_time_).seconds();
+            if (dt > 1e-3 && dt < 0.5) {
+              const double dx = msg->pose.position.x - pose_x_;
+              const double dy = msg->pose.position.y - pose_y_;
+              const double forward = (dx * std::cos(yaw) + dy * std::sin(yaw)) / dt;
+              // ~50 ms low-pass: pose steps are noisy at a few cm/s.
+              const double a = std::min(1.0, dt / 0.05);
+              ground_speed_ += a * (forward - ground_speed_);
+            }
+            if (dt != 0.0) {
+              pose_received_ = now();
+            }
+            pose_time_ = stamp;
+            pose_x_ = msg->pose.position.x;
+            pose_y_ = msg->pose.position.y;
+          });
       command_subscription_ = create_subscription<cfr_interfaces::msg::DriveCommand>(
           "~/drive_cmd", rclcpp::SensorDataQoS(), [this](const cfr_interfaces::msg::DriveCommand::SharedPtr msg) {
             command_ = *msg;
@@ -135,6 +179,22 @@ namespace cfr_arduino_bridge {
       rclcpp::Time time;
       cfr_interfaces::msg::DriveCommand command;
     };
+
+    // See contact_stall_time.  Only while the pose is current: launches that
+    // do not remap `pose` keep the old behavior.
+    void ApplyContactStall(const rclcpp::Time& stamp, double elapsed) {
+      const bool pose_fresh = pose_received_.nanoseconds() != 0 && (stamp - pose_received_).seconds() < 0.2;
+      const double wheel = std::abs(simulated_speed_);
+      if (contact_stall_time_ <= 0.0 || !pose_fresh || wheel < 0.15 ||
+          std::abs(ground_speed_) >= contact_stall_ratio_ * wheel) {
+        stalled_for_ = 0.0;
+        return;
+      }
+      stalled_for_ += elapsed;
+      if (stalled_for_ >= contact_stall_time_) {
+        simulated_speed_ = std::copysign(std::min(std::abs(ground_speed_), wheel), simulated_speed_);
+      }
+    }
 
     void OnTimer() {
       const rclcpp::Time stamp = now();
@@ -154,7 +214,9 @@ namespace cfr_arduino_bridge {
         if (!std::isfinite(target) || std::abs(target) <= neutral_speed_deadband_) {
           target = 0.0;
         }
-        ApproachTarget(SlewTarget(std::clamp(target, -max_speed_, max_speed_), elapsed), elapsed);
+        ApproachTarget(DirectedTarget(SlewTarget(std::clamp(target, -max_speed_, max_speed_), elapsed), stamp),
+                       elapsed);
+        ApplyContactStall(stamp, elapsed);
         AdvanceTachometer(elapsed);
 
         const double steering = EffectiveSteeringAngle(static_cast<double>(effective.steering));
@@ -167,6 +229,7 @@ namespace cfr_arduino_bridge {
       } else {
         // The bridge snaps its target to zero rather than ramping it.
         slewed_target_ = 0.0;
+        DirectedTarget(0.0, stamp);
         ApproachTarget(0.0, elapsed);
         AdvanceTachometer(elapsed);
         twist.linear.x = simulated_speed_;
@@ -183,11 +246,11 @@ namespace cfr_arduino_bridge {
       status.mode = active ? cfr_interfaces::msg::ArduinoStatus::MODE_AUTO_ACTIVE :
                              cfr_interfaces::msg::ArduinoStatus::MODE_AUTO_ARMED;
       status.battery_level = 255;
-      // Direction-blind magnitude from the tach, signed by the commanded
+      // Direction-blind magnitude from the tach, signed by the controller's
       // direction, exactly as the firmware does it -- one magnet in the spur
       // gear cannot tell forward from reverse.
       const double magnitude = tach_.Rpm();
-      const double signed_rpm = std::copysign(magnitude, simulated_speed_);
+      const double signed_rpm = direction_ < 0 ? -magnitude : magnitude;
       status.rpm = static_cast<int16_t>(std::lround(signed_rpm));
       // Derived exactly as arduino_bridge_node derives them, so a sim run's
       // speed column means the same thing as the car's -- including inheriting
@@ -346,6 +409,23 @@ namespace cfr_arduino_bridge {
       return slewed_target_;
     }
 
+    // SpeedController::update's direction estimate.  A target against the
+    // direction last driven is tracked as zero, so the car coasts, until the
+    // tach has read stopped for direction_settle_ (on top of the tach's own
+    // stall timeout).  Only then may the car drive the other way.
+    double DirectedTarget(double target, const rclcpp::Time& stamp) {
+      const bool moving = tach_.Rpm() > 0.0;
+      if (moving || last_moving_time_.nanoseconds() == 0) {
+        last_moving_time_ = stamp;
+      }
+      const bool settled = !moving && (stamp - last_moving_time_).seconds() >= direction_settle_;
+      const int sign = target > 0.0 ? 1 : (target < 0.0 ? -1 : 0);
+      if (sign != direction_ && (direction_ == 0 || settled)) {
+        direction_ = sign;
+      }
+      return (sign != 0 && sign == direction_) ? target : 0.0;
+    }
+
     // Coast drag in m/s^2 at a given speed magnitude.
     double CoastDeceleration(double speed) const {
       return (coast_f0_ + coast_f1_ * speed + coast_f2_ * speed * speed) / vehicle_mass_;
@@ -365,7 +445,17 @@ namespace cfr_arduino_bridge {
       const double limit =
           speeding_up ? max_acceleration_ : CoastDeceleration(std::abs(simulated_speed_)) + brake_deceleration_;
       const double step = std::max(limit, 0.0) * elapsed;
+      const double before = simulated_speed_;
       simulated_speed_ += std::clamp(delta, -step, step);
+      // Climbing resistance, as plant.py: only while rolling, and it can
+      // stop the car but not roll it back through zero.
+      if (grade_ && std::abs(before) > 0.05) {
+        simulated_speed_ -= kGravity * std::tan(pitch_up_) * elapsed;
+        if (simulated_speed_ * before < 0.0) {
+          simulated_speed_ = 0.0;
+        }
+        simulated_speed_ = std::clamp(simulated_speed_, -max_speed_, max_speed_);
+      }
       if (std::abs(simulated_speed_) < 1e-4) {
         simulated_speed_ = 0.0;
       }
@@ -421,6 +511,20 @@ namespace cfr_arduino_bridge {
     double target_speed_ = 0.0;
     double speed_slew_rate_ = 2.0;
     double slewed_target_ = 0.0;
+    double direction_settle_ = 0.1;
+    static constexpr double kGravity = 9.81;
+    bool grade_ = true;
+    double pitch_up_ = 0.0;
+    double contact_stall_time_ = 0.1;
+    double contact_stall_ratio_ = 0.3;
+    double stalled_for_ = 0.0;
+    double ground_speed_ = 0.0;
+    double pose_x_ = 0.0;
+    double pose_y_ = 0.0;
+    rclcpp::Time pose_time_{0, 0, RCL_ROS_TIME};
+    rclcpp::Time pose_received_{0, 0, RCL_ROS_TIME};
+    int direction_ = 0;
+    rclcpp::Time last_moving_time_{0, 0, RCL_ROS_TIME};
     TachModel tach_;
     std::vector<double> steering_commands_;
     std::vector<double> steering_angles_;
@@ -435,6 +539,7 @@ namespace cfr_arduino_bridge {
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr twist_publisher_;
     rclcpp::Publisher<cfr_interfaces::msg::ArduinoStatus>::SharedPtr status_publisher_;
     rclcpp::Subscription<cfr_interfaces::msg::DriveCommand>::SharedPtr command_subscription_;
+    rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr pose_subscription_;
     rclcpp::TimerBase::SharedPtr timer_;
   };
 

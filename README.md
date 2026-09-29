@@ -24,6 +24,30 @@ The robot may be in one of the following states:
 | Auto Active | Autonomous running                                                                                                         |
 | Fault       | Cannot run                                                                                                                 |
 
+## Running the drivers on the Jetson
+
+From the repo root on the development machine, sync the software and build it
+on the Orin with `jetson/scripts/syncSoftware.sh --build`. On the car, keep the
+E-Stop remote in hand and the wheels clear. Run these in two foreground
+terminals on the Orin:
+
+```bash
+# Terminal 1: Arduino bridge and ZED camera
+~/software/scripts/launch.sh --no-cmd-vel
+
+# Terminal 2: choose one driver for the course
+~/software/scripts/launchObstacleRacer.sh  # Obstacle Course
+~/software/scripts/launchFormulaOne.sh     # Speed Course
+~/software/scripts/launchFormulaTwo.sh     # Speed Course, with ZED depth
+```
+
+Each driver checks its inputs, asks for E-Stop confirmation, then waits for the
+course start signal. Only run one driver at a time. The wrappers default to
+`--speed-scale 0.3`; use `--help` for options. See the
+[Obstacle Course](rl/obstacleRacer/README.md),
+[formulaOne](rl/formulaOne/DEPLOY.md), and
+[formulaTwo](rl/formulaTwo/README.md) guides for details.
+
 ## RC & E-Stop Protocol
 
 The robot features an offboard E-Stop interface with remote control.  The offboard interface is run on a Raspberry Pi and the onboard system runs on an Arduino Uno.  Both communicate wirelessly using an [XBee Pro S1](https://cdn-shop.adafruit.com/datasheets/Xbee%20series%201%20DS.pdf) radio pair.  The Offboard system is designed to interface with the course E-Stop system through an RJ-45 connector.  RC is controlled using a PS3 controller wired to the offboard Raspberry Pi.

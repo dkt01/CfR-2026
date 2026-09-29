@@ -7,6 +7,7 @@ obstacle course that validate.sh (or sim.sh) has already brought up:
     python3 gazebo_check.py seg-gap  --poses 500        # needs sensors:=true
     python3 gazebo_check.py surfaces                     # scripted passes
     python3 gazebo_check.py validate --starts 5          # the real node drives
+    python3 gazebo_check.py cadence --seconds 20         # raw vs processed clouds
 
 seg-gap   Teleports the car to poses across the layouts (ramp and deck too:
           teleport_api takes a ground height), segments the rendered ZED cloud
@@ -14,17 +15,20 @@ seg-gap   Teleports the car to poses across the layouts (ramp and deck too:
           sensor.py computes for the same ground-truth pose.  Pass/fail per
           course section; the samples are saved for refitting sensor noise.
 
-surfaces  Drives scripted passes -- ramp, deck crest and helix entry, potholes,
-          bank, gravel, the hoop and car-wash lips -- at 1, 2 and 3 m/s,
+surfaces  Drives scripted passes on the ramp, deck crest, potholes, bank,
+          gravel, car-wash lip, open floor, and three parts of the helix,
           records Gazebo's 6-DOF pose, replays the same commands through
-          plant.py from the same start, and reports pitch/roll/z residuals.
+          plant.py from the same start, and reports pose and speed residuals.
           Thresholds (plan): RMS pitch and roll within 1.5 deg and peak timing
           within 50 ms on the ramp and potholes.
 
 validate  For each held-out layout and each noisy start (+/-0.1 m, +/-5 deg in
           the start box), runs obstacle_racer_node to a verdict judged by
           hoop_monitor and lap_counter: finish with all hoops, hoop miss,
-          stuck, rolled, or timeout.  This is the acceptance test.
+          stuck, rolled, or timeout.  Saves a trace of commands, policy actions,
+          scan, tachometer speed and pose.  This is the acceptance test.
+
+cadence   Measures raw and processed cloud arrival gaps in simulation time.
 
 Everything that talks to Gazebo goes through topics and services the stack
 already has; nothing here reads the world file for the answer.
@@ -47,13 +51,18 @@ from geometry_msgs.msg import PoseStamped
 from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
 from rcl_interfaces.srv import SetParameters
 from rclpy.node import Node
-from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
+from rclpy.qos import (
+    DurabilityPolicy,
+    QoSProfile,
+    ReliabilityPolicy,
+    qos_profile_sensor_data,
+)
 from sensor_msgs.msg import PointCloud2
 from sensor_msgs_py import point_cloud2
 from std_msgs.msg import Bool
 from std_srvs.srv import SetBool, Trigger
 
-from cfr_interfaces.msg import DriveCommand, HoopStatus
+from cfr_interfaces.msg import ArduinoStatus, DriveCommand, DriverTelemetry, HoopStatus
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -66,6 +75,8 @@ import plant as P  # noqa: E402
 import sensor as S  # noqa: E402
 
 LATCHED = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+# As obstacle_racer_node reads clouds: best effort loses most whole clouds.
+CLOUD_QOS = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE)
 TELEPORT_URL = "http://127.0.0.1:9003/api/sim/teleport"
 OUT = HERE / "runs" / "gazebo"
 
@@ -82,7 +93,7 @@ def attitude(q):
 class Sim(Node):
     """The handles on the running stack this script needs."""
 
-    def __init__(self):
+    def __init__(self, need_cloud=False, need_raw=False):
         super().__init__(
             "obstacle_racer_check",
             parameter_overrides=[
@@ -95,19 +106,43 @@ class Sim(Node):
         self.pose_log = None
         self.cloud = None
         self.cloud_count = 0
+        self.cloud_time = None
+        self.cloud_stamp = None
+        self.cloud_times = []
+        self.raw_times = []
         self.hoops = None
         self.done = False
+        self.driver = None
+        self.status = None
+        self.drive_command = None
         self.create_subscription(
             PoseStamped, "/zed/zed_node/pose", self.on_pose, qos_profile_sensor_data
         )
-        self.create_subscription(
-            PointCloud2,
-            "/zed/zed_node/point_cloud/cloud_registered",
-            self.on_cloud,
-            qos_profile_sensor_data,
-        )
+        if need_cloud:
+            self.create_subscription(
+                PointCloud2,
+                "/zed/zed_node/point_cloud/cloud_registered",
+                self.on_cloud,
+                CLOUD_QOS,
+            )
+        if need_raw:
+            self.create_subscription(
+                PointCloud2,
+                "/zed/gz/rgbd/points",
+                self.on_raw_cloud,
+                CLOUD_QOS,
+            )
         self.create_subscription(HoopStatus, "/hoop_monitor/status", self.on_hoops, 10)
         self.create_subscription(Bool, "/lap_counter/done", self.on_done, LATCHED)
+        self.create_subscription(
+            DriverTelemetry, "/obstacle_racer/telemetry", self.on_driver, 50
+        )
+        self.create_subscription(
+            ArduinoStatus, "/arduino_bridge/status", self.on_status, 10
+        )
+        self.create_subscription(
+            DriveCommand, "/drive_cmd", self.on_drive_command, qos_profile_sensor_data
+        )
         self.drive = self.create_publisher(
             DriveCommand, "/drive_cmd", qos_profile_sensor_data
         )
@@ -129,12 +164,28 @@ class Sim(Node):
     def on_cloud(self, msg):
         self.cloud = msg
         self.cloud_count += 1
+        self.cloud_time = self.now()
+        self.cloud_stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        self.cloud_times.append((self.cloud_time, self.cloud_stamp))
+
+    def on_raw_cloud(self, msg):
+        stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        self.raw_times.append((self.now(), stamp))
 
     def on_hoops(self, msg):
         self.hoops = msg
 
     def on_done(self, msg):
         self.done = bool(msg.data)
+
+    def on_driver(self, msg):
+        self.driver = msg
+
+    def on_status(self, msg):
+        self.status = msg
+
+    def on_drive_command(self, msg):
+        self.drive_command = msg
 
     # ------------------------------------------------------------ actions
 
@@ -240,7 +291,7 @@ class Sim(Node):
         msg.velocity = float(velocity)
         self.drive.publish(msg)
 
-    def fresh_cloud(self, count=2, timeout=10.0):
+    def fresh_cloud(self, count=2, timeout=30.0):
         start = self.cloud_count
         end = time.monotonic() + timeout
         while self.cloud_count < start + count:
@@ -261,6 +312,52 @@ def model_state(x, y, z, yaw, pitch_down, roll):
 
 def load_cfg():
     return yaml.safe_load((HERE / "config.yaml").read_text())
+
+
+# -------------------------------------------------------------- cloud cadence
+
+
+def cadence(sim, args):
+    """Measure camera and processed-cloud arrival times in simulation time."""
+    sim.raw_times.clear()
+    sim.cloud_times.clear()
+    sim.spin_for(args.seconds)
+
+    def summarize(samples):
+        arrivals = np.array([row[0] for row in samples], dtype=float)
+        stamps = np.array([row[1] for row in samples], dtype=float)
+        gaps = np.diff(arrivals)
+        ages = arrivals - stamps
+        span = float(arrivals[-1] - arrivals[0]) if len(arrivals) > 1 else 0.0
+        return {
+            "count": len(samples),
+            "rate_hz": float((len(samples) - 1) / span) if span > 0 else 0.0,
+            "observed_span_s": span,
+            "gap_p50_s": float(np.median(gaps)) if len(gaps) else None,
+            "gap_p90_s": float(np.percentile(gaps, 90)) if len(gaps) else None,
+            "gap_max_s": float(np.max(gaps)) if len(gaps) else None,
+            "capture_age_p50_s": float(np.median(ages)) if len(ages) else None,
+            "capture_age_p90_s": float(np.percentile(ages, 90)) if len(ages) else None,
+            "times": samples,
+        }
+
+    result = {
+        "duration_sim_s": args.seconds,
+        "raw": summarize(sim.raw_times),
+        "processed": summarize(sim.cloud_times),
+    }
+    OUT.mkdir(parents=True, exist_ok=True)
+    path = OUT / f"cadence_{time.strftime('%Y%m%d_%H%M%S')}.json"
+    path.write_text(json.dumps(result, indent=1))
+    for topic in ("raw", "processed"):
+        row = result[topic]
+        print(
+            f"{topic}: {row['count']} arrivals, {row['rate_hz']:.2f} Hz; "
+            f"median/p90/max gaps {row['gap_p50_s']}/{row['gap_p90_s']}/{row['gap_max_s']} s; "
+            f"capture age p90 {row['capture_age_p90_s']} s"
+        )
+    print(f"trace: {path}")
+    return 0 if all(result[t]["rate_hz"] >= 8.0 for t in ("raw", "processed")) else 1
 
 
 # -------------------------------------------------------------- seg-gap
@@ -289,7 +386,11 @@ def seg_gap(sim, args):
         "carwash_misread_prob",
     ):
         cfg["sensor"][k] = 0.0
-    seeds = layouts.HELDOUT_SLOT_SEEDS + layouts.TRAIN_SEEDS[:2]
+    seeds = (
+        [int(s) for s in args.seeds.split(",")]
+        if args.seeds
+        else layouts.HELDOUT_SLOT_SEEDS + layouts.TRAIN_SEEDS[:2]
+    )
     model = course_model.CourseModel(seeds)
     lines = centerline_module.Centerlines(model.layouts, model=model)
     sen = S.Sensor(cfg, model, 1, np.random.default_rng(0))
@@ -301,17 +402,28 @@ def seg_gap(sim, args):
     for lay, seed in enumerate(seeds):
         sim.set_layout(seed)
         line = lines.lines[lay]
-        for _ in range(per):
-            s = rng.uniform(0.5, line.lap_length - 1.0)
-            if line.helix_start_s - 0.5 < s < line.helix_end_s + 0.2:
-                continue
+        for sample in range(per + args.helix_poses):
+            helix_sample = sample >= per
+            s = (
+                line.helix_start_s
+                + 0.3
+                + (line.helix_end_s - line.helix_start_s - 0.6)
+                * (sample - per + 0.5)
+                / args.helix_poses
+                if helix_sample
+                else rng.uniform(0.5, line.lap_length - 1.0)
+            )
             x, y, z, yaw = line.pose_at(s)
             x += rng.uniform(-0.15, 0.15)
             y += rng.uniform(-0.15, 0.15)
             yaw += math.radians(rng.uniform(-15, 15))
             if not sim.place(x, y, yaw, z, tries=2):
                 continue
-            cloud = sim.fresh_cloud()
+            try:
+                cloud = sim.fresh_cloud()
+            except RuntimeError as error:
+                print(f"  seed {seed} s {s:.1f}: {error}; skipped", flush=True)
+                continue
             _, gx, gy, gz, gyaw, gpitch, groll = sim.pose
             pts = point_cloud2.read_points_numpy(
                 cloud, field_names=("x", "y", "z"), skip_nans=True
@@ -341,6 +453,7 @@ def seg_gap(sim, args):
                 dict(
                     seed=seed,
                     zone=zones[per_layout[lay][idx]],
+                    helix_sample=helix_sample,
                     s=float(line.arc[idx]),
                     pose=[gx, gy, gz, gyaw, gpitch, groll],
                     real=real.tolist(),
@@ -357,7 +470,7 @@ def seg_gap(sim, args):
     OUT.mkdir(parents=True, exist_ok=True)
     path = OUT / f"seg_gap_{time.strftime('%Y%m%d_%H%M%S')}.json"
     path.write_text(json.dumps(rows))
-    return _seg_verdict(rows, s_cfg["max_range"], path)
+    return _seg_verdict(rows, s_cfg["max_range"], path, args.helix_poses)
 
 
 def _agree(real, model, max_range):
@@ -367,7 +480,10 @@ def _agree(real, model, max_range):
     return (np.abs(real - model) <= tol) | both_open
 
 
-def _seg_verdict(rows, max_range, path):
+def _seg_verdict(rows, max_range, path, helix_poses=0):
+    if not rows:
+        print(f"no valid camera poses; samples: {path}")
+        return 1
     by_zone = {}
     for r in rows:
         by_zone.setdefault(r["zone"], []).append(
@@ -378,11 +494,24 @@ def _seg_verdict(rows, max_range, path):
         [(r["real_gate"][0] > 0.5) == (r["model_gate"][0] > 0.5) for r in rows]
     )
     ok = overall >= 0.85 and all(np.mean(v) >= 0.70 for v in by_zone.values())
+    helix = [r for r in rows if r.get("helix_sample")]
+    helix_agreement = (
+        float(np.mean([_agree(r["real"], r["model"], max_range).mean() for r in helix]))
+        if helix
+        else float("nan")
+    )
+    if helix_poses:
+        ok &= len(helix) >= helix_poses and helix_agreement >= 0.70
     print(f"\nscan bins agreeing: {100 * overall:.1f}% overall (need 85%)")
     for zone, v in sorted(by_zone.items(), key=lambda kv: np.mean(kv[1])):
         print(
             f"  {zone:24s} {100 * np.mean(v):5.1f}%  over {len(v)} poses"
             + ("" if np.mean(v) >= 0.70 else "  <-- under 70%")
+        )
+    if helix_poses:
+        print(
+            f"  targeted helix: {100 * helix_agreement:.1f}% over {len(helix)} poses "
+            f"(need at least {helix_poses} poses and 70%)"
         )
     print(f"hoop gate seen/not seen agrees: {100 * gate_valid:.1f}%")
     print(f"samples: {path}")
@@ -413,9 +542,29 @@ def surfaces(sim, args):
     cfg["randomize"]["enabled"] = False
     model = course_model.CourseModel([SURFACE_SEED])
     sim.set_layout(SURFACE_SEED)
-    duration = args.seconds
+    line = centerline_module.Centerlines(model.layouts, model=model).lines[0]
+    helix = [
+        (
+            f"helix {name}",
+            line.pose_at(
+                line.helix_start_s + fraction * (line.helix_end_s - line.helix_start_s)
+            ),
+            0.55,
+            (1.0, 2.0),
+            1.2,
+        )
+        for name, fraction in (("upper", 0.2), ("middle", 0.5), ("lower", 0.8))
+    ]
+    flat = [("flat steering control", (0.0, -20.0, 0.0, 0.0), 0.55, (1.0, 2.0), 1.2)]
+    passes = (
+        flat
+        if args.flat_only
+        else flat + helix
+        if args.helix_only
+        else [(*row, args.seconds) for row in PASSES] + flat + helix
+    )
     results = []
-    for name, (x, y, z, yaw), steer, speeds in PASSES:
+    for name, (x, y, z, yaw), steer, speeds, duration in passes:
         for v in speeds:
             if not sim.place(x, y, yaw, z):
                 print(f"  {name} @ {v}: car did not settle at the start -- skipped")
@@ -524,19 +673,249 @@ def surfaces(sim, args):
     path = OUT / f"surfaces_{time.strftime('%Y%m%d_%H%M%S')}.json"
     path.write_text(json.dumps(results))
     critical = [r for r in results if r["name"] in ("ramp up + deck crest", "potholes")]
+    helix_results = [r for r in results if r["name"].startswith("helix ")]
+    flat_results = [r for r in results if r["name"] == "flat steering control"]
     ok = all(
         r["rms_pitch_deg"] <= 1.5
         and r["rms_roll_deg"] <= 1.5
         and abs(r["peak_lag_s"]) <= 0.05
         for r in critical
     )
+    ok &= len(flat_results) == 2 and all(
+        r["end_pos_err_m"] <= 0.3 and r["end_yaw_err_deg"] <= 10.0 for r in flat_results
+    )
+    if not args.flat_only:
+        ok &= len(helix_results) == len(helix) * 2 and all(
+            r["end_pos_err_m"] <= 0.3 and r["end_yaw_err_deg"] <= 10.0
+            for r in helix_results
+        )
     print(f"traces: {path}")
     print(
         "PASS"
         if ok
-        else "FAIL -- the plant does not pitch and roll like Gazebo on the ramp or potholes"
+        else "FAIL -- inspect the saved traces for surface or helix motion mismatch"
     )
     return 0 if ok else 1
+
+
+# ----------------------------------------------------------- step-steer
+
+FLAT_START = (0.0, -20.0, 0.0, 0.0)  # open floor beside the course
+
+
+def _drive(sim, schedule):
+    """Publish (seconds, steering, velocity) legs at 20 Hz; log pose and tach.
+
+    Returns the pose track, the tach track and the sim time each leg began,
+    so traces align to the command rather than to the first pose sample.
+    """
+    sim.pose_log = []
+    tach = []
+    starts = []
+    for seconds, steer, velocity in schedule:
+        starts.append(sim.now())
+        t0 = sim.now()
+        while sim.now() - t0 < seconds:
+            sim.command(steer, velocity)
+            sim.spin_for(0.05)
+            if sim.status is not None:
+                tach.append((sim.now(), float(sim.status.speed)))
+    sim.command(0.0, 0.0)
+    track = np.array(sim.pose_log)
+    sim.pose_log = None
+    return track, np.array(tach), starts
+
+
+def _plant_replay(cfg, model, first, speed, schedule, tau=None):
+    """The same command schedule through plant.py from Gazebo's pose."""
+    pl = P.Plant(cfg, model, 1, np.random.default_rng(0))
+    pl.reset(
+        np.arange(1),
+        0,
+        np.array([first[1]]),
+        np.array([first[2]]),
+        np.array([max(0.0, first[3] - 0.02)]),
+        np.array([first[4]]),
+        np.array([speed]),
+    )
+    if tau is not None:
+        pl.params[0, P.P_YAW_TAU] = tau
+    hz = float(cfg["env"]["control_hz"])
+    steps = int(cfg["env"]["substeps"])
+    t, yaw, v = [], [], []
+    k = 0
+    for seconds, steer, velocity in schedule:
+        for _ in range(int(round(seconds * hz))):
+            pl.step(np.array([steer]), np.array([velocity]), steps)
+            k += 1
+            s = pl.state[0]
+            t.append(k / hz)
+            yaw.append(s[P.S_YAW])
+            v.append(s[P.S_V])
+    return np.array(t), np.unwrap(np.array(yaw)), np.array(v)
+
+
+def _yaw_rate(t, yaw, dt=0.01, win_s=0.15):
+    from scipy.signal import savgol_filter
+
+    grid = np.arange(t[0], t[-1], dt)
+    y = np.interp(grid, t, np.unwrap(yaw))
+    win = int(win_s / dt) | 1
+    return grid, savgol_filter(y, win, 3, deriv=1, delta=dt)
+
+
+def step_steer(sim, args):
+    """Steady straight run, then a steering step, in Gazebo and in plant.py.
+
+    The car first holds `speed` straight for 2.5 s, so the step starts from a
+    settled speed rather than from rest (where speed error swamps yaw lag).
+    The plant starts from Gazebo's pose and speed at the step, with the same
+    dead time and schedule, and yaw_response_tau is fitted to Gazebo's yaw
+    rate over the 1.5 s after the step.  This fits Gazebo, not the car.
+    """
+    from scipy.optimize import minimize_scalar
+
+    cfg = load_cfg()
+    cfg["randomize"]["enabled"] = False
+    model = course_model.CourseModel([SURFACE_SEED])
+    sim.set_layout(SURFACE_SEED)
+    nominal = float(cfg["plant"]["yaw_response_tau"])
+    speeds = [float(v) for v in args.speeds.split(",")]
+    steers = [float(v) for v in args.steers.split(",")]
+    results = []
+    for v in speeds:
+        for steer in steers:
+            x, y, z, yaw = FLAT_START
+            if not sim.place(x, y, yaw, z):
+                print(f"  {v} m/s steer {steer:+.2f}: car did not settle -- skipped")
+                continue
+            track, _, starts = _drive(sim, [(2.5, 0.0, v), (1.5, steer, v)])
+            t_step = starts[1]
+            before = track[track[:, 0] <= t_step]
+            if len(before) < 5:
+                continue
+            first = before[-1]
+            gv = np.hypot(*(before[-1, 1:3] - before[-5, 1:3])) / (
+                before[-1, 0] - before[-5, 0]
+            )
+            gt, grate = _yaw_rate(track[:, 0] - t_step, track[:, 4])
+            keep = (gt >= 0.0) & (gt <= 1.5)
+            gt, grate = gt[keep], grate[keep]
+            schedule = [(1.5, steer, v)]
+
+            def model_rate(tau=None):
+                mt, myaw, _ = _plant_replay(cfg, model, first, gv, schedule, tau)
+                return _yaw_rate(
+                    np.concatenate([[0.0], mt]), np.concatenate([[first[4]], myaw])
+                )
+
+            def rms(tau):
+                mt, mrate = model_rate(tau)
+                return float(np.sqrt(np.mean((np.interp(gt, mt, mrate) - grate) ** 2)))
+
+            fit = minimize_scalar(rms, bounds=(0.0, 0.8), method="bounded")
+            mt, mrate = model_rate()
+            steady_g = float(np.mean(grate[gt >= 1.0]))
+            steady_m = float(np.mean(mrate[mt >= 1.0]))
+            half = 0.5 * abs(steady_g)
+            t_half_g = float(gt[np.argmax(np.abs(grate) >= half)])
+            t_half_m = float(mt[np.argmax(np.abs(mrate) >= half)])
+            row = dict(
+                speed=v,
+                steer=steer,
+                entry_speed=float(gv),
+                tau_fit=float(fit.x),
+                rms_fit=float(fit.fun),
+                rms_nominal=rms(nominal),
+                steady_rate_gazebo=steady_g,
+                steady_rate_model=steady_m,
+                t_half_gazebo=t_half_g,
+                t_half_model=t_half_m,
+                gazebo=dict(t=gt.tolist(), rate=grate.tolist()),
+                model=dict(t=mt.tolist(), rate=mrate.tolist()),
+            )
+            results.append(row)
+            print(
+                f"  {v:.1f} m/s steer {steer:+.2f} (entry {gv:.2f}): tau fit {fit.x:.3f} s "
+                f"rms {fit.fun:.3f} vs nominal {row['rms_nominal']:.3f} rad/s | steady "
+                f"{steady_g:+.2f}/{steady_m:+.2f} rad/s | half-rate {t_half_g:.2f}/{t_half_m:.2f} s",
+                flush=True,
+            )
+    OUT.mkdir(parents=True, exist_ok=True)
+    path = OUT / f"step_steer_{time.strftime('%Y%m%d_%H%M%S')}.json"
+    path.write_text(json.dumps(results))
+    if results:
+        taus = np.array([r["tau_fit"] for r in results])
+        print(
+            f"tau fit median {np.median(taus):.3f} s, range {taus.min():.3f}-{taus.max():.3f} s "
+            f"(nominal {nominal:.3f} s)"
+        )
+    print(f"traces: {path}")
+    return 0 if results else 1
+
+
+def reverse(sim, args):
+    """Forward at speed, then a reverse command: time to stop and to back up.
+
+    The car coasts (no brakes), waits for the tach to read stopped, and only
+    then drives backwards -- in the Arduino, in sim_vehicle_node and in
+    plant.py.  Compares when each stops and starts moving backwards.
+    """
+    cfg = load_cfg()
+    cfg["randomize"]["enabled"] = False
+    model = course_model.CourseModel([SURFACE_SEED])
+    sim.set_layout(SURFACE_SEED)
+    results = []
+    for v in [float(s) for s in args.speeds.split(",")]:
+        x, y, z, yaw = FLAT_START
+        if not sim.place(x, y, yaw, z):
+            continue
+        schedule = [(2.5, 0.0, v), (5.0, 0.0, -1.0)]
+        track, tach, starts = _drive(sim, schedule)
+        t_rev = starts[1]
+        heading = np.array([math.cos(yaw), math.sin(yaw)])
+        along = (track[:, 1:3] - track[0, 1:3]) @ heading
+        t = track[:, 0] - t_rev
+        gv = np.convolve(np.gradient(along, track[:, 0]), np.ones(7) / 7, "same")
+        keep = t >= 0.0
+        first = track[np.argmin(np.abs(t))]
+        entry = float(np.interp(0.0, t, gv))
+        mt, _, mv = _plant_replay(cfg, model, first, entry, schedule[1:])
+        mt = np.concatenate([[0.0], mt])
+        mv = np.concatenate([[entry], mv])
+
+        def crossing(tt, vv, level):
+            below = np.nonzero(vv <= level)[0]
+            return float(tt[below[0]]) if len(below) else float("nan")
+
+        row = dict(
+            speed=v,
+            entry_speed=entry,
+            t_stop_gazebo=crossing(t[keep], gv[keep], 0.05),
+            t_stop_model=crossing(mt, mv, 0.05),
+            t_back_gazebo=crossing(t[keep], gv[keep], -0.3),
+            t_back_model=crossing(mt, mv, -0.3),
+            # Clear of the smoothing window's edge at the end of the trace.
+            end_v_gazebo=float(gv[keep][-12:-4].mean()),
+            end_v_model=float(mv[-5:].mean()),
+            gazebo=dict(t=t.tolist(), v=gv.tolist()),
+            tach=dict(t=(tach[:, 0] - t_rev).tolist(), v=tach[:, 1].tolist())
+            if len(tach)
+            else None,
+            model=dict(t=mt.tolist(), v=mv.tolist()),
+        )
+        results.append(row)
+        print(
+            f"  {v:.1f} m/s -> -1: stopped {row['t_stop_gazebo']:.2f}/{row['t_stop_model']:.2f} s, "
+            f"backing at -0.3 m/s {row['t_back_gazebo']:.2f}/{row['t_back_model']:.2f} s, "
+            f"end {row['end_v_gazebo']:+.2f}/{row['end_v_model']:+.2f} m/s (gazebo/model)",
+            flush=True,
+        )
+    OUT.mkdir(parents=True, exist_ok=True)
+    path = OUT / f"reverse_{time.strftime('%Y%m%d_%H%M%S')}.json"
+    path.write_text(json.dumps(results))
+    print(f"traces: {path}")
+    return 0 if results else 1
 
 
 # ------------------------------------------------------------- validate
@@ -564,6 +943,7 @@ def validate(sim, args):
             sim.call(Trigger, "/hoop_monitor/reset", Trigger.Request())
             sim.call(Trigger, "/lap_counter/reset", Trigger.Request())
             sim.done = False
+            sim.driver = None
             sim.spin_for(0.5)
             sim.manual_go.publish(Bool(data=True))
             sim.call(
@@ -572,9 +952,56 @@ def validate(sim, args):
             t0 = sim.now()
             last_move, last_xy = t0, (sim.pose[1], sim.pose[2])
             outcome = "timeout"
+            trace = []
             while sim.now() - t0 < args.timeout:
                 sim.spin_for(0.2)
-                _, px, py, _, _, pitch, roll = sim.pose
+                _, px, py, pz, yaw, pitch, roll = sim.pose
+                driver = sim.driver
+                command = sim.drive_command
+                trace.append(
+                    dict(
+                        t=round(sim.now() - t0, 3),
+                        pose=[px, py, pz, yaw, pitch, roll],
+                        command=(
+                            [float(command.steering), float(command.velocity)]
+                            if command is not None
+                            else None
+                        ),
+                        tach_speed=(
+                            float(sim.status.speed) if sim.status is not None else None
+                        ),
+                        cloud_age=(
+                            sim.now() - sim.cloud_time
+                            if sim.cloud_time is not None
+                            else None
+                        ),
+                        cloud_capture_age=(
+                            sim.now() - sim.cloud_stamp
+                            if sim.cloud_stamp is not None
+                            else None
+                        ),
+                        driver=(
+                            dict(
+                                state=int(driver.state),
+                                action=list(driver.action),
+                                steer_prior=float(driver.steer_ff),
+                                steer_cmd=float(driver.steer_cmd),
+                                velocity_cmd=float(driver.velocity_cmd),
+                                speed=float(driver.speed),
+                                yaw_rate=float(driver.yaw_rate),
+                                pose_age=float(driver.pose_age),
+                                scan=list(driver.observation[: O.SCAN_BINS]),
+                                gates=list(
+                                    driver.observation[
+                                        O.SCAN_BINS : O.SCAN_BINS + O.GATE_DIM
+                                    ]
+                                ),
+                            )
+                            if driver is not None
+                            else None
+                        ),
+                    )
+                )
                 if math.hypot(px - last_xy[0], py - last_xy[1]) > 0.3:
                     last_move, last_xy = sim.now(), (px, py)
                 if sim.hoops is not None and sim.hoops.any_missed:
@@ -594,6 +1021,18 @@ def validate(sim, args):
                     outcome = "stuck"
                     break
             elapsed = sim.now() - t0
+            driver_samples = [
+                row["driver"] for row in trace if row["driver"] is not None
+            ]
+            stale_fraction = (
+                sum(
+                    row["state"] == DriverTelemetry.STATE_STALE
+                    for row in driver_samples
+                )
+                / len(driver_samples)
+                if driver_samples
+                else None
+            )
             sim.manual_go.publish(Bool(data=False))
             sim.call(
                 SetBool, "/obstacle_racer/manual_start", SetBool.Request(data=False)
@@ -607,11 +1046,18 @@ def validate(sim, args):
                     time=elapsed,
                     hoops=hoops,
                     end=list(sim.pose[1:4]),
+                    stale_fraction=stale_fraction,
+                    trace=trace,
                 )
+            )
+            stale_text = (
+                f"; stale {100 * stale_fraction:.0f}%"
+                if stale_fraction is not None
+                else ""
             )
             print(
                 f"  seed {seed} start {k}: {outcome:20s} {elapsed:6.1f} s  hoops {hoops}/3  ended at "
-                f"({sim.pose[1]:.2f}, {sim.pose[2]:.2f})",
+                f"({sim.pose[1]:.2f}, {sim.pose[2]:.2f}){stale_text}",
                 flush=True,
             )
     OUT.mkdir(parents=True, exist_ok=True)
@@ -636,24 +1082,52 @@ def main() -> int:
     a = sub.add_parser("seg-gap")
     a.add_argument("--poses", type=int, default=500)
     a.add_argument("--seed", type=int, default=0)
+    a.add_argument("--seeds", default="")
+    a.add_argument(
+        "--helix-poses",
+        type=int,
+        default=3,
+        help="additional poses per layout on the helix",
+    )
     b = sub.add_parser("surfaces")
     b.add_argument("--seconds", type=float, default=4.0)
+    b.add_argument("--helix-only", action="store_true")
+    b.add_argument("--flat-only", action="store_true")
     c = sub.add_parser("validate")
     c.add_argument("--starts", type=int, default=5)
     c.add_argument("--seeds", default="")
     c.add_argument("--timeout", type=float, default=90.0)
     c.add_argument("--seed", type=int, default=0)
+    c.add_argument("--monitor-cloud", action="store_true")
+    d = sub.add_parser("cadence")
+    d.add_argument("--seconds", type=float, default=20.0)
+    e = sub.add_parser("step-steer")
+    e.add_argument("--speeds", default="1.0,1.5,2.0,2.5")
+    e.add_argument("--steers", default="0.3,-0.3,0.6,-0.6")
+    f = sub.add_parser("reverse")
+    f.add_argument("--speeds", default="1.0,2.0,3.0")
     args = ap.parse_args()
     rclpy.init()
-    sim = Sim()
+    sim = Sim(
+        need_cloud=args.cmd in ("seg-gap", "cadence")
+        or getattr(args, "monitor_cloud", False),
+        need_raw=args.cmd == "cadence",
+    )
     try:
-        sim.spin_for(2.0, wall=True)
+        deadline = time.monotonic() + 30.0
+        while sim.pose is None and time.monotonic() < deadline:
+            rclpy.spin_once(sim, timeout_sec=0.1)
         if sim.pose is None:
             print("no /zed/zed_node/pose -- is the obstacle course running?")
             return 1
-        return {"seg-gap": seg_gap, "surfaces": surfaces, "validate": validate}[
-            args.cmd
-        ](sim, args)
+        return {
+            "seg-gap": seg_gap,
+            "surfaces": surfaces,
+            "validate": validate,
+            "cadence": cadence,
+            "step-steer": step_steer,
+            "reverse": reverse,
+        }[args.cmd](sim, args)
     finally:
         sim.destroy_node()
         rclpy.try_shutdown()
