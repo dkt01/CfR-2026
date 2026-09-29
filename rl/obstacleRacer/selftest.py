@@ -448,6 +448,37 @@ def memory_checks(cfg):
         out[19][1] > 0 and out[59][1] < out[49][1],
         f"{out[19][1]:+.3f} driving, {out[59][1]:+.3f} backing",
     )
+
+    # The tach as the firmware times it (sim_vehicle_node's TachModel).
+    def tach_run(speeds, v0=0.0):
+        t = O.Tach(1, dt)
+        t.reset(np.array([0]), np.array([v0]))
+        return [float(t.update(np.array([v]))[0]) for v in speeds]
+
+    ramp = [min(2.0, (k + 1) * dt) for k in range(40)]  # 1 m/s^2 from rest
+    reads = tach_run(ramp)
+    first = next(k for k, r in enumerate(reads) if r > 0)
+    moved = sum(v * dt for v in ramp[: first + 1])
+    failures += check(
+        "from rest the tach reads nothing for two pulses (~0.25 m)",
+        2 * O.TACH_REV_M <= moved + 1e-9 < 3 * O.TACH_REV_M,
+        f"first reading {reads[first]:.2f} m/s after {moved:.3f} m",
+    )
+    steady = tach_run([1.3] * 30)
+    stop = tach_run([1.0] * 20 + [0.0] * 20, 1.0)
+    silent = next(k for k in range(20, 40) if stop[k] == 0.0)
+    failures += check(
+        "a steady speed reads true; a stop decays, then zero within the 0.4 s timeout",
+        abs(steady[-1] - 1.3) < 0.02
+        and stop[23] < stop[19]
+        and (silent - 19) * dt <= O.TACH_STALL_S + 0.05,
+        f"steady {steady[-1]:.2f}, stopped at step 20, zero {(silent - 19) * dt:.2f} s later",
+    )
+    failures += check(
+        "a crawl under the floor reads zero; a dealt speed reads at once",
+        max(tach_run([0.2] * 60)[10:]) == 0.0
+        and abs(tach_run([2.0], 2.0)[0] - 2.0) < 0.02,
+    )
     head = O.Heading(1, cfg)
     head.reset(np.array([0]), 0.0)
     for _ in range(int(round(2.0 / dt))):

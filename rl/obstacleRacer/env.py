@@ -174,6 +174,7 @@ class ObstacleEnv:
         self.stack = O.Stack(n, O.frame_offsets(cfg), O.frame_dim(cfg))
         self.obs_dim = O.obs_dim(cfg)
         self.memory = O.Memory(n, cfg)
+        self.tach = O.Tach(n, self.dt)
         self.heading = O.Heading(n, cfg)
         self.heading_bias = np.zeros(n)  # rad/s the heading drifts at
         # The camera: the car's ZED publishes point clouds at 12 Hz
@@ -599,9 +600,16 @@ class ObstacleEnv:
         st = self.plant.state[idx]
         k = len(idx)
         # The Arduino reports the tachometer's magnitude with its own
-        # direction estimate for the sign.
-        signed = np.abs(st[:, P.S_V]) * np.where(st[:, P.S_DIR] < 0, -1.0, 1.0)
-        speed = O.tach(signed + self.rng.normal(0, 1, k) * self.speed_noise[idx])
+        # direction estimate for the sign.  A new episode's tach starts at
+        # its dealt speed; after that it advances one control period.
+        if fresh is not None:
+            self.tach.reset(idx, st[:, P.S_V])
+            magnitude = self.tach.read(idx)
+        else:
+            magnitude = self.tach.update(st[:, P.S_V], idx)
+        signed = magnitude * np.where(st[:, P.S_DIR] < 0, -1.0, 1.0)
+        noise = self.rng.normal(0, 1, k) * self.speed_noise[idx]
+        speed = O.tach(np.where(magnitude > 0.0, signed + noise, 0.0))
         yaw_rate = st[:, P.S_R] + self.rng.normal(0, 1, k) * self.yaw_noise[idx]
         raw = O.prior_steer(scan, gate, yaw_rate, self.cfg)
         first = fresh[idx] if fresh is not None else None

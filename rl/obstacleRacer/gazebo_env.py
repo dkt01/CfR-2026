@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import json
 import math
 import os
 import sys
@@ -244,7 +245,8 @@ class GazeboPlant(P.Plant):
     def _read(self):
         stamp, x, y, z, yaw, pitch_down, roll = self.link.pose
         st = self.state[0]
-        prev = (st[P.S_X], st[P.S_Y])
+        prev = (st[P.S_X], st[P.S_Y], self.stamp)
+        self.stamp = stamp
         st[P.S_X], st[P.S_Y], st[P.S_Z] = x, y, z
         st[P.S_YAW], st[P.S_PITCH], st[P.S_ROLL] = yaw, -pitch_down, roll
         st[P.S_R] = self.link.yaw_rate
@@ -309,10 +311,15 @@ class GazeboPlant(P.Plant):
         v_before = abs(float(self.state[0, P.S_V]))
         link.command(float(steer[0]), float(speed[0]))
         link.advance(self.dt_control, link.now() + self.dt_control - self.sensor.lat)
-        px, py = self._read()
+        px, py, pt = self._read()
         st = self.state[0]
         dx, dy = st[P.S_X] - px, st[P.S_Y] - py
-        ground = math.hypot(dx, dy) / self.dt_control
+        # Over the poses' own stamps: the pose due by a step's end lands up
+        # to 40 ms early, so dividing by the control period read speeds that
+        # halved and doubled from step to step, and each halving next to a
+        # wall judged a crash (v11's helix "crashes" rolling down the ramp).
+        span = self.stamp - pt
+        ground = math.hypot(dx, dy) / span if span > 1e-3 else abs(float(st[P.S_V]))
         forward = dx * math.cos(st[P.S_YAW]) + dy * math.sin(st[P.S_YAW])
         st[P.S_V] = ground if forward >= 0 else -ground
         st[P.S_TARGET] = float(speed[0])
@@ -322,7 +329,29 @@ class GazeboPlant(P.Plant):
         rolled = np.array(
             [abs(st[P.S_PITCH]) > ROLLED_RAD or abs(st[P.S_ROLL]) > ROLLED_RAD]
         )
+        if self.log is not None:
+            # Before ObstacleEnv's auto-reset moves the car: the trace
+            # subcommand's record of each step, the terminal one included.
+            self.log.append(
+                dict(
+                    now=link.now(),
+                    stamp=float(link.pose[0]),
+                    pose=[
+                        float(v)
+                        for v in st[[P.S_X, P.S_Y, P.S_Z, P.S_YAW, P.S_PITCH, P.S_ROLL]]
+                    ],
+                    v=float(st[P.S_V]),
+                    tach=float(link.status.speed) if link.status is not None else 0.0,
+                    yaw_rate=float(st[P.S_R]),
+                    cmd=[float(steer[0]), float(speed[0])],
+                    clear=float(clearance[0]),
+                    lost=float(lost[0]),
+                )
+            )
         return touched, lost, rolled
+
+    log = None
+    stamp = 0.0
 
 
 class GazeboEnv(ObstacleEnv):
@@ -483,10 +512,71 @@ def smoke(args):
     rclpy.try_shutdown()
 
 
+def trace(args):
+    """Drive a policy from a fixed arc length before the helix; save every step.
+
+    For comparing with the numpy plant (helix_parity.py): the Gazebo pose,
+    speed, command and numpy-grid clearance per control step, and how each
+    run ended.
+    """
+    from policy import NumpyPolicy
+
+    cfg = yaml.safe_load(Path(args.config).read_text())
+    rclpy.init()
+    seeds = [int(s) for s in args.seeds.split(",")]
+    env = make_env(cfg, seeds, args.seed)
+    policy = NumpyPolicy.load(args.policy)
+    runs = []
+    for k, seed in enumerate(seeds):
+        line = env.lines.lines[k]
+        for rep in range(args.runs):
+            env.forced_lay = np.array([k])
+            env.forced_s = np.array([line.helix_start_s - args.before])
+            env.plant.log = None
+            obs = env.reset()
+            policy.reset(1)
+            env.plant.log = rows = []
+            info = [{}]
+            while env.t[0] < args.seconds:
+                obs, _, term, trunc, info = env.step(policy.act(obs))
+                if term[0] or trunc[0]:
+                    break
+            env.plant.log = None
+            end = info[0] if "outcome" in info[0] else {}
+            runs.append(
+                dict(
+                    seed=seed,
+                    rep=rep,
+                    outcome=end.get("outcome", "cut"),
+                    zone=end.get("zone"),
+                    dist=end.get("dist"),
+                    helix=[line.helix_start_s, line.helix_end_s],
+                    rows=rows,
+                )
+            )
+            print(
+                f"seed {seed} run {rep}: {runs[-1]['outcome']} at {runs[-1]['zone']} "
+                f"after {len(rows) * env.dt:.1f} s, late poses {env.link.late_poses}",
+                flush=True,
+            )
+            Path(args.out).write_text(json.dumps(dict(before=args.before, runs=runs)))
+    env.link.control(False)
+    rclpy.try_shutdown()
+
+
 def main():
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("serve")
+    t = sub.add_parser("trace")
+    t.add_argument("--config", default=str(HERE / "config.yaml"))
+    t.add_argument("--policy", required=True)
+    t.add_argument("--seeds", default="201,202,208,218")
+    t.add_argument("--runs", type=int, default=3, help="per seed")
+    t.add_argument("--before", type=float, default=2.0, help="m before the helix")
+    t.add_argument("--seconds", type=float, default=15.0)
+    t.add_argument("--seed", type=int, default=0)
+    t.add_argument("--out", required=True)
     s = sub.add_parser("smoke")
     s.add_argument("--config", default=str(HERE / "config.yaml"))
     s.add_argument("--seeds", default=",".join(map(str, layouts.TRAIN_SEEDS[:4])))
@@ -496,6 +586,8 @@ def main():
     args = ap.parse_args()
     if args.cmd == "serve":
         serve()
+    elif args.cmd == "trace":
+        trace(args)
     else:
         smoke(args)
 

@@ -51,6 +51,10 @@ MEMORY_DIM = 3
 HEADING_DIM = 2
 STOP_CAP_S = 3.0  # Memory's stopped time saturates here
 TACH_FLOOR = 0.30  # m/s: ArduinoStatus.speed cannot resolve below this
+# The firmware's TachSensor (arduino_bridge.yaml), for Tach below.
+TACH_REV_M = math.pi * 0.1132 / 2.85  # travel per spur revolution (one pulse)
+TACH_WINDOW_S = 0.1
+TACH_STALL_S = 0.4
 YAW_RATE_SCALE = 3.0
 
 # Measured steering table, arduino_bridge.yaml: command -> road-wheel angle.
@@ -64,6 +68,100 @@ def angle_to_command(angle):
     return np.clip(
         np.where(angle >= 0, angle / STEER_LEFT, angle / STEER_RIGHT), -1.0, 1.0
     )
+
+
+class Tach:
+    """ArduinoStatus.speed's magnitude as the firmware's TachSensor times it.
+
+    One magnet on the spur gear, one pulse per TACH_REV_M of travel
+    (arduino_bridge.yaml: tire_diameter 0.1132 m, spur_to_wheel_ratio 2.85),
+    speed from the pulses inside the last TACH_WINDOW_S.  Transcribed from
+    sim_vehicle_node's TachModel, so numpy reads what Gazebo and the car do:
+
+      * it needs two pulses before it reads anything, so for the first
+        0.25 m after a stop it reads zero -- a hill start at a crawl reads
+        zero for most of a second (v11 in Gazebo took that for stuck and
+        reversed down the overpass ramp; the old TACH_FLOOR read 0.3 m/s at
+        once);
+      * a reading holds between pulses, and decays once a revolution has
+        outlasted the last period;
+      * it forgets after TACH_STALL_S without a pulse, the ~0.3 m/s floor.
+
+    Pulses are timed within the control period by interpolating the
+    distance travelled, as the node times them within its tick.
+    """
+
+    HISTORY = 8
+
+    def __init__(self, n, dt):
+        self.dt = dt
+        self.stamps = np.zeros((n, self.HISTORY))
+        self.held = np.zeros(n, np.int64)
+        self.newest = np.zeros(n, np.int64)
+        self.frac = np.zeros(n)  # of a revolution since the last pulse
+        self.now = np.zeros(n)
+        self.v = np.zeros(n)
+
+    def reset(self, idx, speed):
+        """Cars `idx` start at |speed|: moving ones as if long at it."""
+        speed = np.abs(np.asarray(speed, dtype=np.float64))
+        self.now[idx] = 0.0
+        self.frac[idx] = 0.0
+        self.v[idx] = speed
+        moving = speed > 0.0
+        period = TACH_REV_M / np.where(moving, speed, 1.0)
+        for k in range(3):
+            self.stamps[idx, k] = -(2 - k) * period
+        self.newest[idx] = 2
+        self.held[idx] = np.where(moving, 3, 0)
+
+    def update(self, speed, idx=None):
+        """Advance cars `idx` one control period at |speed|; the reading."""
+        if idx is None:
+            idx = np.arange(len(self.now))
+        v = np.abs(np.asarray(speed, dtype=np.float64))
+        dt = self.dt
+        # Distance at the mean of the period's end speeds, in revolutions.
+        travelled = 0.5 * (self.v[idx] + v) * dt / TACH_REV_M
+        reached = self.frac[idx] + travelled
+        t0 = self.now[idx]
+        for boundary in range(1, int(np.floor(reached.max(initial=0.0))) + 1):
+            hit = reached >= boundary
+            if not hit.any():
+                break
+            rows = idx[hit]
+            when = t0[hit] + (boundary - self.frac[rows]) / travelled[hit] * dt
+            self.newest[rows] = (self.newest[rows] + 1) % self.HISTORY
+            self.stamps[rows, self.newest[rows]] = when
+            self.held[rows] = np.minimum(self.held[rows] + 1, self.HISTORY)
+        self.frac[idx] = reached - np.floor(reached)
+        self.now[idx] = t0 + dt
+        self.v[idx] = v
+        return self.read(idx)
+
+    def read(self, idx):
+        """TachSensor's update at each car's `now`: speed magnitude, m/s."""
+        H = self.HISTORY
+        newest = self.newest[idx]
+        stamps = self.stamps[idx]
+        rows = np.arange(len(idx))
+        last = stamps[rows, newest]
+        since = self.now[idx] - last
+        held = np.where(since >= TACH_STALL_S, 0, self.held[idx])
+        self.held[idx] = held
+        spanned = np.ones(len(idx), np.int64)
+        for _ in range(H - 2):
+            back = stamps[rows, (newest - spanned - 1) % H]
+            more = (spanned + 1 < held) & (last - back <= TACH_WINDOW_S)
+            if not more.any():
+                break
+            spanned += more
+        span = last - stamps[rows, (newest - spanned) % H]
+        stale = (span > 0.0) & (since > span / spanned)
+        span = np.where(stale, since, span)
+        spanned = np.where(stale, 1, spanned)
+        ok = (held >= 2) & (span > 0.0)
+        return np.where(ok, TACH_REV_M * spanned / np.where(ok, span, 1.0), 0.0)
 
 
 def tach(speed):
