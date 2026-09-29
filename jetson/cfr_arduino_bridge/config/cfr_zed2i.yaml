@@ -3,9 +3,9 @@
 # Passed to zed_camera.launch.py as `ros_params_override_path` by
 # jetson/scripts/launch.sh, zed/scripts/launch_zed.sh and
 # left_wall_robot.launch.py.  Everything not named here keeps the wrapper's own
-# default.  There are two copies of this file -- this one, which is installed
-# with cfr_arduino_bridge and so is the one that reaches the Orin, and
-# zed/config/cfr_zed2i.yaml for launch_zed.sh -- and they must stay identical.
+# default.  This is the one copy: it installs with cfr_arduino_bridge and so is
+# what reaches the Orin, and zed/config/cfr_zed2i.yaml is a symlink to it for
+# launch_zed.sh (the two used to be hand-duplicated and drifted apart).
 #
 # What it is for: formula_one_node drives from `/zed/zed_node/pose` and nothing
 # else.  It has no camera input; it reads the map-frame pose against a known
@@ -64,9 +64,9 @@
       # turns saturated pixels into depth holes -- and raise gain before
       # exposure.
       # https://docs.stereolabs.com/docs/development/zed-sdk/modules/camera/camera-controls
-      auto_exposure_gain: false
-      exposure: 10
-      gain: 20
+      auto_exposure_gain: true
+      #exposure: 10
+      #gain: 20
 
     region_of_interest:
       # Ignore the top 20% (sky, sun, canopy, spectators); the cut starts

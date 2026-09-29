@@ -1,0 +1,106 @@
+# B2b - constant-radius arcs at the speeds the car actually corners at.
+#
+# TWO DIFFERENT QUESTIONS, and it is worth being clear which is which.
+#
+# The first is the understeer gradient, which the original `skidpad` already
+# answered - but it answered it at 1.0 / 1.5 / 2.2 / 3.0 m/s on a half-lock
+# command, and the 3.0 m/s rung implies 0.74 g on a car whose measured lateral
+# grip LOWER BOUND is 0.55 g.  That rung was not understeering elastically, it
+# was running wide on grip, and it is inside the fitted +0.007 rad/(m/s^2).
+# This profile keeps every rung of every gradient ladder under 0.45 g and puts
+# the deliberate grip probe at the end where it can be dropped from the fit.
+#
+# The second is tire_scrub, and it is the reason this profile exists.
+# plant.py carries `tire_scrub: 1.10` - the simulated car turns a uniform 1.10x
+# the radius a kinematic bicycle predicts - measured in Gazebo, never on the
+# car, and applied as a second multiplier on the effective wheelbase.
+#
+# BUT A SKIDPAD ALONE CANNOT MEASURE IT, and running one expecting a number is
+# the trap here.  What the analysis observes is the radius; what it reports is
+# `delta_eff = atan(L / R)`, the angle a bicycle would need to hold that
+# radius.  Scrub is precisely the gap between that and the angle the wheels are
+# ACTUALLY pointed - so an analysis that derives the angle from the radius has
+# divided the scrub out before it starts, and will report 1.00 no matter what
+# the tires do.  That is why measure_turn_radius.py works in Gazebo and does
+# not transfer: there the commanded wheel angle is known exactly, because the
+# simulator was told it.
+#
+# The missing half is A6, the static steering map - the car on a level floor,
+# photographed from directly overhead against a grid, wheels swept in 0.1
+# steps.  That is a geometric measurement of where the wheels point, it needs
+# no driving, no E-Stop and no space, and it is what turns this run into a
+# scrub number:
+#
+#     tire_scrub = tan(A6 wheel angle) / tan(zero-a_y effective angle)
+#
+# where the denominator is the intercept `analyze_run.py` now prints for each
+# ladder - the arcs extrapolated back to zero lateral acceleration, which
+# removes the speed-dependent part and leaves everything flat in speed.
+# WITHOUT A6 THIS RUN MEASURES UNDERSTEER AND NOTHING ELSE.  Do A6 first; it is
+# an hour in a garage.
+#
+# Commands are 0.35 and 0.55 rather than the original's 0.50 because those
+# bracket what the car is asked for at a chicane and at the tightest hairpin
+# (see the `steer_residual` and hairpin notes in rl/formulaOne/config.yaml).
+# Steering is held across each speed ladder and only the speed steps, so the
+# linkage never re-centres inside a ladder and backlash cannot masquerade as
+# an understeer gradient.
+name: skidpad_chicane
+description: Constant-command arcs at chicane and hairpin speeds, both directions.
+
+gains:
+  speed_trace: true
+
+limits:
+  # Arcs are 1.1-2.4 m of radius and the car returns to rest between ladders,
+  # and the nominal path peaks under 15 m from the start.  The margin above
+  # that is deliberate: a car that scrubs MORE than modelled runs wider than
+  # modelled, and aborting the run that would have measured that is the one
+  # failure mode this guard must not have.
+  max_distance: 20.0
+  max_duration: 240.0
+  max_speed: 2.8
+
+steps:
+  - {hold: 3.0, steering: 0.0, velocity: 0.0, label: settle}
+
+  # --- left, chicane command -------------------------------------------------
+  # Four rungs, all under 0.40 g, so the gradient is fitted entirely inside the
+  # linear range and the intercept is a short extrapolation rather than a long
+  # one.
+  - {hold: 8.0, steering: 0.35, velocity: 1.2, label: left_035_1p2}
+  - {hold: 8.0, steering: 0.35, velocity: 1.8, label: left_035_1p8}
+  - {hold: 8.0, steering: 0.35, velocity: 2.2, label: left_035_2p2}
+  - {hold: 8.0, steering: 0.35, velocity: 2.5, label: left_035_2p5}
+  - {hold: 4.0, steering: 0.0, velocity: 0.0, label: settle}
+
+  # --- left, hairpin command -------------------------------------------------
+  # Three rungs for the gradient, then ONE deliberate probe at 2.4 m/s.  That
+  # last rung is about 0.52 g against a 0.55 g lower bound, so it is where the
+  # arc stops being linear if it is going to.  It is the only free way to raise
+  # that bound - no slide, no run-off - and analyze_run.py will now warn that
+  # it does not belong in the gradient fit.  Keep the warning; drop the rung.
+  - {hold: 8.0, steering: 0.55, velocity: 1.2, label: left_055_1p2}
+  - {hold: 8.0, steering: 0.55, velocity: 1.6, label: left_055_1p6}
+  - {hold: 8.0, steering: 0.55, velocity: 2.0, label: left_055_2p0}
+  - {hold: 8.0, steering: 0.55, velocity: 2.4, label: left_055_2p4}
+  - {hold: 4.0, steering: 0.0, velocity: 0.0, label: settle}
+
+  # --- right ----------------------------------------------------------------
+  # The same ladders the other way.  The two sides are different numbers - the
+  # linkage is asymmetric by about a third - so they are never averaged, and
+  # the scrub each one implies is reported separately.
+  - {hold: 8.0, steering: -0.35, velocity: 1.2, label: right_035_1p2}
+  - {hold: 8.0, steering: -0.35, velocity: 1.8, label: right_035_1p8}
+  - {hold: 8.0, steering: -0.35, velocity: 2.2, label: right_035_2p2}
+  - {hold: 8.0, steering: -0.35, velocity: 2.5, label: right_035_2p5}
+  - {hold: 4.0, steering: 0.0, velocity: 0.0, label: settle}
+
+  - {hold: 8.0, steering: -0.55, velocity: 1.2, label: right_055_1p2}
+  - {hold: 8.0, steering: -0.55, velocity: 1.6, label: right_055_1p6}
+  - {hold: 8.0, steering: -0.55, velocity: 2.0, label: right_055_2p0}
+  - {hold: 8.0, steering: -0.55, velocity: 2.4, label: right_055_2p4}
+  - {hold: 5.0, steering: 0.0, velocity: 0.0, label: settle}
+
+return:
+  mode: none

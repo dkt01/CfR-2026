@@ -41,6 +41,14 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1] / "cfr_arduino_bridge"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+# formulaOne/config_lowdrift.yaml is deliberately excluded: it is a variant
+# with its own steering_slew, not a copy that should track the others.
+RL_CONFIGS = {
+    "formulaOne": REPO_ROOT / "rl/formulaOne/config.yaml",
+    "formulaTwo": REPO_ROOT / "rl/formulaTwo/config.yaml",
+    "formulaThree": REPO_ROOT / "rl/formulaThree/config.yaml",
+}
 TOLERANCE = 1e-3
 findings: list[str] = []
 
@@ -90,6 +98,20 @@ def main() -> int:
     )
 
     print("\n--- vehicle.yaml against arduino_bridge.yaml")
+    center_offset = steering["center_offset"]["value"]
+    steering_trim = bridge["arduino_bridge"]["ros__parameters"].get("steering_trim")
+    note(
+        steering_trim is not None and abs(center_offset - steering_trim) < TOLERANCE,
+        "arduino_bridge steering_trim matches vehicle.yaml's center_offset",
+        f"vehicle.yaml steering.center_offset {center_offset}\n"
+        f"arduino_bridge.yaml arduino_bridge.steering_trim {steering_trim}\n"
+        "apply_steering_trim.py keeps these in step; run it after "
+        "apply_vehicle_patch.py whenever center_offset changes."
+        if steering_trim is not None
+        else "arduino_bridge.yaml has no steering_trim parameter - has "
+        "arduino_bridge_node.cpp's steering_trim param been added?",
+    )
+
     sim = bridge["sim_vehicle"]["ros__parameters"]
     pts = list(zip(sim["steering_command_points"], sim["steering_angle_points"]))
     note(
@@ -126,6 +148,53 @@ def main() -> int:
             f"max_steering_angle {c2d_params['max_steering_angle']} rad against measured "
             f"{table_left} left / {table_right} right: over-steers left by "
             f"{100 * (table_left / c2d_params['max_steering_angle'] - 1):.0f}%.",
+        )
+
+    print("\n--- vehicle.yaml against the RL driver configs")
+    # steering.effective_angle_table has a clean home to compare against in
+    # each driver's plant: block. yaw_response_tau/understeer_gradient/
+    # tire_scrub do not yet have a matching per-value home in vehicle.yaml
+    # (inertia: has no yaw_response_tau field, lateral.understeer_gradient is
+    # a single scalar while the skidpad analyzer produces per-side values) --
+    # so those are cross-checked against EACH OTHER below instead, which
+    # needs no new vehicle.yaml schema and still catches the three drivers
+    # silently drifting apart, the gap nothing else here covers.
+    rl_plants = {}
+    for driver, path in RL_CONFIGS.items():
+        if not path.is_file():
+            continue
+        plant = (yaml.safe_load(path.read_text()) or {}).get("plant") or {}
+        rl_plants[driver] = plant
+        rl_table = list(
+            zip(
+                plant.get("steering_command_points", []),
+                plant.get("steering_angle_points", []),
+            )
+        )
+        note(
+            bool(rl_table)
+            and all(
+                abs(a - b) < TOLERANCE and abs(c - d) < TOLERANCE
+                for (a, c), (b, d) in zip(table, rl_table)
+            ),
+            f"rl/{driver}/config.yaml steering table matches vehicle.yaml",
+            f"vehicle.yaml {table}\nrl/{driver} {rl_table}",
+        )
+
+    for key in ("wheelbase", "yaw_response_tau", "understeer_gradient", "tire_scrub"):
+        values = {
+            driver: plant[key] for driver, plant in rl_plants.items() if key in plant
+        }
+        if len(values) < 2:
+            continue
+        spread = max(values.values()) - min(values.values())
+        note(
+            spread < TOLERANCE,
+            f"rl/formula*/config.yaml agree on plant.{key}",
+            "\n".join(f"{driver}: {value}" for driver, value in values.items())
+            + "\nThese describe the same physical car; a driver-specific value here "
+            "is either an intentional divergence that belongs in a comment, or a "
+            "propagation that missed one file.",
         )
 
     print("\n--- the generated worlds")

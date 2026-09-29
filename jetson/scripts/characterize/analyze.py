@@ -373,9 +373,11 @@ def analyze_skidpad(run, options):
             f"geometric wheel angle at this command by it (as tangents) for "
             f"tire_scrub; on its own it cannot tell scrub from linkage."
         )
-        vehicle[
-            f"lateral.understeer_gradient_{side}_{command:.2f}".replace(".", "p", 1)
-        ] = gradient
+        # Replace only the command's OWN decimal point, not "lateral."'s -
+        # str.replace(..., 1) takes the first "." in the whole f-string, which
+        # is the one right after "lateral" and corrupts the section name.
+        command_key = f"{command:.2f}".replace(".", "p")
+        vehicle[f"lateral.understeer_gradient_{side}_{command_key}"] = gradient
         series.append(
             {
                 "label": f"{side} {command:.2f}",
@@ -525,6 +527,209 @@ def analyze_step_steer(run, options):
         if not stamps_missing:
             vehicle["inertia.yaw_response_tau_measured"] = mean_tau
     return {"summary": summary, "vehicle": vehicle, "plots": []}
+
+
+# --------------------------------------------------------------- trim check
+
+
+# rad per unit command, from vehicle.yaml's effective_angle_table +/-0.5 rows
+# (measured, B2): (0.256 - (-0.191)) / 1.0.  A single straight-line point
+# cannot fit its own slope - see analyze_straight_line - so this is the slope
+# the last full steer_authority run measured, used until a fresher one
+# supersedes it via --command-to-angle-slope.
+DEFAULT_STEERING_SLOPE = 0.447
+
+
+def analyze_straight_line(run, options):
+    """Steering trim checkout - center_offset from a single straight point.
+
+    This does not fit steer_authority's line: it measures ONE command (zero)
+    and converts the angle bias it finds into a command-space offset using
+    the SLOPE steer_authority already measured, rather than fitting a slope
+    from a single point, which is not information a single point can supply.
+    Run this often to catch trim drift; re-run steer_authority_fast (or
+    figure_eight_calib) when the slope itself might have moved.
+
+    Cross-checks the rate-sensor estimate (steady-state odom_wz) against the
+    yaw actually accumulated over the whole hold (odom_yaw, start to end).
+    Both are converted through the SAME atan(L*yaw_rate/v) formula, so they
+    are comparable directly - the total-yaw route is NOT converted through
+    the chord bearing of the resulting path, which is a different quantity
+    (half the total turn, by circular-arc geometry) and would disagree with
+    the rate estimate for any constant bias, whether trim is fine or not.
+    They fail differently: a fixed trim error moves both together; a rate
+    sensor that has not settled to steady state by the time the tail window
+    starts moves them apart.
+    """
+    wheelbase = _wheelbase(run)
+    slope = options.get("command_to_angle_slope") or DEFAULT_STEERING_SLOPE
+    summary = []
+
+    segment = run.segment("straight_10m")
+    if segment is None:
+        return {
+            "summary": ["no 'straight_10m' segment in this run - wrong profile?"],
+            "vehicle": {},
+            "plots": [],
+        }
+
+    speed_times, speed_values, source = _speed_column(segment, options)
+    if not speed_times:
+        return {"summary": ["no usable speed channel"], "vehicle": {}, "plots": []}
+    speed = fits.steady_state(speed_times, speed_values)
+    yaw_rate = fits.steady_state(*segment.pair("t_ros", "odom_wz"))
+    if abs(speed["mean"]) < 0.2:
+        return {"summary": ["car never reached speed"], "vehicle": {}, "plots": []}
+
+    # 1 m/s sits right at the tachometer's reliable floor and the ZED's noise
+    # floor (see steer_authority_fast.yaml on why the original B1 run failed
+    # at 0.6 m/s). Say so here rather than let a bad channel choice pass
+    # silently at exactly the speed where it matters most.
+    if "wheel rpm" not in source:
+        summary.append(
+            f"WARNING: speed channel is {source!r}, not wheel_rpm. At 1 m/s "
+            f"this is inside the ZED's noise floor; re-run with "
+            f"--speed-source wheel_rpm before trusting this number."
+        )
+
+    bias_angle = fits.fit_effective_steering(speed["mean"], yaw_rate["mean"], wheelbase)
+    command_offset = -bias_angle / slope if abs(slope) > 1e-9 else float("nan")
+
+    rows = [
+        row
+        for row in segment.rows
+        if row.get("odom_x") is not None
+        and row.get("odom_y") is not None
+        and row.get("odom_yaw") is not None
+        and row.get("odom_valid")
+    ]
+    lateral_drift = along = angle_from_yaw = None
+    if len(rows) >= 2:
+        heading0 = rows[0]["odom_yaw"]
+        dx = rows[-1]["odom_x"] - rows[0]["odom_x"]
+        dy = rows[-1]["odom_y"] - rows[0]["odom_y"]
+        along = math.cos(heading0) * dx + math.sin(heading0) * dy
+        lateral_drift = -math.sin(heading0) * dx + math.cos(heading0) * dy
+
+        duration = rows[-1]["t_ros"] - rows[0]["t_ros"]
+        if duration > 1e-6:
+            total_yaw = fits.wrap_to_pi(rows[-1]["odom_yaw"] - heading0)
+            yaw_rate_total = total_yaw / duration
+            angle_from_yaw = fits.fit_effective_steering(
+                speed["mean"], yaw_rate_total, wheelbase
+            )
+
+    summary.append(
+        f"speed {speed['mean']:.2f} m/s ({source}), "
+        f"yaw rate {yaw_rate['mean']:+.4f} rad/s over the settled tail"
+    )
+    summary.append(
+        f"zero-command angle bias {bias_angle:+.4f} rad "
+        f"({math.degrees(bias_angle):+.2f} deg), from the settled-tail yaw rate"
+    )
+    if lateral_drift is not None and along > 1.0:
+        summary.append(
+            f"lateral drift {lateral_drift * 100:+.1f} cm over {along:.2f} m travelled"
+        )
+    if angle_from_yaw is not None:
+        summary.append(
+            f"angle bias {angle_from_yaw:+.4f} rad from yaw accumulated over "
+            f"the whole hold (cross-check on the tail-only estimate above)"
+        )
+        if abs(angle_from_yaw - bias_angle) > 0.01:
+            summary.append(
+                "  WARNING: the settled-tail estimate and the whole-hold "
+                "estimate disagree by more than 0.01 rad. A fixed trim error "
+                "moves both together; a real disagreement means the yaw rate "
+                "was not actually constant through the hold - check for a "
+                "rate sensor still settling, wheel slip, or a run that did "
+                "not reach steady state before the tail window started."
+            )
+    summary.append("")
+    summary.append(
+        f"-> steering.center_offset {command_offset:+.4f} normalized command "
+        f"(slope {slope:.4f} rad/command"
+        + (
+            ")"
+            if options.get("command_to_angle_slope")
+            else ", the DEFAULT from vehicle.yaml's measured B2 rows - pass "
+            "--command-to-angle-slope after a fresher steer_authority run)"
+        )
+    )
+
+    return {
+        "summary": summary,
+        "vehicle": {"steering.center_offset": command_offset},
+        "plots": [],
+    }
+
+
+# --------------------------------------------------------------- combined
+
+
+class _FilteredRun:
+    """A read-only view of `run` restricted to segments starting with `prefix`.
+
+    Lets analyze_steer_authority run unmodified against just the steering-map
+    segments of a combined run: it is not itself prefix-scoped (every segment
+    other than settle/straight_reference/etc. is a map point to it), so
+    handing it the whole run would also fold in the understeer ladders and
+    step-steer transients sharing that run.
+    """
+
+    def __init__(self, run, prefix):
+        self._run = run
+        self._prefix = prefix
+
+    @property
+    def metadata(self):
+        return self._run.metadata
+
+    @property
+    def path(self):
+        return self._run.path
+
+    def segments(self, phase="running"):
+        return [
+            segment
+            for segment in self._run.segments(phase)
+            if (segment.label or "").startswith(self._prefix)
+        ]
+
+
+def analyze_figure_eight(run, options):
+    """Combined turn-in-lag/steering-map/understeer checkout.
+
+    No new fitting math: this dispatches to the three analyzers each borrowed
+    segment came from, exactly as if it had been run under its own profile.
+    `authL_`/`authR_` segments go to analyze_steer_authority via a filtered
+    view (see _FilteredRun); `left_`/`right_` ladders go to analyze_skidpad;
+    `step_` transients go to analyze_step_steer. Each keeps its own
+    monotonicity/sign/sample-rate checks, unmodified.
+    """
+    sections = [
+        (
+            "steering map (authL_/authR_, from steer_authority_fast)",
+            analyze_steer_authority(_FilteredRun(run, "auth"), options),
+        ),
+        (
+            "understeer (left_/right_, from skidpad_chicane)",
+            analyze_skidpad(run, options),
+        ),
+        (
+            "turn-in lag (step_, from step_steer_fine)",
+            analyze_step_steer(run, options),
+        ),
+    ]
+
+    summary, vehicle, plots = [], {}, []
+    for title, result in sections:
+        summary.append(f"=== {title} ===")
+        summary.extend(result["summary"] or ["(nothing to report)"])
+        summary.append("")
+        vehicle.update(result["vehicle"])
+        plots.extend(result["plots"])
+    return {"summary": summary, "vehicle": vehicle, "plots": plots}
 
 
 # --------------------------------------------------------------------- C1
@@ -849,6 +1054,8 @@ ANALYZERS = {
     "steer_authority_fast": analyze_steer_authority,
     "skidpad_chicane": analyze_skidpad,
     "step_steer_fine": analyze_step_steer,
+    "straight_line_trim": analyze_straight_line,
+    "figure_eight_calib": analyze_figure_eight,
     "pulse_staircase": analyze_pulse_staircase,
     "coastdown": analyze_coastdown,
     "brake_sweep": analyze_brake_sweep,
