@@ -29,6 +29,7 @@ readonly SOURCE_DIR="$(dirname "${SCRIPT_DIR}")"
 readonly F1_DIR="$(dirname "${SOURCE_DIR}")/rl/formulaOne"
 readonly F3_DIR="$(dirname "${SOURCE_DIR}")/rl/formulaThree"
 readonly F2_DIR="$(dirname "${SOURCE_DIR}")/rl/formulaTwo"
+readonly FSZ_DIR="$(dirname "${SOURCE_DIR}")/rl/formulaSubZero"
 readonly RACER_DIR="$(dirname "${SOURCE_DIR}")/rl/obstacleRacer"
 
 REMOTE_HOST="${ORIN_HOST:-tejam@192.168.55.1}"
@@ -41,6 +42,7 @@ F1_RUN="${F1_RUN:-v12}"
 F2_RUN="${F2_RUN:-f2_v3_59M}"
 SYNC_F1=true
 SYNC_F2=true
+SYNC_FSZ=false
 F3_RUN="${F3_RUN:-}"
 SYNC_F3=false
 [[ -n "${F3_RUN}" ]] && SYNC_F3=true
@@ -106,6 +108,7 @@ Options:
       --no-f3       Do not sync formulaThree
       --no-f1       Do not sync formulaOne or its policy
       --no-f2       Do not sync formulaTwo or its policy
+      --fsz         Sync FormulaSubZero planner and MPC (requires formulaTwo)
   -r, --racer-policy RUN
                     obstacleRacer policy to deploy, from rl/obstacleRacer/
                     bestModel/RUN or runs/RUN (env RACER_RUN, default: v8;
@@ -162,6 +165,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-f2)
       SYNC_F2=false
+      shift
+      ;;
+    --fsz)
+      SYNC_FSZ=true
       shift
       ;;
     -r | --racer-policy)
@@ -292,6 +299,10 @@ resolve_policy() {
   exit 1
 }
 REPO_ROOT="$(dirname "${SOURCE_DIR}")"
+if [[ "${SYNC_FSZ}" == true && "${SYNC_F2}" != true ]]; then
+  echo "error: --fsz requires formulaTwo; omit --no-f2" >&2
+  exit 2
+fi
 if [[ "${SYNC_F1}" == true ]]; then
   F1_POLICY_DIR="$(resolve_policy "${F1_DIR}" "${F1_RUN}")"
   echo "formulaOne policy: ${F1_POLICY_DIR#"${REPO_ROOT}"/}"
@@ -437,6 +448,11 @@ if [[ "${SYNC_F2}" == true ]]; then
   deploy_driver formulaTwo "${F2_DIR}" "${F2_RUN}" "${F2_POLICY_DIR}"
 fi
 
+if [[ "${SYNC_FSZ}" == true ]]; then
+  list_files "${FSZ_DIR}" >"${FILE_LIST}"
+  sync_tree "${FSZ_DIR}" "${REMOTE_DIR}/formulaSubZero"
+fi
+
 if [[ "${SYNC_F3}" == true ]]; then
   deploy_driver formulaThree "${F3_DIR}" "${F3_RUN}" "${F3_POLICY_DIR}"
 fi
@@ -468,7 +484,7 @@ if [[ "${SYNC_RACER}" == true ]]; then
   fi
 fi
 
-if [[ "${SYNC_F1}" == true || "${SYNC_F2}" == true || "${SYNC_F3}" == true || "${SYNC_RACER}" == true ]]; then
+if [[ "${SYNC_F1}" == true || "${SYNC_F2}" == true || "${SYNC_F3}" == true || "${SYNC_RACER}" == true || "${SYNC_FSZ}" == true ]]; then
   # All drivers resolve the course files and record_run.py as
   # <two dirs above themselves>/jetson/..., which is the repo's layout.  Here
   # that is ~/jetson, so point it at the synced jetson/ tree.  Never replaces
@@ -545,6 +561,9 @@ if [[ "${SYNC_F2}" == true ]]; then
 fi
 if [[ "${SYNC_RACER}" == true ]]; then
   echo "  obstacleRacer: ${REMOTE_DIR}/scripts/launchObstacleRacer.sh  (${RACER_RUN:-policy already on the Orin}, speed_scale 0.3 by default)"
+fi
+if [[ "${SYNC_FSZ}" == true ]]; then
+  echo "  FormulaSubZero: ${REMOTE_DIR}/formulaSubZero/setup.sh  (install CasADi), then ${REMOTE_DIR}/scripts/launchFormulaSubZero.sh"
 fi
 if [[ "${SYNC_F3}" == true ]]; then
   echo "  formulaThree: ${REMOTE_DIR}/scripts/launchFormulaThree.sh (${F3_RUN}, speed_scale 0.3 by default)"

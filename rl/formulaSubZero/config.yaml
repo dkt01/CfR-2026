@@ -1,0 +1,381 @@
+# FormulaSubZero speed course, three laps. Tune after strict Gazebo validation.
+track:
+  world_sdf: jetson/cfr_arduino_bridge/worlds/speed_course.sdf
+  centerline_json: jetson/cfr_arduino_bridge/config/speed_course_path.json
+  ds: 0.05
+  curvature_smooth_m: 0.6
+  v_hairpin: 2.5
+  v_straight: 5.2
+  hairpin_radius: 3.0
+  lateral_accel: 4.5
+  hairpin_gap_close_m: 1.5
+  hairpin_dilate_m: 0.5
+  speed_floor_hairpin: 0.0
+  speed_floor_taper: 0.0
+  speed_floor_open: 0.0
+  floor_drag_scale: 1.0
+  sdf_res: 0.02
+  sdf_margin: 2.0
+  vehicle_start:
+  - 20.15
+  - 4.76
+vehicle:
+  length: 0.58
+  width: 0.32
+collision:
+  chassis_half_length: 0.275
+  chassis_half_width: 0.15
+  wheel_x: 0.162
+  wheel_radius: 0.0566
+  wheel_outer_y: 0.1625
+plant:
+  speed_slew_rate: 2.0
+  max_speed: 8.0
+  command_dead_time: 0.19
+  mass: 3.599
+  coast_f0: 2.18
+  coast_f1: 0.47
+  max_accel: 3.0
+  brake_decel: 0.0
+  wheelbase: 0.324
+  understeer_gradient: 0.007
+  tire_scrub: 1.1
+  yaw_response_tau: 0.34
+  steering_command_points:
+  - -1.0
+  - -0.5
+  - 0.0
+  - 0.5
+  - 1.0
+  steering_angle_points:
+  - -0.382
+  - -0.191
+  - 0.0
+  - 0.256
+  - 0.512
+  steering_tau: 0.05
+  steering_slew: 6.16
+  mu: 1.0
+  gravity: 9.81
+  motor_tau: 0.0
+env:
+  control_hz: 20.0
+  substeps: 10
+  laps: 3
+  episode_timeout_s: 170.0
+  random_start: true
+  random_start_speed:
+  - 0.0
+  - 5.2
+  lookahead_m:
+  - 0.5
+  - 1.0
+  - 2.0
+  - 3.0
+  - 4.5
+  - 6.0
+  - 8.0
+  - 10.0
+  - 13.0
+  - 16.0
+  steer_residual: 1.0
+  steer_prior:
+    k_lateral: 0.8
+    k_heading: 0.4
+    speed_floor: 1.2
+    horizon_s: 0.35
+    lead_scale: 0.5
+    k_rate: 0.08
+  yaw_rate_filter: 0.4
+  speed_rate_filter: 0.25
+  observe_accel: false
+  stall_speed: 0.25
+  stall_patience_s: 2.5
+  baseline_speed_scale: 0.9
+  stop_speed: 0.2
+  stop_timeout_s: 14.0
+world:
+  layout_amp:
+  - 0.0
+  - 0.1
+  - 0.0
+  layout_wavelength:
+  - 8.0
+  - 30.0
+  layout_modes: 3
+  jitter_amp:
+  - 0.0
+  - 0.035
+  - 0.0
+  jitter_wavelength:
+  - 1.2
+  - 3.0
+  jitter_modes: 4
+  inflate:
+  - -0.015
+  - 0.02
+  - 0.0
+  bale_height: 0.3556
+camera:
+  image_width: 640
+  image_height: 360
+  col_stride: 10
+  row_stride: 5
+  hfov_deg: 110.0
+  x: 0.315
+  z: 0.2
+  min_range: 0.3
+  max_range: 20.0
+  band:
+  - 0.07
+  - 0.33
+  scan_max: 10.0
+  stack: 4
+  row_slope_limit: 0.5
+sensor_noise:
+  camera_hz:
+  - 10.0
+  - 15.0
+  - 12.0
+  depth_latency:
+  - 0.04
+  - 0.12
+  - 0.07
+  frame_drop:
+  - 0.0
+  - 0.1
+  - 0.0
+  noise_s0:
+  - 0.0
+  - 0.01
+  - 0.0
+  noise_s2:
+  - 0.001
+  - 0.01
+  - 0.003
+  pixel_dropout:
+  - 0.0
+  - 0.15
+  - 0.0
+  blob_rate:
+  - 0.0
+  - 1.5
+  - 0.0
+  edge_bleed:
+  - 0.0
+  - 0.6
+  - 0.0
+  pitch_err_deg:
+  - -0.75
+  - 0.75
+  - 0.0
+  pitch_jitter_deg:
+  - 0.0
+  - 0.15
+  - 0.0
+  yaw_err_deg:
+  - -1.5
+  - 1.5
+  - 0.0
+  height_err:
+  - -0.01
+  - 0.01
+  - 0.0
+  hfov_half_deg:
+  - 51.0
+  - 55.0
+  - 55.0
+randomize:
+  enabled: true
+  dead_time:
+  - 0.13
+  - 0.26
+  - 0.19
+  coast_scale:
+  - 0.95
+  - 1.12
+  - 1.0
+  accel_scale:
+  - 0.8
+  - 1.2
+  - 1.0
+  slew_scale:
+  - 0.75
+  - 1.25
+  - 1.0
+  steer_gain:
+  - 0.82
+  - 1.1
+  - 1.0
+  steer_asymmetry:
+  - 0.85
+  - 1.15
+  - 1.0
+  steer_offset:
+  - -0.035
+  - 0.035
+  - 0.0
+  steer_limit:
+  - 0.38
+  - 0.55
+  - 0.512
+  understeer:
+  - 0.0
+  - 0.02
+  - 0.007
+  scrub_scale:
+  - 0.9
+  - 1.15
+  - 1.0
+  yaw_tau_scale:
+  - 0.6
+  - 1.6
+  - 1.0
+  steering_tau:
+  - 0.04
+  - 0.08
+  - 0.05
+  pose_noise_xy:
+  - 0.0
+  - 0.022
+  - 0.0
+  pose_noise_yaw:
+  - 0.0
+  - 0.01
+  - 0.0
+  pose_latency:
+  - 0.02
+  - 0.1
+  - 0.02
+  pose_drift_m_per_lap:
+  - 0.0
+  - 0.1
+  - 0.0
+  pose_drift_rad_per_lap:
+  - 0.0
+  - 0.03
+  - 0.0
+  start_lateral:
+  - -0.16
+  - 0.16
+  - 0.0
+  start_heading:
+  - -0.09
+  - 0.09
+  - 0.0
+  control_jitter:
+  - 0.9
+  - 1.1
+  - 1.0
+  action_dropout:
+  - 0.0
+  - 0.05
+  - 0.0
+  mu:
+  - 0.6
+  - 1.1
+  - 1.0
+  mass_scale:
+  - 0.95
+  - 1.055
+  - 1.0
+  motor_tau:
+  - 0.0
+  - 0.12
+  - 0.0
+  throttle_delay:
+  - 0.0
+  - 0.06
+  - 0.0
+reward:
+  progress: 6.0
+  sigma_y: 0.2
+  sigma_psi: 0.35
+  track: 3.0
+  time: 3.0
+  overspeed_linear: 20.0
+  overspeed_quad: 15.0
+  graze: 15.0
+  graze_margin: 0.1
+  steer_rate: 0.04
+  steer_jerk: 0.15
+  lap_bonus: 25.0
+  finish_bonus: 60.0
+  stop_bonus: 80.0
+  lap_improve: 2.0
+  lap_improve_cap: 6.0
+  crash: -40.0
+  stall: -20.0
+train:
+  total_steps: 40000000
+  n_envs: 256
+  n_steps: 64
+  batch_size: 4096
+  n_epochs: 4
+  gamma: 0.995
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.005
+  learning_rate: 0.0003
+  lr_final_frac: 0.05
+  pi_arch:
+  - 128
+  - 128
+  vf_arch:
+  - 256
+  - 256
+  log_std_init: -1.0
+  init_from: ../formulaOne/bestModel/v12/best_model.zip
+  critic_warmup_steps: 1500000
+  dr_curriculum:
+    start: 0.4
+    ramp: 0.4
+  eval_every_steps: 1000000
+  seed: 0
+formula_sub_zero:
+  # Gazebo publishes the car-center pose; the physical ZED publishes its lens pose.
+  physical_camera_offset_x_m: 0.315
+  physical_camera_offset_y_m: 0.06
+  depth_stride_px: 4
+  start_match_max_error_m: 0.18
+  start_signal_x_m: 17.0116
+  start_signal_y_m: 3.8895
+  min_depth_points: 35
+  unexpected_surface_error_m: 0.08
+  unexpected_point_fraction: 0.05
+  local_path_step_m: 0.5
+  local_path_horizon_m: 8.0
+  local_max_offset_m: 0.16
+  local_offset_step_m: 0.04
+  local_max_offset_change_m: 0.08
+  min_live_clearance_m: 0.10
+  min_map_clearance_m: 0.08
+  target_clearance_m: 0.18
+  coast_decel_mps2: 0.70
+  depth_reaction_s: 0.25
+  path_step_m: 0.5
+  path_max_offset_m: 0.12
+  path_offset_step_m: 0.04
+  path_target_clearance_m: 0.18
+  start_hairpin_bias_m: 0.11
+  start_hairpin_entry_width_m: 4.0
+  start_hairpin_exit_width_m: 8.0
+  start_hairpin_exit_extra_m: 0.05
+  start_hairpin_exit_extra_length_m: 10.0
+  mid_hairpin_center_m: 60.8
+  mid_hairpin_bias_m: 0.10
+  mid_hairpin_width_m: 3.0
+  mid_hairpin_exit_width_m: 1.5
+  approach_corner_center_m: 92.5
+  approach_corner_width_m: 3.0
+  approach_corner_bias_m: -0.06
+  speed_fraction: 0.65
+  horizon: 10
+  horizon_dt: 0.1
+  command_delay_steps: 2
+  max_steer_trim: 0.12
+  w_lateral: 70.0
+  w_heading: 8.0
+  w_steer_change: 0.7
+  w_prior: 10.0
+  w_risk: 300.0
