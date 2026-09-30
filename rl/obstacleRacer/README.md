@@ -208,6 +208,21 @@ check. Each container gets its own `GZ_PARTITION` and `ROS_DOMAIN_ID`:
 containers on Docker's bridge network otherwise share one Gazebo transport
 and one ROS graph, and a teleport lands in the other world.
 
+What it bought, through v12b: nothing a 256-lap grade could see. The
+Gazebo cars supply 2 samples in 32, and until e9068c4 a resumed run
+trained at its final learning rate, so the policy barely moved. The Gazebo
+gains (start-box runs 13.7 → 22.6 m, past the helix) came from fixing the
+tach model and the crash judge (PARITY_REPORT.md). Refine in numpy and use
+Gazebo to find where the two sims differ; judge checkpoints with
+`grade.py`, not the 64-lap training evals, which swing ±10 points.
+
+The race policy is `bestModel/v13/` (v12a 202.3M refined to 212.3M in
+numpy; `graded_eval.txt`): about 40% of start-box laps finish in numpy, and
+the Wide Section ends most of the rest. Its way out turns ~90° left,
+outside the camera's 110° field of view where the car has to choose, so no
+follow-the-gap rule finds it: driven alone from 2 m before the section, the
+prior clears it 15–19% of the time whatever the gap rule.
+
 In the sim container, with the workspace built:
 
 ```bash
@@ -243,7 +258,7 @@ ros2 service call /obstacle_randomizer/start_signal std_srvs/srv/SetBool "{data:
 
 # Send it to the Orin: the code to ~/software/obstacleRacer, and the race
 # policy's policy.npz and config.yaml to its top level.  The race policy is
-# committed in bestModel/v9/ and is the sync's default; --racer-policy RUN
+# committed in bestModel/v13/ and is the sync's default; --racer-policy RUN
 # sends another from bestModel/RUN or runs/RUN (export_policy.py first)
 jetson/scripts/syncSoftware.sh --build
 
