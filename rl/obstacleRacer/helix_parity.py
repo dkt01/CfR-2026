@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Where the numpy plant and Gazebo part ways on the helix.
+"""Where the numpy plant and Gazebo part ways on the helix (or any section).
 
-Reads a `gazebo_env.py trace` file (the policy driven into the helix from a
+Reads a `gazebo_env.py trace` file (the policy driven into a section from a
 fixed arc length before it, every control step saved) and, on the host:
 
   numpy     the same policy from the same starts in the numpy env, many cars
@@ -52,7 +52,7 @@ class FloorTach:
         return self.read(idx)
 
 
-def numpy_runs(cfg, seeds, before, policy_path, per, seconds, dealt, old_tach):
+def numpy_runs(cfg, seeds, section, before, policy_path, per, seconds, dealt, old_tach):
     model = course_model.CourseModel(seeds)
     n = per * len(seeds)
     # Gazebo deals every start at rest (a teleport sets no speed).
@@ -62,7 +62,7 @@ def numpy_runs(cfg, seeds, before, policy_path, per, seconds, dealt, old_tach):
         env.tach = FloorTach()
     lays = np.repeat(np.arange(len(seeds)), per)
     env.forced_lay = lays
-    env.forced_s = np.array([env.lines.lines[k].helix_start_s - before for k in lays])
+    env.forced_s = np.array([env.section_entry(k, section) - before for k in lays])
     obs = env.reset()
     policy = NumpyPolicy.load(policy_path)
     policy.reset(n)
@@ -157,12 +157,14 @@ def main():
     runs = data["runs"]
     seeds = sorted({r["seed"] for r in runs}, key=[r["seed"] for r in runs].index)
 
-    print(f"== outcomes from {data['before']} m before the helix, {args.seconds:.0f} s")
+    section = data.get("section", "helical_ramp")  # early traces were helix only
+    print(f"== outcomes from {data['before']} m before {section}, {args.seconds:.0f} s")
     gz = Counter(f"{r['outcome']}@{r['zone']}" for r in runs)
     print(f"gazebo ({len(runs)} runs): {dict(gz.most_common())}")
     ends, lays = numpy_runs(
         cfg,
         seeds,
+        section,
         data["before"],
         args.policy,
         args.per,

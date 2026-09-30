@@ -897,6 +897,26 @@ def rollout(cfg, model, cars, seconds, start_box_only=True):
     return env, infos, rate
 
 
+def schedule_checks(cfg):
+    """A resumed run's learning rate falls over its own steps, not all of them."""
+    from train import lr_schedule  # torch: only here
+
+    tcfg = dict(cfg["train"], learning_rate=3e-5, lr_final_fraction=0.05)
+    done, total = 199_000_000, 2_400_000
+    sched = lr_schedule(tcfg, done, total)
+
+    # SB3's progress_remaining with reset_num_timesteps=False.
+    def at(n):
+        return sched(1 - n / (done + total))
+
+    first, last = at(done), at(done + total)
+    return check(
+        "resumed lr runs from learning_rate to its final fraction",
+        abs(first - 3e-5) < 1e-9 and abs(last - 1.5e-6) < 1e-9,
+        f"{first:.2e} -> {last:.2e}",
+    )
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--quick", action="store_true")
@@ -913,6 +933,9 @@ def main() -> int:
     failures += check(
         "exported layouts match the randomizer's draw", not stale, str(stale)
     )
+
+    print("training")
+    failures += schedule_checks(cfg)
 
     print("reward")
     try:

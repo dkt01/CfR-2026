@@ -294,6 +294,12 @@ class ObstacleEnv:
                     spans[z] = (float(line.arc[hit[0]]), float(line.arc[hit[-1]]))
             self.section_s.append(spans)
 
+    def section_entry(self, lay, name):
+        """Arc length where the line enters obstacle `name` on layout `lay`."""
+        if name == "helical_ramp":
+            return self.lines.lines[lay].helix_start_s  # the deck's end
+        return self.section_s[lay][self.zone_names.index(name)][0]
+
     def _hoop_geometry(self):
         """Per layout: hoop centers, span axes, travel normals, and arc lengths."""
         spec = self.model.spec["hoops"]
@@ -358,8 +364,9 @@ class ObstacleEnv:
         memory = int(e.get("fail_memory", 400))
         self.fail_s = np.zeros((len(self.deal), memory))
         self.fail_n = np.zeros(len(self.deal), np.int64)
-        # Where recent episodes ended pinned, as (s, x, y, z, yaw), for
-        # starting a car right there, stopped, to learn to back out.
+        # Where recent episodes ended pinned (or, per env.stuck_causes, rocking
+        # in a dead end without progress), as (s, x, y, z, yaw), for starting a
+        # car right there, stopped, to learn to back out.
         self.stuck_pose = np.zeros((len(self.deal), memory, 5))
         self.stuck_n = np.zeros(len(self.deal), np.int64)
 
@@ -849,6 +856,7 @@ class ObstacleEnv:
                 ],
                 "timeout",
             )
+            stuck_causes = e.get("stuck_causes", ["pinned"])
             movable = np.zeros(self.n, bool)
             movable[done] = self._movable(lay[done], st[done])
             for i in done:
@@ -872,7 +880,7 @@ class ObstacleEnv:
                     self.fail_s[L, self.fail_n[L] % self.fail_s.shape[1]] = self.s[i]
                     self.fail_n[L] += 1
                     # Only where a stuck start could move (see _movable).
-                    if causes[i] == "pinned" and movable[i]:
+                    if causes[i] in stuck_causes and movable[i]:
                         slot = self.stuck_n[L] % self.stuck_pose.shape[1]
                         self.stuck_pose[L, slot] = (
                             self.s[i],

@@ -215,12 +215,22 @@ def summarize(records):
     )
 
 
-def lr_schedule(tcfg):
+def lr_schedule(tcfg, done=0, total=None):
+    """learning_rate falling to lr_final_fraction of it over this run.
+
+    On a resume SB3 counts progress from step 0 (remaining = 1 - n/(done +
+    total)), so 2.4M steps on top of 199M would start ~1% from the end, at
+    the final rate: v11 and v12b ran at 1.8e-6 for a configured 3e-5.
+    `done`/`total` rescale it to this run's own steps.
+    """
     lr0 = float(tcfg["learning_rate"])
     final = lr0 * float(tcfg.get("lr_final_fraction", 1.0))
     if final >= lr0:
         return lr0
-    return lambda remaining: final + (lr0 - final) * max(remaining, 0.0)
+    span = (done + total) / total if total else 1.0
+    return lambda remaining: (
+        final + (lr0 - final) * min(max(remaining * span, 0.0), 1.0)
+    )
 
 
 class EvalEnv(ObstacleEnv):
@@ -414,9 +424,14 @@ def main():
             if isinstance(was, (int, float)) and was != want:
                 setattr(model, name, type(was)(want))
                 print(f"  {name}: {was} -> {want} (from config)")
-        sched = lr_schedule(tcfg)
+        sched = lr_schedule(tcfg, model.num_timesteps, total)
         model.lr_schedule = sched if callable(sched) else (lambda _: sched)
         print(f"resumed from {args.resume} at {model.num_timesteps:,} steps")
+        start = 1 - model.num_timesteps / (model.num_timesteps + total)
+        print(
+            f"  learning_rate: {model.lr_schedule(start):.2e}"
+            f" -> {model.lr_schedule(0.0):.2e} over this run"
+        )
     else:
         model = Algo(policy_class, train_env, **kwargs)
 

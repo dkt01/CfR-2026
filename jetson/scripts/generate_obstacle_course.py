@@ -63,14 +63,19 @@ BALE_HEIGHT = 14 * INCH
 #
 # A "friction cone" -- ODE's `fdir1`/`mu`/`mu2` split, box() below -- separates
 # them: BALE_FRICTION_CLIMB is `mu` along the bale's own vertical (the
-# direction a tire climbs in, unchanged from the proven-safe 0.5), and
+# direction a tire climbs in), and
 # BALE_FRICTION_ALONG is `mu2` across it (the direction a car scrubbing along
 # the wall slides in). Gazebo combines a contact's mu as the lower of the two
 # surfaces' in each direction, and the tires are mu 1 (see mu_lateral in
 # vehicle.yaml), so 1.0 is already the most drag the wall can add -- as much
 # as the tires can grip, same as the old 50 was meant to give, without
 # raising the climb-direction mu that caused it.
-BALE_FRICTION_CLIMB = 0.5
+#
+# 0.5 still let a tire climb: the racer's cars, scraping a bale wall in a
+# turn at 0.5-1.9 m/s, rolled 30 -> 48 deg in 0.3 s without losing speed
+# (rl/obstacleRacer/PARITY_REPORT.md, narrow region).  The real car has
+# never been seen to climb a bale, so the climb direction sits at 0.2.
+BALE_FRICTION_CLIMB = 0.2
 BALE_FRICTION_ALONG = 1.0
 
 # The MDF/plywood ramp, tunnel, and banked-turn walls: smoother than straw, so

@@ -513,7 +513,7 @@ def smoke(args):
 
 
 def trace(args):
-    """Drive a policy from a fixed arc length before the helix; save every step.
+    """Drive a policy from a fixed arc length before a section; save every step.
 
     For comparing with the numpy plant (helix_parity.py): the Gazebo pose,
     speed, command and numpy-grid clearance per control step, and how each
@@ -531,7 +531,7 @@ def trace(args):
         line = env.lines.lines[k]
         for rep in range(args.runs):
             env.forced_lay = np.array([k])
-            env.forced_s = np.array([line.helix_start_s - args.before])
+            env.forced_s = np.array([env.section_entry(k, args.section) - args.before])
             env.plant.log = None
             obs = env.reset()
             policy.reset(1)
@@ -559,7 +559,9 @@ def trace(args):
                 f"after {len(rows) * env.dt:.1f} s, late poses {env.link.late_poses}",
                 flush=True,
             )
-            Path(args.out).write_text(json.dumps(dict(before=args.before, runs=runs)))
+            Path(args.out).write_text(
+                json.dumps(dict(section=args.section, before=args.before, runs=runs))
+            )
     env.link.control(False)
     rclpy.try_shutdown()
 
@@ -573,7 +575,8 @@ def main():
     t.add_argument("--policy", required=True)
     t.add_argument("--seeds", default="201,202,208,218")
     t.add_argument("--runs", type=int, default=3, help="per seed")
-    t.add_argument("--before", type=float, default=2.0, help="m before the helix")
+    t.add_argument("--section", default="helical_ramp", help="zone name")
+    t.add_argument("--before", type=float, default=2.0, help="m before the section")
     t.add_argument("--seconds", type=float, default=15.0)
     t.add_argument("--seed", type=int, default=0)
     t.add_argument("--out", required=True)

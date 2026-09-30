@@ -26,7 +26,7 @@ from ppo_policy import Driver, load
 from train import EvalEnv, evaluate, summarize
 
 HERE = Path(__file__).resolve().parent
-NEW_SEEDS = list(range(5101, 5165))
+NEW_SEEDS = layouts.GRADE_SEEDS
 
 
 def grade(paths, cfg):

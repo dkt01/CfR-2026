@@ -1,5 +1,18 @@
 # Obstacle Racer Numba–Gazebo parity audit
 
+## Narrow region, 2026-09-29 (v12b stopped at 200.9M)
+
+With the tach and crash judge fixed, v12b's Gazebo cars got past the helix
+(start-box runs 13.7 → 22.6 m) and ended next in the narrow region: 14 of
+68 runs, mostly "pinned". `gazebo_env.py trace --section narrow_region`
+drove v12a 202.3M from 2 m before it (seeds 201/202/208/218 × 3, 20 s;
+`runs/narrow/`).
+
+| Check | Evidence | Change |
+| --- | --- | --- |
+| Through the section | Gazebo 10/12 runs still driving after 20 s; numpy 123/128 from the same starts. Neither pins inside it. | None: not a wall like the helix was. |
+| Wall scrape at the exit bend | Both Gazebo failures rolled over at (5.6, −9.6), turning at the section's exit with the body 2 cm from the bale wall (bales 25/57): roll grew from −30° to −48° over 0.3 s at 0.5–1.9 m/s with no speed lost, the tire climbing the bale. The numpy plant never rolls there. In replay, numpy's wall contact takes 0.3–2 m/s off the car where Gazebo's takes none. | The real car has never been seen to climb a bale, so Gazebo is the one that is wrong. Bale climb-direction friction 0.5 → 0.2 (`BALE_FRICTION_CLIMB`, obstacle_course.sdf patched to match): same starts, 24 runs, 0 rollovers, peak roll 9.5° (was 2/12 rolled, 48.5°; `gz_trace_mu02.json`). Numpy's braking on contact is left as it is. |
+
 ## Helix follow-up, 2026-09-29 (v11 refinement paused at 198.3M)
 
 In v11's mixed training, the Gazebo cars ended at the helical ramp in most

@@ -61,8 +61,12 @@ env:
   # Of dealt starts, this share start exactly where a recent episode ended
   # pinned, stopped against what it hit, so backing out gets practiced:
   # v4 at 20M, 38 of 48 held-out runs ended pinned, and 61% of pinned cars
-  # never commanded reverse before the run was cut.
-  stuck_start_prob: 0.10
+  # never commanded reverse before the run was cut.  v13 raises the share
+  # and adds runs that ended no_progress, rocking in a dead end without
+  # touching: a third of Wide Section arrivals fail there, pinned or
+  # no_progress in the dead-end pockets.
+  stuck_start_prob: 0.15
+  stuck_causes: [pinned, no_progress]
   # Throttle dither: below ~1 m/s the Arduino drives the ESC in bursts (bench:
   # 200-350 spur RPM sd around 150-500 RPM targets, README), the tachometer
   # reads zero half the time under 0.6 m/s and nothing under 0.3 m/s
@@ -85,10 +89,11 @@ env:
                             # not stall_s: reverse engages only after ~0.5 s
                             # under the tach floor, then it has to back off
                             # and drive on
-  progress_window_s: 10.0   # end the run as a stall if it advanced less than...
+  progress_window_s: 20.0   # end the run as a stall if it advanced less than...
                             # (v5's 6 s ended 76% of Wide Section visits,
                             # most rocking in the dead end before the
-                            # reverse-and-turn out of it could pay off)
+                            # reverse-and-turn out of it could pay off;
+                            # v13's 20 s gives a back-out-and-turn two tries)
   progress_window_m: 0.5    # ...this over the window (going round, not along)
   off_course_m: 2.2         # m from the centerline: left the lane (the bucket
                             # section and east corridor are ~3 m wide)
