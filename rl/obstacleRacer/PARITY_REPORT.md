@@ -1,5 +1,47 @@
 # Obstacle Racer Numba–Gazebo parity audit
 
+## Narrow region, 2026-09-29 (v12b stopped at 200.9M)
+
+With the tach and crash judge fixed, v12b's Gazebo cars got past the helix
+(start-box runs 13.7 → 22.6 m) and ended next in the narrow region: 14 of
+68 runs, mostly "pinned". `gazebo_env.py trace --section narrow_region`
+drove v12a 202.3M from 2 m before it (seeds 201/202/208/218 × 3, 20 s;
+`runs/narrow/`).
+
+| Check | Evidence | Change |
+| --- | --- | --- |
+| Through the section | Gazebo 10/12 runs still driving after 20 s; numpy 123/128 from the same starts. Neither pins inside it. | None: not a wall like the helix was. |
+| Wall scrape at the exit bend | Both Gazebo failures rolled over at (5.6, −9.6), turning at the section's exit with the body 2 cm from the bale wall (bales 25/57): roll grew from −30° to −48° over 0.3 s at 0.5–1.9 m/s with no speed lost, the tire climbing the bale. The numpy plant never rolls there. In replay, numpy's wall contact takes 0.3–2 m/s off the car where Gazebo's takes none. | The real car has never been seen to climb a bale, so Gazebo is the one that is wrong. Bale climb-direction friction 0.5 → 0.2 (`BALE_FRICTION_CLIMB`, obstacle_course.sdf patched to match): same starts, 24 runs, 0 rollovers, peak roll 9.5° (was 2/12 rolled, 48.5°; `gz_trace_mu02.json`). Numpy's braking on contact is left as it is. |
+
+## Helix follow-up, 2026-09-29 (v11 refinement paused at 198.3M)
+
+In v11's mixed training, the Gazebo cars ended at the helical ramp in most
+windows ("crash", "pinned", "rollover"), 0 laps in ~130 runs, while numpy
+cleared the helix 84% of the time. `gazebo_env.py trace` drove v11 198M from
+fixed starts and saved every step. `helix_parity.py` compares those runs with
+numpy from the same starts. The helix itself was not the gap.
+
+| Check | Evidence | Change |
+| --- | --- | --- |
+| Starts in the helix | 1.5 m in, at rest, seeds 201 and 208: both drove down and out through the old wedge at (6.80, 1.46) without touching; 208 reached the tunnel's south end in 12 s (`gz_trace_b.json`). | None: helix geometry and plant agree (see 2026-09-28 below). |
+| Tach from rest | 2 m before the helix, on the 10° ramp at rest (seed 201, 3 runs): Gazebo's tach, the firmware's TachSensor, read 0 for 0.8 s while the car climbed to 0.87 m/s. It needs two magnet passes, 0.25 m, before it reads. `observation.tach` read as soon as the speed passed 0.3 m/s, 0.4 s sooner. v11 read "commanding 2 m/s, not moving", reversed at step 12, and rolled back down the ramp at up to 3 m/s (`gz_trace_a.json`). | `observation.Tach` transcribes sim_vehicle_node's TachModel: pulses per 0.125 m of travel, two before a reading, held between pulses, forgotten after 0.4 s. On the same start it first reads at step 16 (Gazebo: 16), 0.61 m/s (0.63), and decays 0.50 (0.48). With it, numpy v11 from Gazebo's start pose issues the same commands (reverse at step 12) and rolls back at the same ~1.0 m/s². |
+| Crash judge | Every Gazebo "crash" in those runs was false. Poses arrive every 34 ms; a control step spanned one or two, so speed over the 50 ms period read 1.5 and 3.0 m/s on alternate steps. Beside the ramp rail (2 cm clearance) each drop counted as a 1.5 m/s impact. | `GazeboPlant.step` divides by the poses' own stamps. |
+| Starts at rest | Every Gazebo start is at rest (a teleport sets no speed); numpy deals 0–2 m/s. Any Gazebo start on a slope is a blind-tach hill start the numpy policy had seldom met. | `helix_parity.py --dealt-speed` (default 0) compares like with like. |
+
+Still open: numpy's rail contact slows the car more than Gazebo's (rolling
+back beside the ramp rail at 2 cm, numpy lost 1 m/s where Gazebo lost none).
+
+A policy trained on the old tach has to be refined on the new one before
+its Gazebo numbers mean anything; v11's Gazebo cars learned from false
+crashes.
+
+```bash
+# in a sim container on its own ROS_DOMAIN_ID / GZ_PARTITION, course up:
+python3 gazebo_env.py trace --policy runs/helix/v11_198M.npz --before 2.0 --out runs/helix/gz_trace_a.json
+# on the host:
+python3 helix_parity.py runs/helix/gz_trace_a.json --policy runs/helix/v11_198M.npz --config runs/v11/config.yaml
+```
+
 ## Follow-up, 2026-09-28 (machine idle, no training running)
 
 Three of the findings below changed once they were measured differently.

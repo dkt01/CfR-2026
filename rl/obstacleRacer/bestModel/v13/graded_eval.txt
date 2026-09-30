@@ -1,0 +1,21 @@
+v13 race policy: runs/v13/step_212301k.zip (212.3M steps), exported with export_policy.py.
+v13 is v12a's 202.3M refined for 12M steps at learning_rate 1e-5 (the first
+refinement whose lr was not cut to its final value by the resume bug), with
+stuck starts from no_progress ends too and a 20 s progress window.
+Chosen 2026-09-30 on grade.py's laps -- one start-box lap per car, 256 cars:
+the 32 held-out layouts x4 and 64 never-seen layouts (seeds 5101-5164) x2 --
+under runs/v13/config.yaml (20 s window).  Every v13 checkpoint is within
+noise of its start: the same weights graded twice read 38.7% and 42.6%, so
+212.3M is the best draw, not a proven gain.  Firmware tach throughout (v9's
+39.8% below was on the old tach; on this one v9 196M grades 31.6% under the
+10 s window).
+
+v12a step_202301k.zip  all fin  38.7%  57.5 m lap  87.3 s | held  43.8%  59.3 m | new  33.6%  55.7 m
+v13 step_202301k.zip   all fin  42.6%  58.7 m lap  86.2 s | held  43.8%  58.4 m | new  41.4%  59.0 m
+step_204301k.zip       all fin  35.9%  54.8 m lap  86.1 s | held  35.9%  53.7 m | new  35.9%  56.0 m
+step_206301k.zip       all fin  38.3%  56.1 m lap  87.0 s | held  41.4%  55.7 m | new  35.2%  56.4 m
+step_208301k.zip       all fin  38.7%  57.2 m lap  84.3 s | held  43.0%  58.5 m | new  34.4%  56.0 m
+step_210301k.zip       all fin  33.2%  54.0 m lap  84.6 s | held  35.9%  54.1 m | new  30.5%  54.0 m
+step_212301k.zip       all fin  41.8%  57.9 m lap  85.8 s | held  50.8%  60.0 m | new  32.8%  55.8 m
+step_214301k.zip       all fin  38.7%  55.5 m lap  83.4 s | held  44.5%  57.6 m | new  32.8%  53.3 m
+step_214327k.zip       all fin  40.6%  55.1 m lap  84.7 s | held  43.8%  56.7 m | new  37.5%  53.5 m
