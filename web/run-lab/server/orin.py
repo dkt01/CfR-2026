@@ -20,6 +20,8 @@ from pathlib import Path
 
 DEFAULT_HOST = os.environ.get("ORIN_HOST", "tejam@192.168.55.1")
 DEFAULT_REMOTE = os.environ.get("ORIN_RUNS", "~/cfr_runs")
+ROS_DISTRO = os.environ.get("ORIN_ROS_DISTRO", "jazzy")
+ROS_WS = os.environ.get("ORIN_WS", "~/ros2_ws")
 SSH_OPTS = [
     "-o",
     "BatchMode=yes",
@@ -27,6 +29,18 @@ SSH_OPTS = [
     "ConnectTimeout=4",
     "-o",
     "StrictHostKeyChecking=accept-new",
+    # Without a keepalive, a connection that dies silently (cable pulled, the
+    # Orin loses power, a dead USB-C link) leaves ssh blocked reading a
+    # socket that will never produce data or a close -- no timeout, no
+    # error, forever. This bounds that to ~15s, which matters most for
+    # calibration.launch()'s long-running ros2 launch streaming; the
+    # WAIT_ESTOP_ASSERTED/CLEARED wait for the operator is unaffected, since
+    # the connection itself stays alive (and ssh keeps sending probes) the
+    # whole time someone is just slow at the bench.
+    "-o",
+    "ServerAliveInterval=5",
+    "-o",
+    "ServerAliveCountMax=3",
 ]
 
 # Runs on the Orin with its stock python3 -- no yaml import, because the
@@ -86,6 +100,19 @@ def usb_link():
     except (OSError, subprocess.TimeoutExpired):
         return None
     return "192.168.55." in out
+
+
+def ros_command(command):
+    """Prefix `command` with the same explicit ROS sourcing every other
+    script in this repo uses over ssh (see syncSoftware.sh, the sim-launch
+    skill).  A non-interactive ssh session does not source .bashrc, so a
+    bare `ros2 ...`/`colcon ...` is not on PATH without this -- `bash -lc`
+    alone is not enough either, since Ubuntu's default .bashrc returns
+    immediately for non-interactive shells regardless of `-l`."""
+    return (
+        f"source /opt/ros/{ROS_DISTRO}/setup.bash && "
+        f"source {ROS_WS}/install/setup.bash && {command}"
+    )
 
 
 def ssh(host, command, stdin=None, timeout=20):

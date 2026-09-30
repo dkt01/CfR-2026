@@ -49,6 +49,14 @@ namespace cfr_arduino_bridge {
       trace_timestamps_ = declare_parameter<bool>("trace_timestamps", false);
       max_speed_ = declare_parameter<double>("max_speed", 2.0);
       max_steering_ = declare_parameter<double>("max_steering", 1.0);
+      // Normalized command that makes the real car go straight, from
+      // vehicle.yaml's steering.center_offset (config/characterize's
+      // straight_line_trim / steer_authority_fast). Applied here, once, to
+      // every DriveCommand producer (RL drivers, the characterization
+      // runner, teleop) rather than in each of them, and only on the active
+      // driving path below -- never on the neutral hold the AUTO_ARMED ->
+      // AUTO_ACTIVE handshake requires.
+      steering_trim_ = declare_parameter<double>("steering_trim", 0.0);
       speed_slew_rate_ = declare_parameter<double>("speed_slew_rate", 2.0);
       invert_steering_ = declare_parameter<bool>("invert_steering", false);
       invert_speed_ = declare_parameter<bool>("invert_speed", false);
@@ -262,6 +270,7 @@ namespace cfr_arduino_bridge {
         if (auto_active || !require_auto_active_) {
           passthrough = true;
           steering = std::clamp(static_cast<double>(last_command_.steering), -1.0, 1.0) * max_steering_;
+          steering = std::clamp(steering + steering_trim_, -max_steering_, max_steering_);
           speed = static_cast<double>(last_command_.velocity);
           speed = std::isfinite(speed) ? std::clamp(speed, -max_speed_, max_speed_) : 0.0;
         }
@@ -578,6 +587,7 @@ namespace cfr_arduino_bridge {
     bool trace_timestamps_ = false;
     double max_speed_ = 2.0;
     double max_steering_ = 1.0;
+    double steering_trim_ = 0.0;
     double speed_slew_rate_ = 2.0;
     bool invert_steering_ = false;
     bool invert_speed_ = false;

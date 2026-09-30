@@ -138,6 +138,18 @@ def main(argv=None):
         ),
     )
     parser.add_argument(
+        "--command-to-angle-slope",
+        type=float,
+        default=None,
+        help=(
+            "rad per unit steering command, for straight_line_trim's "
+            "center_offset conversion. Defaults to the slope in vehicle.yaml's "
+            "last measured effective_angle_table; pass this after a fresher "
+            "steer_authority_fast/figure_eight_calib run to use its slope "
+            "instead"
+        ),
+    )
+    parser.add_argument(
         "--quiet", action="store_true", help="write files without printing"
     )
     args = parser.parse_args(argv)
@@ -150,7 +162,12 @@ def main(argv=None):
 
     try:
         result = analysis.analyze(
-            run, {"mass": args.mass, "speed_source": args.speed_source}
+            run,
+            {
+                "mass": args.mass,
+                "speed_source": args.speed_source,
+                "command_to_angle_slope": args.command_to_angle_slope,
+            },
         )
     except KeyError as error:
         print(f"error: {error}", file=sys.stderr)

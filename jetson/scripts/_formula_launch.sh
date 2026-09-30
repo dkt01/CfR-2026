@@ -51,7 +51,7 @@ formula_launch() {
   set -euo pipefail
   ROS2_WS="${ROS2_WS:-$HOME/ros2_ws}"
   local policy="${DRIVER_DIR}/policy.npz" config="${DRIVER_DIR}/config.yaml"
-  local laps=0 record=auto record_args="" driver=policy fallback=stop
+  local laps=0 record=auto record_args="" driver="${DRIVER_KIND:-policy}" fallback=stop
   local skip_checks=false yes=false dry_run=false extra=()
   SPEED_SCALE="${SPEED_SCALE:-0.3}"
   # syncSoftware.sh writes the run name beside the policy it copied.
@@ -134,7 +134,7 @@ formula_launch() {
     # below is what actually catches a second driver.  --no-daemon because the
     # daemon keeps reporting nodes that have died.
     nodes="$(timeout 15 ros2 node list --no-daemon 2>/dev/null || true)"
-    if grep -q -E 'formula_(one|two)$' <<<"${nodes}"; then
+    if grep -q -E 'formula_(one|two|three)$' <<<"${nodes}"; then
       echo "  FAIL  a formula driver is already running -- one driver at a time"
       fail=true
     fi
@@ -155,11 +155,11 @@ formula_launch() {
       echo "  FAIL  no /zed/zed_node/pose -- is the ZED up with its race config?"
       fail=true
     fi
-    if [[ "${NEEDS_DEPTH}" == true && "${driver}" == policy ]]; then
+    if [[ "${NEEDS_DEPTH}" == true && ( "${driver}" == policy || "${driver}" == mpc ) ]]; then
       if timeout 8 ros2 topic echo /zed/zed_node/depth/depth_registered --once --field header >/dev/null 2>&1; then
         echo "  ok    /zed/zed_node/depth/depth_registered is live"
       else
-        echo "  FAIL  no depth image -- the formulaTwo policy will not move without it"
+        echo "  FAIL  no depth image -- ${DRIVER_NAME} will not move without it"
         fail=true
       fi
       # Not fatal: without the IMU the scan is levelled on the pose, which the

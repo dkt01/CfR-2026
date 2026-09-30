@@ -24,8 +24,10 @@ from fastapi.staticfiles import StaticFiles
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import analyze  # noqa: E402
+import calibration  # noqa: E402
 import course as course_mod  # noqa: E402
 import orin  # noqa: E402
+import zed_tune  # noqa: E402
 from jobs import JobRunner  # noqa: E402
 
 REPO = HERE.parents[2]
@@ -157,6 +159,95 @@ def orin_delete(body: dict = Body(...)):
         return orin.delete(body.get("run", ""), RUNS, s["host"], s["remote"])
     except (RuntimeError, ValueError) as error:
         raise HTTPException(409, str(error)) from error
+
+
+# ------------------------------------------------------------- calibration
+
+
+@app.get("/api/calibration/profiles")
+def calibration_profiles():
+    return calibration.PROFILES
+
+
+@app.post("/api/calibration/launch")
+def calibration_launch(body: dict = Body(...)):
+    """Launch a plant-checkout profile on the car, pull it, and analyze it --
+    one job, so the browser can watch one streamed log start to finish.  The
+    hardware E-Stop interlock is unchanged; see calibration.py's own note."""
+    profile = body.get("profile", "")
+    if profile not in calibration.PROFILES:
+        raise HTTPException(400, f"unknown profile {profile!r}")
+    s = settings()
+
+    def work(job):
+        launched = calibration.launch(profile, job, s["host"])
+        return calibration.pull_and_analyze(
+            launched["run"], job, s["host"], s["remote"], RUNS
+        )
+
+    return jobs.submit("calibrate", profile, work).as_dict()
+
+
+@app.post("/api/calibration/{name}/apply")
+def calibration_apply(name: str, body: dict = Body(...)):
+    """apply_vehicle_patch.py -> the real-hardware trim or the RL configs'
+    plant propagation -> check_steering_consistency.py, in that order."""
+    run_dir(name)
+    profile = body.get("profile", "")
+    if profile not in calibration.PROFILES:
+        raise HTTPException(400, f"unknown profile {profile!r}")
+    return calibration.apply(name, profile, RUNS)
+
+
+# --------------------------------------------------------------------- zed
+
+
+@app.get("/api/zed/stream_urls")
+def zed_stream_urls():
+    return zed_tune.stream_urls(settings()["host"])
+
+
+@app.get("/api/zed/status")
+def zed_status():
+    return zed_tune.status(settings()["host"])
+
+
+@app.post("/api/zed/connect")
+def zed_connect():
+    """Start zed_live_tuning.launch.py on the car (rosbridge + web_video_server)
+    if it is not already running. Camera-only -- arms nothing."""
+    return zed_tune.connect(settings()["host"])
+
+
+@app.post("/api/zed/disconnect")
+def zed_disconnect():
+    """Stop rosbridge/web_video_server on the car -- the ZED has no extra
+    subscribers and the Orin has no extra load before an RL run or a
+    calibration profile needs it."""
+    return zed_tune.disconnect(settings()["host"])
+
+
+@app.get("/api/zed/param")
+def zed_get_param(name: str):
+    return zed_tune.get_param(settings()["host"], name)
+
+
+@app.post("/api/zed/param")
+def zed_set_param(body: dict = Body(...)):
+    name, value = body.get("name"), body.get("value")
+    if not name or value is None:
+        raise HTTPException(400, "name and value required")
+    return zed_tune.set_param(settings()["host"], name, value)
+
+
+@app.post("/api/zed/save")
+def zed_save(body: dict = Body(...)):
+    return zed_tune.save(
+        bool(body.get("auto_exposure_gain", True)),
+        body.get("exposure"),
+        body.get("gain"),
+        body.get("roi_polygon"),
+    )
 
 
 # --------------------------------------------------------------------- runs

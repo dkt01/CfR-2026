@@ -32,7 +32,7 @@ def generate_launch_description():
 
     image_arg = DeclareLaunchArgument(
         "image_topic",
-        default_value="/zed/zed_node/left/image_rect_color",
+        default_value="/zed/zed_node/rgb/color/rect/image",
         description="Color image to look for the signal in",
     )
     params_arg = DeclareLaunchArgument(

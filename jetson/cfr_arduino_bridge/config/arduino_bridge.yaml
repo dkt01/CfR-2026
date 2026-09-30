@@ -35,6 +35,13 @@ arduino_bridge:
     # Arduino separately caps the throttle pulse at speed_output_limit.
     max_speed: 8.0          # m/s
     max_steering: 1.0
+    # Normalized command that makes the real car go straight, i.e.
+    # vehicle.yaml's steering.center_offset (guess until straight_line_trim
+    # or steer_authority_fast measures it). Added to every DriveCommand's
+    # steering here, once, so RL drivers, the characterization runner and
+    # teleop all get the correction without each needing its own copy -- and
+    # never during the AUTO_ARMED handshake, which holds a hard neutral.
+    steering_trim: 0.0
     speed_slew_rate: 2.0    # m/s per second, both directions
 
     # Flip if the servo or drive is wired opposite to the assumed convention.

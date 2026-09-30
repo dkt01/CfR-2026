@@ -1,0 +1,115 @@
+# Combined plant checkout - turn-in lag, the steering map, and understeer,
+# in one session instead of three (step_steer_fine + steer_authority_fast +
+# skidpad_chicane).  For periodic re-verification once those three have
+# established good numbers, NOT a replacement for them and not where a first
+# measurement should come from.
+#
+# EVERY SEGMENT BELOW IS COPIED VERBATIM - same steering, velocity and hold -
+# from whichever of those three profiles has already sized it to close a full
+# circle (arcs) or a closed polygon (the step-steer half).  This file only
+# drops WHOLE segments, never edits one, and only drops ones safe to drop:
+#
+#   - the arcs (steer_authority_fast, skidpad_chicane) each independently
+#     close a full circle, so removing one shortens the session without
+#     touching any other segment's geometry. Dropped here: the 2.0 m/s
+#     steer_authority_fast pass (a secondary check, not needed alongside
+#     skidpad_chicane's own multi-speed ladders), the 0.45/0.75/0.85
+#     magnitudes (kept: low, mid, full lock - the endpoints matter most), and
+#     the top rung of each skidpad ladder, which skidpad_chicane's own
+#     comments already flag as a deliberate grip probe near the fit's edge
+#     rather than a point the gradient needs. Three speeds per ladder is the
+#     floor analyze_skidpad's fit_understeer needs (see its "need 3 for a
+#     gradient" check) - this drops no further than that.
+#
+#   - the step-steer half is NOT independently closed per step: closure is a
+#     property of all four steps in a half summing to roughly 360 degrees of
+#     yaw (see step_steer_fine's own note on why it turns the same way within
+#     a half), so it is copied WHOLE, both passes, unmodified. This profile
+#     buys nothing on that portion's time - only on the arcs.
+#
+# THE BUBBLE SIZING BELOW IS NOT INHERITED - it is this file's own estimate of
+# the worst case across all three borrowed sources, plus margin for a session
+# several times longer than any one of them. Rehearse in Gazebo
+# (use_sim:=true) AND walk the physical bubble before ever driving this on
+# the car - the same rule this file applies to every OTHER new profile.
+name: figure_eight_calib
+description: Combined turn-in-lag, steering-map and understeer checkout, one session.
+
+gains:
+  speed_trace: true
+
+limits:
+  max_distance: 28.0
+  max_duration: 480.0
+  max_speed: 3.0
+
+steps:
+  - {hold: 3.0, steering: 0.0, velocity: 0.0, label: settle}
+  - {hold: 5.0, steering: 0.0, velocity: 1.5, label: straight_reference}
+
+  # --- steering map, from steer_authority_fast: low / mid / full lock only,
+  # both sides, at its 1.5 m/s pass. Labeled authL_/authR_, NOT left_/right_,
+  # so analyze_skidpad's prefix match leaves these alone - they are a
+  # single-speed-per-command sweep, not an understeer ladder, and grouping
+  # them together would corrupt both fits.
+  - {hold: 14.0, steering: 0.25, velocity: 1.5, label: authL_025}
+  - {hold: 14.0, steering: -0.25, velocity: 1.5, label: authR_025}
+  - {hold: 10.0, steering: 0.60, velocity: 1.5, label: authL_060}
+  - {hold: 10.0, steering: -0.60, velocity: 1.5, label: authR_060}
+  - {hold: 10.0, steering: 1.00, velocity: 1.5, label: authL_full}
+  - {hold: 10.0, steering: -1.00, velocity: 1.5, label: authR_full}
+  - {hold: 4.0, steering: 0.0, velocity: 0.0, label: settle}
+
+  # --- understeer, from skidpad_chicane: three speeds per ladder (drops each
+  # ladder's top, grip-probe rung), both commands, both sides. left_/right_
+  # labels and the {side}_{cmd}_{velocity} convention are unchanged so
+  # analyze_skidpad picks these up exactly as it does from skidpad_chicane.
+  - {hold: 8.0, steering: 0.35, velocity: 1.2, label: left_035_1p2}
+  - {hold: 8.0, steering: 0.35, velocity: 1.8, label: left_035_1p8}
+  - {hold: 8.0, steering: 0.35, velocity: 2.2, label: left_035_2p2}
+  - {hold: 4.0, steering: 0.0, velocity: 0.0, label: settle}
+
+  - {hold: 8.0, steering: 0.55, velocity: 1.2, label: left_055_1p2}
+  - {hold: 8.0, steering: 0.55, velocity: 1.6, label: left_055_1p6}
+  - {hold: 8.0, steering: 0.55, velocity: 2.0, label: left_055_2p0}
+  - {hold: 4.0, steering: 0.0, velocity: 0.0, label: settle}
+
+  - {hold: 8.0, steering: -0.35, velocity: 1.2, label: right_035_1p2}
+  - {hold: 8.0, steering: -0.35, velocity: 1.8, label: right_035_1p8}
+  - {hold: 8.0, steering: -0.35, velocity: 2.2, label: right_035_2p2}
+  - {hold: 4.0, steering: 0.0, velocity: 0.0, label: settle}
+
+  - {hold: 8.0, steering: -0.55, velocity: 1.2, label: right_055_1p2}
+  - {hold: 8.0, steering: -0.55, velocity: 1.6, label: right_055_1p6}
+  - {hold: 8.0, steering: -0.55, velocity: 2.0, label: right_055_2p0}
+  - {hold: 4.0, steering: 0.0, velocity: 0.0, label: settle}
+
+  # --- turn-in lag, from step_steer_fine: copied whole, both passes, both
+  # halves, unmodified - see the header note on why this part cannot shrink.
+  - {hold: 3.5, steering: 0.0, velocity: 2.5, label: straight_2p5}
+  - {hold: 2.4, steering: 0.25, velocity: 2.5, label: step_L025_a}
+  - {hold: 2.0, steering: 0.0, velocity: 2.5, label: recover}
+  - {hold: 2.4, steering: 0.35, velocity: 2.5, label: step_L035_a}
+  - {hold: 2.0, steering: 0.0, velocity: 2.5, label: recover}
+  - {hold: 2.4, steering: 0.25, velocity: 2.5, label: step_L025_b}
+  - {hold: 2.0, steering: 0.0, velocity: 2.5, label: recover}
+  - {hold: 2.4, steering: 0.35, velocity: 2.5, label: step_L035_b}
+  - {hold: 2.0, steering: 0.0, velocity: 2.5, label: recover}
+  - {hold: 2.4, steering: -0.25, velocity: 2.5, label: step_R025_a}
+  - {hold: 2.0, steering: 0.0, velocity: 2.5, label: recover}
+  - {hold: 2.4, steering: -0.35, velocity: 2.5, label: step_R035_a}
+  - {hold: 2.0, steering: 0.0, velocity: 2.5, label: recover}
+  - {hold: 2.4, steering: -0.25, velocity: 2.5, label: step_R025_b}
+  - {hold: 2.0, steering: 0.0, velocity: 2.5, label: recover}
+  - {hold: 2.4, steering: -0.35, velocity: 2.5, label: step_R035_b}
+  - {hold: 2.0, steering: 0.0, velocity: 2.5, label: recover}
+  - {hold: 5.0, steering: 0.0, velocity: 0.0, label: settle}
+
+# A session this long, built from segments that each only individually
+# guarantee returning near the origin, gets one explicit reverse-to-start as
+# a session-wide backstop rather than trusting the sum of small residuals.
+return:
+  mode: reverse_to_start
+  speed: 1.5
+  tolerance: 3.0
+  timeout: 90.0
