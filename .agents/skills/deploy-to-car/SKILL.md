@@ -13,6 +13,7 @@ on purpose (launching real hardware).
 ```bash
 .agents/skills/deploy-to-car/scripts/deploy.sh sync                # sync + colcon build on the Orin
 .agents/skills/deploy-to-car/scripts/deploy.sh sync --test          # also colcon test there
+.agents/skills/deploy-to-car/scripts/deploy.sh sync --fsz           # include FormulaSubZero planner and MPC
 .agents/skills/deploy-to-car/scripts/deploy.sh sync --dry-run       # show what would transfer, change nothing
 .agents/skills/deploy-to-car/scripts/deploy.sh sync --host tejam@192.168.0.167  # e.g. over Wi-Fi instead of USB-Ethernet
 ```

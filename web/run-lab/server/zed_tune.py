@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 import shlex
+import socket
 import sys
 from pathlib import Path
 
@@ -26,6 +27,78 @@ REPO = HERE.parents[2]
 ZED_CONFIG = REPO / "jetson" / "cfr_arduino_bridge" / "config" / "cfr_zed2i.yaml"
 
 NODE = "/zed/zed_node"
+PID_FILE = "/tmp/zed_live_tuning.pid"
+LOG_FILE = "/tmp/zed_live_tuning.log"
+
+
+def _tcp_open(hostname, port, timeout=1.5):
+    try:
+        with socket.create_connection((hostname, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def status(host):
+    """Reachability of both ports from THIS laptop -- the signal that
+    actually matters (a remote process can be running behind a firewall or
+    on the wrong interface and still be useless from here)."""
+    hostname = host.split("@")[-1]
+    return {"rosbridge": _tcp_open(hostname, 9090), "video": _tcp_open(hostname, 8080)}
+
+
+def connect(host):
+    """Start zed_live_tuning.launch.py on the car if it is not already
+    running, detached (nohup + redirected fds) so it survives this ssh
+    connection closing. Camera-only -- arms nothing, so unlike launch.sh this
+    needs no E-Stop presence to start.
+    """
+    script = (
+        f"if [ -f {PID_FILE} ] && kill -0 $(cat {PID_FILE}) 2>/dev/null; then "
+        "echo already-running; "
+        "else "
+        "nohup ros2 launch cfr_arduino_bridge zed_live_tuning.launch.py "
+        f"> {LOG_FILE} 2>&1 < /dev/null & "
+        f"echo $! > {PID_FILE}; "
+        "echo started; "
+        "fi"
+    )
+    result = orin.ssh(host, orin.ros_command(script), timeout=15)
+    output = (result.stdout + result.stderr).strip()
+    return {
+        "ok": result.returncode == 0
+        and ("started" in output or "already-running" in output),
+        "already_running": "already-running" in output,
+        "output": output,
+    }
+
+
+def disconnect(host):
+    """Stop zed_live_tuning.launch.py (and any orphaned rosbridge/
+    web_video_server from an earlier session, started by hand or otherwise)
+    so the ZED has no extra subscribers and the Orin has no extra load before
+    an RL run or a calibration profile needs it.
+
+    SIGINT first -- the same signal Ctrl-C sends, which ros2 launch forwards
+    to its children for a clean shutdown -- then a name-matched pkill after a
+    few seconds for anything still standing. No ros_command sourcing needed;
+    kill/pkill are plain shell.
+    """
+    script = (
+        f"if [ -f {PID_FILE} ]; then PID=$(cat {PID_FILE}); "
+        "kill -INT $PID 2>/dev/null; fi; "
+        "for i in 1 2 3 4 5; do "
+        "pgrep -f 'zed_live_tuning.launch.py|rosbridge_websocket|web_video_server' "
+        "> /dev/null || break; sleep 1; done; "
+        "pkill -f zed_live_tuning.launch.py 2>/dev/null; "
+        "pkill -f rosbridge_websocket 2>/dev/null; "
+        "pkill -f web_video_server 2>/dev/null; "
+        f"rm -f {PID_FILE}; "
+        "echo stopped"
+    )
+    result = orin.ssh(host, script, timeout=15)
+    output = (result.stdout + result.stderr).strip()
+    return {"ok": result.returncode == 0, "output": output}
 
 
 def set_param(host, name, value):
@@ -34,14 +107,16 @@ def set_param(host, name, value):
     Not persisted anywhere by itself -- a relaunch of the ZED node reverts to
     whatever cfr_zed2i.yaml says, which is what `save()` below writes.
     """
-    command = f"ros2 param set {NODE} {shlex.quote(name)} {shlex.quote(str(value))}"
+    command = orin.ros_command(
+        f"ros2 param set {NODE} {shlex.quote(name)} {shlex.quote(str(value))}"
+    )
     result = orin.ssh(host, command, timeout=10)
     ok = result.returncode == 0 and "Set parameter successful" in result.stdout
     return {"ok": ok, "output": (result.stdout + result.stderr).strip()}
 
 
 def get_param(host, name):
-    command = f"ros2 param get {NODE} {shlex.quote(name)}"
+    command = orin.ros_command(f"ros2 param get {NODE} {shlex.quote(name)}")
     result = orin.ssh(host, command, timeout=10)
     return {
         "ok": result.returncode == 0,
@@ -56,7 +131,7 @@ def stream_urls(host):
     hostname = host.split("@")[-1]
     return {
         "rosbridge": f"ws://{hostname}:9090",
-        "video": f"http://{hostname}:8080/stream?topic={NODE}/rgb/image_rect_color",
+        "video": f"http://{hostname}:8080/stream?topic={NODE}/rgb/color/rect/image",
         "roi_mask": f"http://{hostname}:8080/stream?topic={NODE}/roi_mask/image",
     }
 

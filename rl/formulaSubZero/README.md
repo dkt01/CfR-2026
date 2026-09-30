@@ -6,9 +6,15 @@ The planner reads the committed course map and tests candidate lateral offsets a
 
 A CasADi MPC uses the measured yaw lag and command delay to trim the existing FormulaTwo centerline steering prior. Its trim is bounded by `max_steer_trim` on the mapped line and increases when a live obstacle shifts the local path; if the solve fails, it returns to the prior and reduces commanded speed. The FormulaTwo ROS boundary supplies ZED pose, wheel-encoder speed, the start signal, speed caps, three-lap counting, coast-to-stop steering, `/drive_cmd`, and `/formula_one/telemetry` for Run Lab.
 
-Each registered ZED depth frame supplies ground-plane bale points to an 8 m local planner. When those points agree with the map, it follows the measured racing line; when they differ, it searches lateral offsets against both the mapped body envelope and the observed obstacles. If depth is missing, the corridor closes, or the pose jumps, it commands a coast to rest. Speed is limited by the depth-verified stopping distance as well as the mapped hairpin profile.
+Each registered ZED depth frame supplies ground-plane bale points to an 8 m local planner. When those points agree with the map, it follows the measured racing line; when they differ, it searches lateral offsets against both the mapped body envelope and the observed obstacles. If depth is missing, the corridor closes, or the pose jumps, it commands a coast to rest. Speed is limited by the depth-verified stopping distance as well as the mapped hairpin profile. The stop bound uses the smaller of the configured coast deceleration and the plant’s zero-speed coast deceleration. Map trust returns after three clean depth frames, and the local path penalizes changes from the previous frame. Depth projection uses `camera.band`, `camera.min_range`, and `camera.max_range`, with a 10 m forward cap around the 8 m local planning horizon.
 
 At the start, the controller matches the visible bales and the measured depth to the start signal against the course map. This lets it estimate an offset start position and heading before moving, rather than assuming the exact simulator spawn pose. The start-signal map coordinate and the physical ZED left-lens offset in `config.yaml` must be checked on the real course. The visible signal pixel falls about 14 cm from the configured mount-center Y coordinate in Gazebo, so the signal corrects only along-track position; visible bales establish lateral position and heading. ZED pose drift after launch remains a calibration risk; a single start alignment does not correct it throughout the run.
+
+## Stall recovery
+
+If a forward command produces less than 15 cm of ZED pose movement over two seconds, FormulaSubZero checks a 35 cm reverse arc plus 35 cm of coast margin against the mapped full-body bale clearance. It chooses steering that reduces error to the track center, backs at a commanded 0.45 m/s, waits for the car to stop, then follows the depth planner and MPC at no more than 0.8 m/s for 60 cm before restoring the mapped speed. The launch `speed_scale` also applies to reverse. A blocked corridor near the nose can trigger the same recovery. Recovery gives up after two attempts, a reverse timeout, or no map-cleared reverse path; it holds neutral and logs the reason.
+
+The ZED looks forward and cannot verify the space behind the car. This bounded reverse depends on the mapped bale positions and current ZED pose; a moved bale behind the car is an unobserved hazard. Validate it in simulation and with a supervised low-speed car trial before using it for racing.
 
 ## Gazebo result
 
@@ -20,14 +26,15 @@ From this directory, with the ROS workspace built:
 
 ```bash
 ./setup.sh
+./selftest.py
 ./validate.sh --check 420
 ```
 
-`validate.sh` runs the speed-course Gazebo stack, waits for the pose and depth streams, releases the visual start signal, and monitors ground-truth chassis and tire clearance. PASS requires three laps, a confirmed stop, **zero contact and zero samples inside the 10 cm graze band**, and an uncontaminated pose stream. It writes `/tmp/formula_sub_zero_<ROS_DOMAIN_ID>/driver.log`, `monitor.json`, and trace and command CSVs beside the monitor. `--loopback` is available for ROS plumbing. Add `--start-along 0.5 --start-lateral 0.12 --start-heading-deg 8` to exercise a displaced start and the depth-based signal anchor. `--world-scale 1` moves the loopback bales with a deterministic layout field while leaving the driver's map fixed. Use Gazebo for the clearance verdict. For an interactive run, use `./validate.sh --gui` or omit `--check` and open the browser viewer printed by the harness.
+`selftest.py` checks the racing-line guards, stop bound, depth projection, map debounce, and solver fallback without ROS or Gazebo. `validate.sh` requires FormulaSubZero’s own CasADi/IPOPT environment from `setup.sh` and runs the speed-course Gazebo stack, waits for the pose and depth streams, releases the visual start signal, and monitors ground-truth chassis and tire clearance. PASS requires three laps, a confirmed stop, **zero contact and zero samples inside the 10 cm graze band**, and an uncontaminated pose stream. It writes `/tmp/formula_sub_zero_<ROS_DOMAIN_ID>/driver.log`, `monitor.json`, and trace and command CSVs beside the monitor. `--loopback` is available for ROS plumbing. Add `--start-along 0.5 --start-lateral 0.12 --start-heading-deg 8` to exercise a displaced start and the depth-based signal anchor. `--world-scale 1` moves the loopback bales with a deterministic layout field while leaving the driver's map fixed. Use Gazebo for the clearance verdict. For an interactive run, use `./validate.sh --gui` or omit `--check` and open the browser viewer printed by the harness.
 
 If startup stops at `waiting for the pose stream`, the harness now exits within 60 wall-clock seconds or as soon as Gazebo or the simulated vehicle exits. It prints the failure and the simulator log path (`/tmp/formula_sub_zero_<ROS_DOMAIN_ID>/sim.log`). An intermittent Gazebo startup crash can be retried after the harness finishes cleanup.
 
-Tune `formula_sub_zero.speed_fraction` only after a clean three-lap verdict. Increase it in small steps and compare total time, minimum clearance, grazing samples, and contact samples. The path biases are map specific; rerun the verdict when the course map changes.
+Tune `formula_sub_zero.speed_fraction` only after a clean three-lap verdict. Increase it in small steps and compare total time, minimum clearance, grazing samples, and contact samples. The path biases are map specific. Startup rejects bias centers outside the course length or a final racing line below `min_racing_line_clearance_m`; rerun the Gazebo verdict when the course map changes.
 
 ## Deploy to the Orin
 
@@ -44,6 +51,8 @@ This syncs `jetson/`, FormulaTwo's shared runtime, and FormulaSubZero, then buil
 ~/software/scripts/launchFormulaSubZero.sh -n
 ```
 
-The dry run prints the driver command. For a real run, start the bridge and ZED with `~/software/scripts/launch.sh --no-cmd-vel` in one terminal, then run `~/software/scripts/launchFormulaSubZero.sh` in a second. The wrapper checks for a live bridge and pose, and refuses a second `/drive_cmd` publisher. It starts at `speed_scale=0.3` as a physical-launch fail-safe, records telemetry, and waits for the start signal. The scale multiplies the controller's speed command; it is separate from the mapped speed profile. Launching arms the actuators: be at the car with the E-Stop remote in hand and confirm immediately before the foreground launch.
+The dry run prints the driver command. For a real run, start the bridge and ZED with `~/software/scripts/launch.sh --no-cmd-vel` in one terminal, then run `~/software/scripts/launchFormulaSubZero.sh` in a second. FormulaSubZero starts the visual signal detector on the real ZED color image; Gazebo supplies its own detector. The wrapper checks for a live bridge and pose, and refuses a second `/drive_cmd` publisher. It starts at `speed_scale=0.3` as a physical-launch fail-safe, records telemetry, and waits for the start signal. The scale multiplies the controller's speed command; it is separate from the mapped speed profile. Launching arms the actuators: be at the car with the E-Stop remote in hand and confirm immediately before the foreground launch.
 
-The controller needs CasADi and IPOPT at runtime. CasADi publishes Linux ARM64 wheels; `setup.sh` verifies both CasADi and `rclpy` in the created environment.
+A manual start sets GO but does not bypass the bale and signal-depth alignment. If the driver reports `no armed RED detection`, check `/start_signal_detector/state` and the ZED color image before releasing the car.
+
+The controller needs CasADi and IPOPT at runtime. `setup.sh` installs CasADi 3.8.1 or newer and verifies the solver and ROS Python imports. For an offline install, copy a compatible Linux ARM64 wheel to the Orin and pass its path to `setup.sh`; it installs the wheel with package indexes disabled. CasADi 3.8.0 imported on the Orin but crashed while solving with IPOPT, so use 3.8.1 or newer.

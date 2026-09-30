@@ -337,12 +337,16 @@ formula_sub_zero:
   physical_camera_offset_x_m: 0.315
   physical_camera_offset_y_m: 0.06
   depth_stride_px: 4
+  # Camera max_range is 20 m; only project points near the 8 m local planner.
+  depth_projection_horizon_m: 10.0
   start_match_max_error_m: 0.18
   start_signal_x_m: 17.0116
   start_signal_y_m: 3.8895
   min_depth_points: 35
   unexpected_surface_error_m: 0.08
   unexpected_point_fraction: 0.05
+  map_clean_frames: 3
+  local_temporal_weight: 10.0
   local_path_step_m: 0.5
   local_path_horizon_m: 8.0
   local_max_offset_m: 0.16
@@ -357,6 +361,7 @@ formula_sub_zero:
   path_max_offset_m: 0.12
   path_offset_step_m: 0.04
   path_target_clearance_m: 0.18
+  min_racing_line_clearance_m: 0.10
   start_hairpin_bias_m: 0.11
   start_hairpin_entry_width_m: 4.0
   start_hairpin_exit_width_m: 8.0
@@ -379,3 +384,20 @@ formula_sub_zero:
   w_steer_change: 0.7
   w_prior: 10.0
   w_risk: 300.0
+  recovery:
+    stall_s: 2.0
+    min_forward_cmd_mps: 0.6
+    min_progress_m: 0.15
+    reverse_distance_m: 0.35
+    reverse_coast_margin_m: 0.35
+    reverse_speed_mps: 0.45
+    reverse_no_progress_s: 2.5
+    reverse_timeout_s: 5.0
+    settle_s: 0.5
+    settle_timeout_s: 2.5
+    escape_speed_mps: 0.8
+    escape_distance_m: 0.6
+    escape_retry_s: 2.5
+    cooldown_s: 1.0
+    max_attempts: 2
+    min_map_clearance_m: 0.10

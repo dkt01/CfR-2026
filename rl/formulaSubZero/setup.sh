@@ -1,8 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
+if [[ $# -gt 1 ]]; then
+  echo "usage: setup.sh [casadi-arm64.whl]" >&2
+  exit 2
+fi
 python3 -m venv --system-site-packages .venv
-.venv/bin/python -m pip install 'casadi>=3.8,<4'
+if [[ $# -eq 1 ]]; then
+  .venv/bin/python -m pip install --no-index --no-deps "$1"
+else
+  .venv/bin/python -m pip install 'casadi>=3.8.1,<4'
+fi
+# rclpy is supplied by ROS, whose site-packages are added by setup.bash.
+set +u
+source "/opt/ros/${ROS_DISTRO:-jazzy}/setup.bash"
+set -u
 .venv/bin/python - <<'PYTHON'
 import casadi as ca
 import rclpy

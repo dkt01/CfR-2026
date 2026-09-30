@@ -207,6 +207,26 @@ def zed_stream_urls():
     return zed_tune.stream_urls(settings()["host"])
 
 
+@app.get("/api/zed/status")
+def zed_status():
+    return zed_tune.status(settings()["host"])
+
+
+@app.post("/api/zed/connect")
+def zed_connect():
+    """Start zed_live_tuning.launch.py on the car (rosbridge + web_video_server)
+    if it is not already running. Camera-only -- arms nothing."""
+    return zed_tune.connect(settings()["host"])
+
+
+@app.post("/api/zed/disconnect")
+def zed_disconnect():
+    """Stop rosbridge/web_video_server on the car -- the ZED has no extra
+    subscribers and the Orin has no extra load before an RL run or a
+    calibration profile needs it."""
+    return zed_tune.disconnect(settings()["host"])
+
+
 @app.get("/api/zed/param")
 def zed_get_param(name: str):
     return zed_tune.get_param(settings()["host"], name)

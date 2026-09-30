@@ -2,13 +2,24 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import numpy as np
+
+# The shared speed profile lives beside this package on host and car.
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+from formulaTwo.baseline import feasible_profile
 
 
 class SpeedCoursePlan:
     def __init__(self, track, cfg):
         self.track = track
         pc = cfg["formula_sub_zero"]
+        for name in ("mid_hairpin_center_m", "approach_corner_center_m"):
+            center = float(pc[name])
+            if not np.isfinite(center) or not 0.0 <= center < track.length:
+                raise ValueError(f"{name}={center} outside speed course [0, {track.length:.2f}) m")
         step = float(pc["path_step_m"])
         stations = np.arange(0.0, track.length, step)
         offsets = np.arange(
@@ -117,13 +128,20 @@ class SpeedCoursePlan:
         self.kappa = np.convolve(
             padded, np.ones(window_size) / window_size, mode="same"
         )[window_size : window_size + len(self.kappa)]
-        from baseline import feasible_profile
-
         self.speed = feasible_profile(track, cfg) * float(pc["speed_fraction"])
-        self.min_map_clearance = float(np.min(track.body_clearance(
+        body_clearance = track.body_clearance(
             self.x, self.y, self.yaw,
             float(c["chassis_half_length"]), float(c["wheel_outer_y"]),
-        )))
+        )
+        worst = int(np.argmin(body_clearance))
+        self.min_map_clearance = float(body_clearance[worst])
+        limit = float(pc["min_racing_line_clearance_m"])
+        if not np.isfinite(self.min_map_clearance) or self.min_map_clearance < limit:
+            raise ValueError(
+                f"racing line body clearance {self.min_map_clearance:.3f} m at "
+                f"station {track.s[worst]:.2f} m is below {limit:.3f} m; "
+                "check course map and corner biases"
+            )
 
     def at(self, station, field):
         return self.track.at(np.asarray(station), field)

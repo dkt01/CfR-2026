@@ -7,9 +7,12 @@ import math
 import numpy as np
 
 
-def depth_points(image, intrinsics, height, pitch, roll, camera_x, camera_y=0.0, stride=4):
+def depth_points(image, intrinsics, height, pitch, roll, camera_x, camera_y=0.0,
+                 stride=4, *, band, min_range, max_range, local_horizon):
     """Project in-band depth pixels into the car's ground-plane frame."""
     fx, fy, cx, cy = intrinsics[:4]
+    if len(band) != 2 or band[0] >= band[1] or min_range <= 0 or max_range < min_range:
+        raise ValueError("invalid depth projection range or height band")
     v = np.arange(stride // 2, image.shape[0], stride)
     u = np.arange(stride // 2, image.shape[1], stride)
     depth = image[np.ix_(v, u)]
@@ -25,8 +28,9 @@ def depth_points(image, intrinsics, height, pitch, roll, camera_x, camera_y=0.0,
         x = camera_x + depth * forward
         y = camera_y + depth * lateral
         z = height + depth * up
-        valid = (np.isfinite(depth) & (depth >= 0.3) & (depth <= 10.0)
-                 & (z >= 0.07) & (z <= 0.33) & (x > 0.1) & (x <= 10.0))
+        valid = (np.isfinite(depth) & (depth >= min_range) & (depth <= max_range)
+                 & (z >= band[0]) & (z <= band[1])
+                 & (x > 0.1) & (x <= local_horizon))
     x = np.broadcast_to(x, depth.shape)[valid]
     y = np.broadcast_to(y, depth.shape)[valid]
     if not x.size:
@@ -96,6 +100,8 @@ class DepthPlanner:
         self.blocked_distance = 0.0
         self.last_clearance = math.inf
         self.map_consistent = False
+        self._consistency_seen = False
+        self._clean_frames = 0
         self.status = "waiting for depth"
         collision = cfg["collision"]
         self.half_length = float(collision["chassis_half_length"])
@@ -235,6 +241,20 @@ class DepthPlanner:
         outside = np.hypot(np.maximum(qx, 0), np.maximum(qy, 0))
         return (outside + np.minimum(np.maximum(qx, qy), 0)).min(axis=1)
 
+    def _update_map_consistency(self, unexpected_count, point_count):
+        high = max(6, int(point_count * float(self.pc["unexpected_point_fraction"])))
+        low = max(2, high // 2)
+        if not self._consistency_seen:
+            self.map_consistent = unexpected_count < high
+            self._consistency_seen = True
+        elif unexpected_count >= high:
+            self.map_consistent = False
+            self._clean_frames = 0
+        elif not self.map_consistent:
+            self._clean_frames = self._clean_frames + 1 if unexpected_count <= low else 0
+            if self._clean_frames >= int(self.pc["map_clean_frames"]):
+                self.map_consistent = True
+
     def replan(self, station, track_pose, raw_pose):
         points = self.current_points(raw_pose)
         if len(points) < int(self.pc["min_depth_points"]):
@@ -246,16 +266,22 @@ class DepthPlanner:
         # Replanning nominal frames can erase its hairpin corrections.
         unexpected = np.abs(self.track.clearance(px, py)) > float(
             self.pc["unexpected_surface_error_m"])
-        self.map_consistent = int(unexpected.sum()) < max(
-            6, int(len(points) * float(self.pc["unexpected_point_fraction"])))
+        count = int(unexpected.sum())
+        # New geometry takes effect immediately; returning to the map needs
+        # repeated clean frames.
+        self._update_map_consistency(count, len(points))
         step = float(self.pc["local_path_step_m"])
         horizon = float(self.pc["local_path_horizon_m"])
         distances = np.arange(0.0, horizon + 0.001, step)
         stations = station + distances
-        offsets = (np.array([0.0]) if self.map_consistent else np.arange(
+        offsets = np.arange(
             -float(self.pc["local_max_offset_m"]),
             float(self.pc["local_max_offset_m"]) + 0.001,
-            float(self.pc["local_offset_step_m"])))
+            float(self.pc["local_offset_step_m"]),
+        )
+        prior_offset = (np.zeros_like(stations) if self.offset_stations is None else
+                        np.interp(stations, self.offset_stations, self.offsets,
+                                  left=self.offsets[0], right=self.offsets[-1]))
         base_x = self.plan.at(stations, self.plan.x)
         base_y = self.plan.at(stations, self.plan.y)
         yaw = self.plan.yaw_at(stations)
@@ -270,6 +296,9 @@ class DepthPlanner:
         hard = float(self.pc["min_live_clearance_m"])
         feasible = (live_clear >= hard) & (map_clear >= float(self.pc["min_map_clearance_m"]))
         score = (2.0 * offsets[None, :] ** 2
+                 + (30.0 if self.map_consistent else 0.0) * offsets[None, :] ** 2
+                 + float(self.pc["local_temporal_weight"]) * (
+                     offsets[None, :] - prior_offset[:, None]) ** 2
                  + 130.0 * np.maximum(float(self.pc["target_clearance_m"]) - live_clear, 0) ** 2
                  + 60.0 * np.maximum(float(self.pc["target_clearance_m"]) - map_clear, 0) ** 2)
         score = np.broadcast_to(score, shape).copy()
@@ -283,6 +312,8 @@ class DepthPlanner:
         parent = np.zeros(score.shape, dtype=np.int16)
         current = score[0].copy()
         current += 5.0 * offsets**2
+        if self.offset_stations is not None:
+            current += float(self.pc["local_temporal_weight"]) * (offsets - prior_offset[0]) ** 2
         max_step = float(self.pc["local_max_offset_change_m"])
         transition = 15.0 * (offsets[:, None] - offsets[None, :]) ** 2
         transition[np.abs(offsets[:, None] - offsets[None, :]) > max_step + 1e-6] = np.inf

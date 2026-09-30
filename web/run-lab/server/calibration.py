@@ -57,7 +57,9 @@ def launch(profile, job, host):
     """
     if profile not in PROFILES:
         raise ValueError(f"unknown profile {profile!r}")
-    command = f"ros2 launch cfr_arduino_bridge characterize.launch.py profile:={shlex.quote(profile)}"
+    command = orin.ros_command(
+        f"ros2 launch cfr_arduino_bridge characterize.launch.py profile:={shlex.quote(profile)}"
+    )
     job.log(f"ssh {host} {command}")
     proc = subprocess.Popen(
         ["ssh", *orin.SSH_OPTS, host, command],
