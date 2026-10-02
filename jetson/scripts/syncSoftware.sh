@@ -5,6 +5,8 @@
 # policy it races with.
 # There is one RL driver for Obstacle Course: obstacleRacer (Obstacle Course) with its policy if one is
 # named.
+# Plan Z, the backup driver for both courses that is not a learned policy,
+# goes with them: code, knobs and routes, nothing to choose.
 #
 # Source only: the host is x86_64 and the Orin is aarch64, so build artifacts
 # are never transferred.  Use --build to compile on the Orin after syncing.
@@ -18,6 +20,7 @@
 #   ~/software/obstacleRacer/   rl/obstacleRacer/ code, plus the chosen
 #                               policy's policy.npz and config.yaml at its top
 #                               level (the tree's config.yaml with --racer-policy '')
+#   ~/software/planZ/           drivers/planZ/ as it is
 #   ~/jetson -> ~/software      both drivers find the course files and
 #                               record_run.py under <two dirs up>/jetson/,
 #                               as they do in the repo
@@ -29,6 +32,7 @@ readonly SOURCE_DIR="$(dirname "${SCRIPT_DIR}")"
 readonly F1_DIR="$(dirname "${SOURCE_DIR}")/rl/formulaOne"
 readonly F2_DIR="$(dirname "${SOURCE_DIR}")/rl/formulaTwo"
 readonly RACER_DIR="$(dirname "${SOURCE_DIR}")/rl/obstacleRacer"
+readonly PLAN_Z_DIR="$(dirname "${SOURCE_DIR}")/drivers/planZ"
 
 REMOTE_HOST="${ORIN_HOST:-tejam@192.168.55.1}"
 REMOTE_DIR="${ORIN_DIR:-~/software}"
@@ -47,6 +51,7 @@ SYNC_F2=true
 # already on the Orin alone.
 RACER_RUN="${RACER_RUN-v13}"
 SYNC_RACER=true
+SYNC_PLAN_Z=true
 
 DRY_RUN=false
 DELETE=false
@@ -104,6 +109,7 @@ Options:
                     bestModel/RUN or runs/RUN (env RACER_RUN, default: v13;
                     '' for code and config only)
       --no-racer    Do not sync obstacleRacer
+      --no-planz    Do not sync Plan Z
   -n, --dry-run    Show what would transfer without changing anything
       --delete      Remove files on the Orin that no longer exist locally
   -b, --build       Run colcon build on the Orin after syncing
@@ -154,6 +160,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-racer)
       SYNC_RACER=false
+      shift
+      ;;
+    --no-planz)
+      SYNC_PLAN_Z=false
       shift
       ;;
     -n | --dry-run)
@@ -443,8 +453,19 @@ if [[ "${SYNC_RACER}" == true ]]; then
   fi
 fi
 
-if [[ "${SYNC_F1}" == true || "${SYNC_F2}" == true || "${SYNC_RACER}" == true ]]; then
-  # All three drivers resolve the course files and record_run.py as
+if [[ "${SYNC_PLAN_Z}" == true ]]; then
+  if [[ ! -d "${PLAN_Z_DIR}" ]]; then
+    echo "error: ${PLAN_Z_DIR} does not exist (use --no-planz)" >&2
+    exit 1
+  fi
+  # Everything git tracks there: the driver, its knobs and both routes.
+  # runs/ (Gazebo validation traces) is gitignored and stays here.
+  list_files "${PLAN_Z_DIR}" >"${FILE_LIST}"
+  sync_tree "${PLAN_Z_DIR}" "${REMOTE_DIR}/planZ"
+fi
+
+if [[ "${SYNC_F1}" == true || "${SYNC_F2}" == true || "${SYNC_RACER}" == true || "${SYNC_PLAN_Z}" == true ]]; then
+  # Every driver resolves the course files and record_run.py as
   # <two dirs above themselves>/jetson/..., which is the repo's layout.  Here
   # that is ~/jetson, so point it at the synced jetson/ tree.  Never replaces
   # a real directory of that name.
@@ -520,5 +541,8 @@ if [[ "${SYNC_F2}" == true ]]; then
 fi
 if [[ "${SYNC_RACER}" == true ]]; then
   echo "  obstacleRacer: ${REMOTE_DIR}/scripts/launchObstacleRacer.sh  (${RACER_RUN:-policy already on the Orin}, speed_scale 0.3 by default)"
+fi
+if [[ "${SYNC_PLAN_Z}" == true ]]; then
+  echo "  Plan Z: ${REMOTE_DIR}/scripts/launchPlanZ.sh --course speed|obstacle  (speed_scale 0.3 by default)"
 fi
 echo "  (one driver at a time -- all publish /drive_cmd)"

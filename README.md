@@ -39,14 +39,19 @@ terminals on the Orin:
 ~/software/scripts/launchObstacleRacer.sh  # Obstacle Course
 ~/software/scripts/launchFormulaOne.sh     # Speed Course
 ~/software/scripts/launchFormulaTwo.sh     # Speed Course, with ZED depth
+~/software/scripts/launchPlanZ.sh --course obstacle  # backup driver, either course
+~/software/scripts/launchPlanZ.sh --course speed
 ```
 
 Each driver checks its inputs, asks for E-Stop confirmation, then waits for the
 course start signal. Only run one driver at a time. The wrappers default to
 `--speed-scale 0.3`; use `--help` for options. See the
 [Obstacle Course](rl/obstacleRacer/README.md),
-[formulaOne](rl/formulaOne/DEPLOY.md), and
-[formulaTwo](rl/formulaTwo/README.md) guides for details.
+[formulaOne](rl/formulaOne/DEPLOY.md),
+[formulaTwo](rl/formulaTwo/README.md), and
+[Plan Z](drivers/planZ/README.md) guides for details. Plan Z is the backup
+for both courses: no learned policy, steering from the walls the ZED sees, and
+a short table of knobs for the failures most likely on the day.
 
 ## RC & E-Stop Protocol
 

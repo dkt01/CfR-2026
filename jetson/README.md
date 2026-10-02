@@ -263,6 +263,10 @@ ZED point clouds; the bridged depth image remains Gazebo's ideal depth.
 `training.launch.py` routes its cloud through the same node (`cloud_noise:=false`
 turns that off), so an RL policy trains on the cloud it is evaluated against.
 
+`camera_rpy_deg:="roll pitch yaw"` (degrees, default `0 0 0`) turns the
+simulated camera on its mount, for checking what a driver makes of a ZED that
+is not bolted on square; `drivers/planZ/validate.sh` uses it.
+
 Rendered sensors need a render context, so they live in a second world file
 and are off by default:
 

@@ -13,6 +13,10 @@ start signal detector and no Arduino:
     ros2 launch cfr_arduino_bridge lap_counter.launch.py laps:=2
     ros2 launch cfr_arduino_bridge lap_counter.launch.py free_run:=true
 
+On the Obstacle Course pass `lateral_gate:=3.0` (obstacle_racer_car.launch.py
+does): the pothole lane crosses the plane of the start line 8 m to the side,
+heading the same way, and without the gate it counts as a lap.
+
 `free_run:=true` arms on the first pose instead of the start signal and counts
 without waiting for the Arduino to report AUTO_ACTIVE, which is what makes the
 counter usable from path_tui with nothing else running.
@@ -58,6 +62,15 @@ def generate_launch_description():
         description="Arm on the first pose and ignore run mode, for the bench",
     )
 
+    lateral_gate_arg = DeclareLaunchArgument(
+        "lateral_gate",
+        default_value="0.0",
+        description=(
+            "m either side of the start straight a crossing of the line's plane "
+            "still counts; 0 is off. The Obstacle Course needs 3.0"
+        ),
+    )
+
     counter = Node(
         package="cfr_arduino_bridge",
         executable="lap_counter_node.py",
@@ -77,6 +90,9 @@ def generate_launch_description():
                 "require_auto_active": ParameterValue(
                     NotSubstitution(LaunchConfiguration("free_run")), value_type=bool
                 ),
+                "lateral_gate": ParameterValue(
+                    LaunchConfiguration("lateral_gate"), value_type=float
+                ),
             },
         ],
         remappings=[
@@ -86,4 +102,6 @@ def generate_launch_description():
         ],
     )
 
-    return LaunchDescription([params_arg, laps_arg, pose_arg, free_run_arg, counter])
+    return LaunchDescription(
+        [params_arg, laps_arg, pose_arg, free_run_arg, lateral_gate_arg, counter]
+    )

@@ -77,6 +77,15 @@ def generate_launch_description():
             description="Laps before lap_counter latches ~/done: 2 on the Obstacle Course",
         ),
         DeclareLaunchArgument(
+            "lateral_gate",
+            default_value="3.0",
+            description=(
+                "lap_counter's cross-track gate, m: the pothole lane crosses the "
+                "plane of the start line 8.3 m to the side, heading the same way, "
+                "and without it the first lap is counted there"
+            ),
+        ),
+        DeclareLaunchArgument(
             "image_topic",
             # The ZED wrapper's name for it on the car; Gazebo bridges the
             # simulated camera as /zed/zed_node/left/image_rect_color.
@@ -109,7 +118,9 @@ def generate_launch_description():
         }.items(),
     )
     # Arms on the start signal and counts only under AUTO_ACTIVE (free_run
-    # false), exactly as at a race.
+    # false), exactly as at a race.  With the cross-track gate: without it
+    # the counter scores the pothole lane, 30 m into the first lap, and
+    # latches done a lap early.
     lap_counter = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             PathJoinSubstitution([share, "launch", "lap_counter.launch.py"])
@@ -117,6 +128,7 @@ def generate_launch_description():
         launch_arguments={
             "laps": LaunchConfiguration("laps"),
             "free_run": "false",
+            "lateral_gate": LaunchConfiguration("lateral_gate"),
         }.items(),
     )
     driver = IncludeLaunchDescription(
