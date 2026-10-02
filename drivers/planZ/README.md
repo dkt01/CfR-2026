@@ -131,6 +131,7 @@ All in [config.yaml](config.yaml), each with a comment. Set one for a run with
 | Misses a hoop | `sections.hoops` lower; `gate_blend_m` | |
 | Hesitates in the car wash | `soft_half_width` | raise toward 0.5 |
 | Backs off too soon / too late when wedged | `stuck_s`, `reverse_distance` | |
+| Backs off again and again without driving on | `forward_hold_s` | raise |
 | Wanders in the Wide Section | `open_memory_s`, `shadow_m` | |
 
 ## What is tested
