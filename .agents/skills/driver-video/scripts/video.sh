@@ -22,6 +22,7 @@
 #   --pick P          replay: fastest | first | median | any  (any = longest run if none finish)
 #   --track NPZ       replay: reuse a rollout.py track instead of rolling out again
 #   --limit N         replay: render only the first N frames (a quick look)
+#   --segmentation    add a class-colored point cloud view beside the ZED view
 #   --keep            leave the container running afterwards
 #   --rebuild         rebuild the container's ROS workspace from the repo first
 set -euo pipefail
@@ -43,7 +44,7 @@ MODE=${1:-}; shift || true
 [[ "$MODE" == "gazebo" || "$MODE" == "replay" ]] || die "first argument: gazebo | replay | stop"
 
 COURSE=""; POLICY=""; CONFIG=""; SEED=104; OUT=""; LABEL=""; TIMEOUT=180; RTF=0.1
-EPISODES=""; PICK=fastest; TRACK=""; LIMIT=0; KEEP=false; REBUILD=false
+EPISODES=""; PICK=fastest; TRACK=""; LIMIT=0; KEEP=false; REBUILD=false; SEGMENTATION=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --course) COURSE=$2; shift 2;;
@@ -58,6 +59,7 @@ while [[ $# -gt 0 ]]; do
     --pick) PICK=$2; shift 2;;
     --track) TRACK=$2; shift 2;;
     --limit) LIMIT=$2; shift 2;;
+    --segmentation) SEGMENTATION=true; shift;;
     --keep) KEEP=true; shift;;
     --rebuild) REBUILD=true; shift;;
     *) die "unknown argument: $1";;
@@ -174,7 +176,9 @@ else
   bg "ros2 launch /repo/rl/formulaOne/formula_one.launch.py policy:=/work/policy.npz config:=/work/config.yaml rviz:=false record:=false use_sim_time:=true" /work/driver.log
 fi
 W="/world/$WORLD"
-bg "ros2 run ros_gz_bridge parameter_bridge /video/chase@sensor_msgs/msg/Image[gz.msgs.Image /video/zed@sensor_msgs/msg/Image[gz.msgs.Image /video/map@sensor_msgs/msg/Image[gz.msgs.Image $W/control@ros_gz_interfaces/srv/ControlWorld $W/set_pose@ros_gz_interfaces/srv/SetEntityPose $W/create@ros_gz_interfaces/srv/SpawnEntity $W/remove@ros_gz_interfaces/srv/DeleteEntity --ros-args -p use_sim_time:=true" /work/bridge.log
+SEGMENT_BRIDGE=""
+[[ "$SEGMENTATION" == true ]] && SEGMENT_BRIDGE="/video/zed/image@sensor_msgs/msg/Image[gz.msgs.Image /video/zed/points@sensor_msgs/msg/PointCloud2[gz.msgs.PointCloudPacked"
+bg "ros2 run ros_gz_bridge parameter_bridge /video/chase@sensor_msgs/msg/Image[gz.msgs.Image /video/zed@sensor_msgs/msg/Image[gz.msgs.Image /video/map@sensor_msgs/msg/Image[gz.msgs.Image $SEGMENT_BRIDGE $W/control@ros_gz_interfaces/srv/ControlWorld $W/set_pose@ros_gz_interfaces/srv/SetEntityPose $W/create@ros_gz_interfaces/srv/SpawnEntity $W/remove@ros_gz_interfaces/srv/DeleteEntity --ros-args -p use_sim_time:=true" /work/bridge.log
 log "waiting for the stack"
 READY="$W/set_pose"
 [[ "$MODE" == gazebo && "$COURSE" == obstacle ]] && READY=/obstacle_racer/manual_start
@@ -199,6 +203,7 @@ else
   EXTRA="--track /work/track.npz --limit $LIMIT"
   NOTE="not Gazebo physics"
 fi
+[[ "$SEGMENTATION" == true ]] && EXTRA="$EXTRA --segmentation"
 TITLE="$LABEL on the $([[ $COURSE == obstacle ]] && echo Obstacle || echo Speed) Course"
 log "filming ($MODE): $TITLE"
 TEXT=$(printf '%q ' --title "$TITLE" --subtitle "$SUB" --note "$NOTE")  # any apostrophes survive
