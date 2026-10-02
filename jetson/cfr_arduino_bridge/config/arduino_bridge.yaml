@@ -268,9 +268,11 @@ lap_counter:
     # which is the default -- a distance gate is a claim about the course's
     # shape, and the course built on the day will not match the drawing.
     # The Obstacle Course is such a course (the pothole lane, 8.3 m off the
-    # start straight): its launch files set this to 3.0 through their
-    # lateral_gate argument, which is what the node gets, not this line.
-    lateral_gate: 0.0           # m
+    # start straight): its launch files set it to 3.0 through their
+    # lateral_gate argument.  It is deliberately NOT set here: a value under
+    # this node's own name outranks the one a launch file passes, whatever
+    # the order, and the argument would do nothing.  Unset, the node's
+    # default is 0.
 
     # A step larger than this between pose samples is the SDK closing a loop
     # or recovering tracking, not the car driving.  Reported, and kept out of
