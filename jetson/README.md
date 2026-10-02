@@ -1038,6 +1038,29 @@ Afterwards:
 ./scripts/generate_vehicle_model.py           # push them into the Gazebo world
 ```
 
+### Camera mount
+
+`vehicle.yaml`'s `camera_mount` is the ZED's `camera_link` (bottom mounting
+hole, the point `/zed/zed_node/pose` reports) in the vehicle frame: ground
+under the **wheelbase midpoint**, not the rear axle. Depth is registered to the
+left lens, so depth origin = mount + rotated `lens_offset_*`. The formula
+drivers read it at startup (they log the line), project depth from it, and move
+the scan onto the camera the policy trained with; `record_run.py` saves it with
+every run, and the Run Lab checks it against the run's parked floor and its
+driving (verdicts "Camera mount ... floor" and "Pose lever arm ...").
+
+Measure it on the car, parked; nothing arms:
+
+```bash
+~/software/scripts/launch.sh --no-bridge                 # ZED only
+~/software/scripts/launchCalibration.sh                  # height, pitch, roll
+~/software/scripts/launchCalibration.sh --target 2.0,0 --target 3.0,0.6   # + x, y, yaw
+```
+
+then on the laptop `sync_runs.sh`, `apply_vehicle_patch.py runs/<run>` and
+`propagate_camera.py` (Gazebo's ZED, SubZero's pose offset; `--check` runs in
+the test suite).
+
 ### `config/vehicle.yaml`
 
 The single source of truth for vehicle geometry, mass, actuator and sensor

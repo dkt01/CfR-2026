@@ -23,6 +23,7 @@ and the two are careful not to overlap.
 """
 
 import argparse
+import math
 import re
 import sys
 from pathlib import Path
@@ -32,6 +33,7 @@ import yaml
 SCRIPT_DIR = Path(__file__).resolve().parent
 PACKAGE_DIR = SCRIPT_DIR.parent / "cfr_arduino_bridge"
 VEHICLE_FILE = PACKAGE_DIR / "config" / "vehicle.yaml"
+BRIDGE_FILE = PACKAGE_DIR / "config" / "arduino_bridge.yaml"
 
 # Every world the vehicle gets spawned into, and where - a course layout fact,
 # not a vehicle one, so it lives here rather than in vehicle.yaml.  (x, y, yaw).
@@ -102,8 +104,19 @@ def build_model(vehicle, spawn_pose):
     # truncates a command the runtime has already sized correctly: measured on
     # the simulated car, 0.80 and 1.00 of left command produced the identical
     # 0.90 m radius because everything past 0.78 was being clipped away.
-    joint_limit = max(left, right)
-    steering_limit = max(left, right)
+    #
+    # Widened by sim_vehicle's gazebo_yaw_gain: that node asks Gazebo for more
+    # yaw rate than the table implies, to cancel Gazebo's tire scrub, and the
+    # plugin turns that request back into a wheel angle.  Without the headroom
+    # full lock would clip at exactly the angle the compensation exists to
+    # exceed.
+    gain = float(
+        yaml.safe_load(BRIDGE_FILE.read_text())["sim_vehicle"]["ros__parameters"].get(
+            "gazebo_yaw_gain", 1.0
+        )
+    )
+    joint_limit = math.atan(gain * math.tan(max(left, right)))
+    steering_limit = joint_limit
 
     # Front and rear are different shocks on different springs (GTR long on
     # #7444 at the front, XX-long on #7446 at the rear), so they are two

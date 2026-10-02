@@ -36,8 +36,9 @@ arduino_bridge:
     max_speed: 8.0          # m/s
     max_steering: 1.0
     # Normalized command that makes the real car go straight, i.e.
-    # vehicle.yaml's steering.center_offset (guess until straight_line_trim
-    # or steer_authority_fast measures it). Added to every DriveCommand's
+    # vehicle.yaml's steering.center_offset (measured, figure-8 2026-09-30).
+    # The steering tables below are therefore in post-trim command space:
+    # propagate_plant.py shifts vehicle.yaml's raw table by this. Added to every DriveCommand's
     # steering here, once, so RL drivers, the characterization runner and
     # teleop all get the correction without each needing its own copy -- and
     # never during the AUTO_ARMED handshake, which holds a hard neutral.
@@ -91,8 +92,8 @@ cmd_vel_to_drive:
     # The measured command -> angle table, inverted by the node so a desired
     # angle becomes the command that actually produces it.  Keep in step with
     # sim_vehicle's copy and vehicle.yaml steering.effective_angle_table.
-    steering_command_points: [-1.0, -0.5, 0.0, 0.5, 1.0]
-    steering_angle_points: [-0.382, -0.191, 0.0, 0.256, 0.512]
+    steering_command_points: [-1.0, -0.6, -0.25, 0.25, 0.6, 1.0]
+    steering_angle_points: [-0.37479, -0.23964, -0.0828, 0.14706, 0.31757, 0.42104]
     min_speed_for_steering: 0.3    # floor speed for the bicycle model
     cmd_timeout: 0.3
     publish_rate_hz: 50.0
@@ -123,13 +124,21 @@ sim_vehicle:
     # AND re-measured -- not because a simulated lap looks slow.
     brake_deceleration: 0.0       # m/s^2 on top of coast drag
     command_dead_time: 0.19       # s, Jetson command to first movement
-    understeer_gradient: 0.007    # rad/(m/s^2), B2 skidpad
+    # Zero, not vehicle.yaml's B2 0.007: the steering table below is the real
+    # car's EFFECTIVE angle (yaw rate / speed on the 2026-09-30 figure-8), so
+    # understeer is already inside it, and that run measured ~0 anyway.
+    understeer_gradient: 0.0      # rad/(m/s^2)
+    # Gazebo's own tire scrub (~1.10x wider than asked, measure_turn_radius.py
+    # 2026-09-21), compensated so the simulated car turns like the real one.
+    # generate_vehicle_model.py widens the world's steering_limit by this.
+    # Re-measure after changing it: the radius ratio should be ~1.00.
+    gazebo_yaw_gain: 1.10
     # Measured effective steering angle vs normalized command.  Asymmetric by
     # ~34% at matched command; the +/-1.0 ends are extrapolated, not measured
     # (steer_authority ran too slowly to be usable).  Keep in step with
     # vehicle.yaml steering.effective_angle_table.
-    steering_command_points: [-1.0, -0.5, 0.0, 0.5, 1.0]
-    steering_angle_points: [-0.382, -0.191, 0.0, 0.256, 0.512]
+    steering_command_points: [-1.0, -0.6, -0.25, 0.25, 0.6, 1.0]
+    steering_angle_points: [-0.37479, -0.23964, -0.0828, 0.14706, 0.31757, 0.42104]
     # Simulated tachometer.  It used to report a hard-coded rpm = 0, so a sim
     # run logged an empty speed channel while the car logged ~1000 distinct
     # values.  These mirror the firmware constants in src/arduino_rcm.ino; the

@@ -28,7 +28,7 @@ SENSORS_SYSTEM = """<plugin filename="gz-sim-sensors-system" name="gz::sim::syst
 # pub_frame_rate 12 (config/cfr_zed2i.yaml), and the obstacle racer is
 # trained on 12 Hz frames.
 SENSORS_CAMERA = """<sensor name="zed2i" type="rgbd_camera">
-            <pose>0.315 0 0.20 0 0 0</pose>
+            <pose>0.3048 0.06 0.1406 0.0026 -0.011 0</pose>
             <always_on>1</always_on>
             <update_rate>12</update_rate>
             <topic>/zed/gz/rgbd</topic>

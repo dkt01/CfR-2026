@@ -43,7 +43,12 @@ def _set_steering_trim(text, value):
             'no "steering_trim" parameter under arduino_bridge.ros__parameters '
             "- has arduino_bridge_node.cpp's steering_trim param been added?"
         )
-    replacement = f"{match.group(1)} {value:.6g}{match.group(2)}"
+    # Always a YAML float: the bridge declares a double, and rclcpp refuses
+    # to set it from an int, so "0" (what %g makes of 0.0) kills the node.
+    number = f"{float(value):.6g}"
+    if not any(c in number for c in ".en"):
+        number += ".0"
+    replacement = f"{match.group(1)} {number}{match.group(2)}"
     return text[: match.start()] + replacement + text[match.end() :]
 
 

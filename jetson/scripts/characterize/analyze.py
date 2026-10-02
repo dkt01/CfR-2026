@@ -11,6 +11,7 @@ set of numbers with a provenance trail back to the run that produced them.
 """
 
 import math
+import statistics
 import os
 
 from . import fits, svgplot
@@ -180,10 +181,17 @@ def analyze_steer_authority(run, options):
     wheelbase = _wheelbase(run)
     summary, points = [], []
     sources = set()
+    # The table and center_offset are in raw servo-command space; the bridge
+    # added this to every command the runner sent.
+    trim = run.steering_trim
+    if trim:
+        summary.append(f"driven with steering_trim {trim:+.4f}: commands below are raw")
     for segment in run.segments():
         if segment.label in (None, "settle", "between", "straight_reference"):
             continue
         command = fits.steady_state(*segment.pair("t_ros", "cmd_steering"))["mean"]
+        # The bridge clamps the trimmed command to the servo's +/-1.
+        command = max(-1.0, min(1.0, command + trim))
         speed_times, speed_values, source = _speed_column(segment, options)
         if not speed_times:
             summary.append(f"{segment.label}: no usable speed channel, skipped")
@@ -540,6 +548,11 @@ def analyze_step_steer(run, options):
 DEFAULT_STEERING_SLOPE = 0.447
 
 
+def _span(segment):
+    times = segment.column("t_ros")
+    return times[0], times[-1]
+
+
 def analyze_straight_line(run, options):
     """Steering trim checkout - center_offset from a single straight point.
 
@@ -550,8 +563,18 @@ def analyze_straight_line(run, options):
     Run this often to catch trim drift; re-run steer_authority_fast (or
     figure_eight_calib) when the slope itself might have moved.
 
-    Cross-checks the rate-sensor estimate (steady-state odom_wz) against the
-    yaw actually accumulated over the whole hold (odom_yaw, start to end).
+    Yaw rate comes from the ZED's gyro (imu.csv, one row per message, minus
+    the gyro's own bias while parked), not odom_wz: at 1 m/s visual odometry
+    is at its noise floor, and on 2026-09-30 it read a third of the gyro's
+    yaw rate on one run.  odom_wz is still reported as a cross-check, and is
+    the fallback for a run without imu.csv.
+
+    The result is in raw servo-command space: the trim the bridge applied
+    during the run is added back, so a run driven with a correct trim reports
+    that trim, not zero.
+
+    Cross-checks the rate-sensor estimate (steady-state yaw rate) against the
+    yaw actually accumulated over the whole hold.
     Both are converted through the SAME atan(L*yaw_rate/v) formula, so they
     are comparable directly - the total-yaw route is NOT converted through
     the chord bearing of the resulting path, which is a different quantity
@@ -577,9 +600,36 @@ def analyze_straight_line(run, options):
     if not speed_times:
         return {"summary": ["no usable speed channel"], "vehicle": {}, "plots": []}
     speed = fits.steady_state(speed_times, speed_values)
-    yaw_rate = fits.steady_state(*segment.pair("t_ros", "odom_wz"))
     if abs(speed["mean"]) < 0.2:
         return {"summary": ["car never reached speed"], "vehicle": {}, "plots": []}
+    odom_rate = fits.steady_state(*segment.pair("t_ros", "odom_wz"))
+
+    times = segment.column("t_ros")
+    gyro = run.imu_between(times[0], times[-1])
+    if len(gyro) >= 20:
+        # The car is parked through the settle steps either side, so their
+        # median is the gyro's bias, not motion.
+        parked = [
+            row["wz"]
+            for settle in run.segments()
+            if settle.label == "settle"
+            for row in run.imu_between(*_span(settle))
+        ]
+        gyro_bias = statistics.median(parked) if parked else 0.0
+        gyro_t = [row["t_ros"] for row in gyro]
+        gyro_wz = [row["wz"] - gyro_bias for row in gyro]
+        yaw_rate = fits.steady_state(gyro_t, gyro_wz)
+        rate_source = f"gyro, bias {gyro_bias:+.4f} rad/s removed"
+        # Integrated heading over the whole hold, for the cross-check below.
+        total_yaw = sum(
+            0.5 * (w0 + w1) * (t1 - t0)
+            for t0, t1, w0, w1 in zip(gyro_t, gyro_t[1:], gyro_wz, gyro_wz[1:])
+        )
+        total_span = gyro_t[-1] - gyro_t[0]
+    else:
+        yaw_rate = odom_rate
+        rate_source = "ZED odom_wz (no imu.csv rows for this hold)"
+        total_yaw = total_span = None
 
     # 1 m/s sits right at the tachometer's reliable floor and the ZED's noise
     # floor (see steer_authority_fast.yaml on why the original B1 run failed
@@ -593,7 +643,8 @@ def analyze_straight_line(run, options):
         )
 
     bias_angle = fits.fit_effective_steering(speed["mean"], yaw_rate["mean"], wheelbase)
-    command_offset = -bias_angle / slope if abs(slope) > 1e-9 else float("nan")
+    trim = run.steering_trim
+    command_offset = trim - bias_angle / slope if abs(slope) > 1e-9 else float("nan")
 
     rows = [
         row
@@ -611,18 +662,23 @@ def analyze_straight_line(run, options):
         along = math.cos(heading0) * dx + math.sin(heading0) * dy
         lateral_drift = -math.sin(heading0) * dx + math.cos(heading0) * dy
 
-        duration = rows[-1]["t_ros"] - rows[0]["t_ros"]
-        if duration > 1e-6:
+        if total_yaw is None:
             total_yaw = fits.wrap_to_pi(rows[-1]["odom_yaw"] - heading0)
-            yaw_rate_total = total_yaw / duration
-            angle_from_yaw = fits.fit_effective_steering(
-                speed["mean"], yaw_rate_total, wheelbase
-            )
+            total_span = rows[-1]["t_ros"] - rows[0]["t_ros"]
+    if total_yaw is not None and total_span > 1e-6:
+        angle_from_yaw = fits.fit_effective_steering(
+            speed["mean"], total_yaw / total_span, wheelbase
+        )
 
     summary.append(
         f"speed {speed['mean']:.2f} m/s ({source}), "
-        f"yaw rate {yaw_rate['mean']:+.4f} rad/s over the settled tail"
+        f"yaw rate {yaw_rate['mean']:+.4f} rad/s over the settled tail ({rate_source})"
     )
+    if yaw_rate is not odom_rate:
+        summary.append(
+            f"ZED odom yaw rate {odom_rate['mean']:+.4f} rad/s over the same tail "
+            "(cross-check; noisy at this speed)"
+        )
     summary.append(
         f"zero-command angle bias {bias_angle:+.4f} rad "
         f"({math.degrees(bias_angle):+.2f} deg), from the settled-tail yaw rate"
@@ -633,8 +689,9 @@ def analyze_straight_line(run, options):
         )
     if angle_from_yaw is not None:
         summary.append(
-            f"angle bias {angle_from_yaw:+.4f} rad from yaw accumulated over "
-            f"the whole hold (cross-check on the tail-only estimate above)"
+            f"angle bias {angle_from_yaw:+.4f} rad from {math.degrees(total_yaw):+.1f} deg "
+            f"of yaw accumulated over the whole hold (cross-check on the tail-only "
+            f"estimate above)"
         )
         if abs(angle_from_yaw - bias_angle) > 0.01:
             summary.append(
@@ -646,6 +703,11 @@ def analyze_straight_line(run, options):
                 "not reach steady state before the tail window started."
             )
     summary.append("")
+    if trim:
+        summary.append(
+            f"driven with steering_trim {trim:+.4f}; the residual bias adds "
+            f"{command_offset - trim:+.4f} to it"
+        )
     summary.append(
         f"-> steering.center_offset {command_offset:+.4f} normalized command "
         f"(slope {slope:.4f} rad/command"

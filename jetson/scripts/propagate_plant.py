@@ -5,7 +5,8 @@
 
 apply_vehicle_patch.py only touches config/vehicle.yaml -- the record of what
 the real car measured.  Nothing propagates that into the numpy simulators
-rl/formulaOne, formulaTwo and formulaThree train against, so a measured table
+rl/formulaOne, formulaTwo and formulaThree train against (and formulaSubZero
+steers by), so a measured table
 can sit correct in vehicle.yaml while every driver still trains on the old
 one.  This script closes that one gap: vehicle.yaml's
 steering.effective_angle_table is the only plant value with a clean,
@@ -17,8 +18,17 @@ have a matching per-value field there).
 rl/formulaOne/config_lowdrift.yaml is deliberately excluded: it is a variant
 with its own steering_slew, not a copy that should track the others.
 
-Run after apply_vehicle_patch.py, then check_steering_consistency.py to
-confirm every copy agrees.
+The table in vehicle.yaml is in RAW servo-command space: the straight and
+figure-8 runs were driven with steering_trim 0, so its zero crossing sits at
+steering.center_offset rather than at 0.  arduino_bridge adds that trim to
+every DriveCommand, so every consumer of DriveCommand.steering (the Gazebo
+sim_vehicle, cmd_vel_to_drive's inverse, the RL plants) must see the table
+shifted to post-trim space:  command_here = command_raw - center_offset.  That
+is what this writes.  (The bridge clamps raw to +/-1, so at command +1 the car
+reaches the table at raw 1 + center_offset: slightly less than full left lock.)
+
+Run after apply_vehicle_patch.py and apply_steering_trim.py, then
+check_steering_consistency.py to confirm every copy agrees.
 """
 
 import argparse
@@ -46,10 +56,14 @@ def _format_scalar(value):
 
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+BRIDGE_CONFIG = os.path.join(
+    REPO_ROOT, "jetson", "cfr_arduino_bridge", "config", "arduino_bridge.yaml"
+)
 RL_CONFIGS = [
     os.path.join(REPO_ROOT, "rl", "formulaOne", "config.yaml"),
     os.path.join(REPO_ROOT, "rl", "formulaTwo", "config.yaml"),
     os.path.join(REPO_ROOT, "rl", "formulaThree", "config.yaml"),
+    os.path.join(REPO_ROOT, "rl", "formulaSubZero", "config.yaml"),
 ]
 
 
@@ -57,7 +71,7 @@ class PropagationError(RuntimeError):
     pass
 
 
-def _replace_list(text, key, values, indent="  "):
+def _replace_list(text, key, values, indent="  ", replace_all=False):
     """Replace a `key:` scalar list, in whichever style this file already uses.
 
     formulaOne/formulaTwo write it flow-style (`key: [a, b, c]`), formulaThree
@@ -69,6 +83,8 @@ def _replace_list(text, key, values, indent="  "):
     flow_pattern = re.compile(
         rf"(?m)^{re.escape(indent)}{re.escape(key)}:[ \t]*\[[^\]]*\](.*)$"
     )
+    if replace_all and flow_pattern.search(text):
+        return flow_pattern.sub(lambda m: f"{indent}{key}: [{rendered}]{m.group(1)}", text)
     match = flow_pattern.search(text)
     if match:
         replacement = f"{indent}{key}: [{rendered}]{match.group(1)}"
@@ -90,7 +106,8 @@ def _replace_list(text, key, values, indent="  "):
 def propagate(vehicle_path, targets, dry_run=False):
     vehicle = yaml.safe_load(open(vehicle_path, encoding="utf-8").read())
     table = vehicle["steering"]["effective_angle_table"]["rows"]
-    commands = [row[0] for row in table]
+    center_offset = vehicle["steering"]["center_offset"]["value"]
+    commands = [round(row[0] - center_offset, 6) for row in table]
     angles = [row[1] for row in table]
 
     results = []
@@ -101,8 +118,16 @@ def propagate(vehicle_path, targets, dry_run=False):
         with open(path, "r", encoding="utf-8") as handle:
             text = handle.read()
         try:
-            updated = _replace_list(text, "steering_command_points", commands)
-            updated = _replace_list(updated, "steering_angle_points", angles)
+            # arduino_bridge.yaml carries the table twice (cmd_vel_to_drive and
+            # sim_vehicle), four-space indented under ros__parameters.
+            bridge = os.path.abspath(path) == os.path.abspath(BRIDGE_CONFIG)
+            indent = "    " if bridge else "  "
+            updated = _replace_list(
+                text, "steering_command_points", commands, indent, bridge
+            )
+            updated = _replace_list(
+                updated, "steering_angle_points", angles, indent, bridge
+            )
         except PropagationError as error:
             results.append((path, None, str(error)))
             continue
@@ -124,7 +149,9 @@ def main(argv=None):
     parser.add_argument("--dry-run", action="store_true", help="report without writing")
     args = parser.parse_args(argv)
 
-    results = propagate(args.vehicle, RL_CONFIGS, dry_run=args.dry_run)
+    results = propagate(
+        args.vehicle, [BRIDGE_CONFIG] + RL_CONFIGS, dry_run=args.dry_run
+    )
     ok = True
     for path, changed, error in results:
         rel = os.path.relpath(path, REPO_ROOT)

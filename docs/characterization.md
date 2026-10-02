@@ -487,8 +487,10 @@ date. A number in that file should always be able to answer "says who?".
   arduino_tx.log    host-timestamped frames written to the firmware
   metadata.yaml     profile, gains, git SHA, battery, result
   runner.log        what the runner said while it ran
-  bag/              rosbag2, raw backup
-  report.md         written by analyze_run.py
+  bag/              rosbag2, raw backup; also 2 Hz thinned depth (depth_hz:=)
+  report.md         written by analyze_run.py; the Run Lab's calibration page
+                    adds a "Camera and pose" section (camera_check.py)
+  camera_check.json that section's numbers
 ```
 
 `telemetry.csv` is the primary one, not the bag: it needs no `rosbag2_py`, opens
