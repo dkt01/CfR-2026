@@ -80,6 +80,19 @@ def camera_config(run_dir: Path):
     return yaml.safe_load((F2 / "config.yaml").read_text()), "formulaTwo default"
 
 
+def driver_mount(run_dir: Path, cam):
+    """(lens height, scan origin) the driver used: the mount record_run.py
+    saved with the run, else the config's camera -- which is what a driver
+    from before camera_mount existed believed."""
+    try:
+        meta = yaml.safe_load((Path(run_dir) / "metadata.yaml").read_text()) or {}
+        d = meta["camera_mount"]["depth_origin"]
+        yaw = float(meta["camera_mount"]["mount"]["yaw"])
+    except (OSError, KeyError, TypeError, yaml.YAMLError):
+        return cam.z, None
+    return float(d[2]), (float(d[0]) - cam.x, float(d[1]), yaw)
+
+
 def decode(topic, msg):
     """A recorded depth message -> (H, W) float meters, NaN where none."""
     if topic.endswith("compressed"):
@@ -232,6 +245,9 @@ def write_depth(bag, run_dir, streams, tb, recording, progress, hz=2.0, scan_hz=
     cam = P.Camera(cfg)
     cam.hfov_deg = float(cfg["camera"]["hfov_deg"])
     info["grid_config"] = source
+    height, origin = driver_mount(run_dir, cam)
+    info["scan_height_m"] = round(height, 4)
+    info["scan_origin"] = origin
     recording.depth_static(cam)
 
     # The driver's own scan, from its observation: [map | stack x W | age].
@@ -273,10 +289,14 @@ def write_depth(bag, run_dir, streams, tb, recording, progress, hz=2.0, scan_hz=
         t = t_ns * 1e-9
         roll, pitch = attitude_at(streams, t)
         grid = cam.sample_depth(depth, *k)[0]
-        keep, beam = in_band(cam, grid, cam.z, pitch, roll)
-        scan = cam.depth_to_scan(grid[None], None, np.array([pitch]), np.array([roll]))[
-            0
-        ]
+        keep, beam = in_band(cam, grid, height, pitch, roll)
+        scan = cam.depth_to_scan(
+            grid[None],
+            np.array([height]),
+            np.array([pitch]),
+            np.array([roll]),
+            origin=origin,
+        )[0]
         uu, vv, ok = grid_pixels(cam, *k, wid, hgt)
         start, end, invalid = beams_xy(cam, np.where(np.isfinite(scan), scan, np.nan))
         recording.depth_frame(

@@ -1,66 +1,9 @@
 #!/usr/bin/env python3
-"""Drive the Speed Course with a formulaTwo policy -- in Gazebo and on the car.
-
-formulaOne's node (formula_one_node.py), plus the ZED depth stream and a
-watchdog on it.  Everything formulaOne's node does -- the latched start
-anchor, the tachometer speed, the rule cap enforced on the wire, the stopping
-phase after the last lap, ~/telemetry -- is unchanged here.  The comments that
-explain those are kept because they are still the reasons.
-
-    /zed/zed_node/pose                    PoseStamped, map-frame pose
-    /arduino_bridge/status                ArduinoStatus, tachometer speed
-    /start_signal_detector/go             latched Bool, the run trigger
-    /zed/zed_node/depth/depth_registered  Image, depth in metres (32FC1) or mm
-                                          (16UC1).  Gazebo's rgbd_camera is
-                                          bridged onto the same name.
-    <camera_info_topic>                   CameraInfo for that depth image
-    /drive_cmd                            DriveCommand out
-
-THE DEPTH PATH IS THE TRAINING CODE.  Each image is sampled on the canonical
-grid (perception.Camera.sample_depth), reduced to the 64-beam virtual LiDAR
-(depth_to_scan), encoded and pushed onto the same 4-frame ScanStack env.py
-uses.  Frames closer together than `depth_min_period` are dropped, because
-the policy was trained on a 10-15 Hz camera, and a stack of four frames taken
-33 ms apart is not the 0.33 s of history it learned from.
-
-THE POLICY CANNOT DRIVE WITHOUT DEPTH.  Measured in simulation: a stale,
-all-invalid or never-filled scan crashes the 40M policy on 100% of runs, even
-on the nominal car with a perfect map -- a frozen scan is an input it never
-saw (frame age in training: p99 0.22 s, max 0.46 s).  So:
-
-  * it does not move until a real depth frame has arrived, go or no go;
-  * past `depth_hold_after` (0.3 s) without a fresh frame the network is
-    taken off the wheel -- the centerline prior steers at the speed floor --
-    and the policy resumes, on a refilled stack, if depth returns in time.
-    Letting the network drive on a frozen scan instead is what costs: stopping
-    at 1.0 s with the network still driving crashed 44% of runs at 25%
-    randomisation, against 4.7% with the hold (1.6% stopping at 0.3 s);
-  * depth is LOST when the newest frame is older than `depth_timeout`
-    (1.0 s), or when more than `depth_invalid_fraction` (0.6) of the beams
-    are invalid for `depth_invalid_frames` (3) frames in a row -- normal
-    frames peak at 45% under full training randomisation;
-  * on loss, `depth_fallback` decides:
-      stop  (default)  throttle to zero, the centerline prior keeps steering,
-                       the car coasts to rest and the run is over.  Measured:
-                       100% at rest with no contact on the nominal car,
-                       95-100% under randomisation.
-      map              race on without the network: prior steering at the
-                       speed floor.  Measured: 3 laps 100% on the nominal car,
-                       30-37% under randomisation.  If depth comes back for
-                       `depth_recover_frames` good frames, the stack is
-                       refilled with the fresh frame and the policy resumes.
-    Either way ~/depth_status says why, and the telemetry `driver` field
-    reads `fallback_stop` / `fallback_map` so the Run Lab shows it.
-
-The node name in code is formula_two.  formula_two.launch.py runs it as
-`formula_one` by default, because jetson/scripts/record_run.py and the Run Lab
-key on /formula_one/telemetry.
-"""
+"""ZED depth and pose driver for formulaThree, shared by Gazebo and the car."""
 
 from __future__ import annotations
 
 import math
-from collections import deque
 import sys
 from pathlib import Path
 
@@ -82,11 +25,11 @@ from std_msgs.msg import Bool, ColorRGBA, String
 from std_srvs.srv import SetBool
 from visualization_msgs.msg import Marker, MarkerArray
 
-from cfr_interfaces.msg import ArduinoStatus, DriveCommand, StartSignal
+from cfr_interfaces.msg import ArduinoStatus, DriveCommand
 
 # ~/telemetry is what the Run Lab (web/run-lab) judges a run by.  Optional so a
 # car whose cfr_interfaces predates the message still drives -- it just says,
-# once, that the run it is about to make will be hard to analyse.
+# once, that the run it is about to make will be hard to analyze.
 try:
     from cfr_interfaces.msg import DriverTelemetry
 except ImportError:  # pragma: no cover - depends on the installed workspace
@@ -108,17 +51,13 @@ def yaw_of(pose):
     return math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y**2 + q.z**2))
 
 
-class FormulaTwo(Node):
+class FormulaThree(Node):
     def __init__(self, **kwargs):
-        super().__init__("formula_two", **kwargs)
+        super().__init__("formula_three", **kwargs)
         deployed = HERE / "policy.npz"  # a synced Orin tree; see the launch file
         self.declare_parameter(
             "policy",
-            str(
-                deployed
-                if deployed.exists()
-                else HERE / "bestModel/f2_v3_59M/policy.npz"
-            ),
+            str(deployed if deployed.exists() else HERE / "runs/f3_v1/policy.npz"),
         )
         # "baseline" runs the scripted driver from baseline.py instead of a
         # network.  It takes the same observation and emits the same action,
@@ -135,7 +74,6 @@ class FormulaTwo(Node):
         self.declare_parameter("pose_timeout", 0.5)
         self.declare_parameter("status_timeout", 1.0)
         self.declare_parameter("track_frame", "map")
-        self.declare_parameter("pose_is_camera", False)
         self.declare_parameter("publish_markers", True)
         # Scales the commanded speed, after the rule cap.  Two uses: a first
         # run on the real car at half pace, and -- with driver:=baseline -- a
@@ -145,15 +83,15 @@ class FormulaTwo(Node):
         # A pose step larger than this is not the car driving.  1.0 m matches
         # lap_counter's max_step: at 8 m/s and the ZED's 30 Hz a real step is
         # 0.27 m.  Below the second threshold it is treated as the SDK closing
-        # a loop (re-localise, keep the run); above it as a teleport or reset
-        # (re-localise and start the run over).
+        # a loop (re-localize, keep the run); above it as a teleport or reset
+        # (re-localize and start the run over).
         self.declare_parameter("relocalize_step", 1.0)
         self.declare_parameter("reset_run_step", 3.0)
         # --- depth
         self.declare_parameter("depth_topic", "/zed/zed_node/depth/depth_registered")
         self.declare_parameter("camera_info_topic", "/zed/zed_node/depth/camera_info")
         # Two stages.  Past `depth_hold_after` the network is taken off the
-        # wheel (prior steering at the floor) and waits; past `depth_timeout`
+        # wheel (prior steering at the reference speed) and waits; past `depth_timeout`
         # depth is LOST and `depth_fallback` ends or continues the run.
         self.declare_parameter("depth_hold_after", 0.3)
         self.declare_parameter("depth_timeout", 1.0)
@@ -179,25 +117,17 @@ class FormulaTwo(Node):
         # ZED IMU (gravity-referenced, imu_fusion) is preferred; the pose's
         # own roll and pitch are the fallback, which in Gazebo is ground truth
         # and on the car is flat (two_d_mode) -- so on the car, no IMU means
-        # an unlevelled scan, and the node says so.
+        # an unleveled scan, and the node says so.
         self.declare_parameter("imu_topic", "/zed/zed_node/imu/data")
         self.declare_parameter("level_scan", True)
 
         self.cfg = yaml.safe_load(Path(self.param("config")).read_text())
+        if self.cfg.get("schema") != "formulaThree-v1":
+            raise ValueError("formulaThree requires its own checkpoint config")
         self.track = track_mod.build(self.cfg, Path(self.param("repo_root")))
         self.obs = ObservationBuilder(self.track, self.cfg, 1)
         self.mode = self.param("driver")
-        if self.mode == "mpc":
-            sys.path.insert(0, str(HERE.parent / "formulaSubZero"))
-            from controller import FormulaSubZeroDriver
-            from depth_planner import depth_points, signal_point
-
-            self.depth_points_from_image = depth_points
-            self.signal_point_from_image = signal_point
-            self.policy = None
-            self.scripted = FormulaSubZeroDriver(self.track, self.cfg)
-            self.scripted.reset(1)
-        elif self.mode == "baseline":
+        if self.mode == "baseline":
             self.policy = None
             self.scripted = BaselineDriver(self.track, self.cfg)
             self.scripted.reset(1)
@@ -210,6 +140,7 @@ class FormulaTwo(Node):
                     "driver with  -p driver:=baseline  /  validate.sh --baseline"
                 )
             self.policy = NumpyPolicy.load(path)
+            self.policy.check_config(self.cfg)
             self.scripted = None
         self.camera = Camera(self.cfg)
         self.scans = ScanStack(1, self.camera.stack, self.camera.width)
@@ -220,14 +151,7 @@ class FormulaTwo(Node):
                 f"{want} ({self.obs.obs_dim} map + depth stack).  Ship the policy "
                 "with the config.yaml it was trained under."
             )
-        self.corridor_mode = (
-            self.mode == "mpc" and self.scripted.navigation == "corridor"
-        )
-        self.laps_target = (
-            0
-            if self.corridor_mode
-            else int(self.param("laps")) or int(self.cfg["env"]["laps"])
-        )
+        self.laps_target = int(self.param("laps")) or int(self.cfg["env"]["laps"])
         self.residual = float(self.cfg["env"]["steer_residual"])
         self.yaw_filter = float(self.cfg["env"]["yaw_rate_filter"])
         # Defaulted for configs saved before this existed -- same reason as
@@ -248,7 +172,6 @@ class FormulaTwo(Node):
         self.pose = None
         self.pose_time = None
         self.prev_pose = None
-        self.pose_history = deque(maxlen=20)
         self.status = None
         self.status_time = None
         self.go = False
@@ -262,7 +185,6 @@ class FormulaTwo(Node):
         # steering keeps running until the car has actually stopped.
         self.stopping = False
         self.stopping_since = None
-        self.stop_confirm_since = None
         self.stop_speed = float(self.cfg["env"]["stop_speed"])
         self.stop_timeout = float(self.cfg["env"]["stop_timeout_s"])
         self.race_time = None
@@ -294,12 +216,6 @@ class FormulaTwo(Node):
         # Depth.  `depth_stamp` is the capture time of the newest frame on the
         # stack; its age is what the policy's last input channel reads.
         self.intrinsics = None  # (fx, fy, cx, cy, width, height)
-        self.signal_state = None
-        self.signal_range_reason = (
-            "no armed RED detection on /start_signal_detector/state"
-        )
-        self.latest_depth_image = None
-        self.rgb_size = None
         self.depth_stamp = None
         self.depth_last_accept = None
         self.depth_frames = 0
@@ -329,16 +245,6 @@ class FormulaTwo(Node):
             ArduinoStatus, "/arduino_bridge/status", self.on_status, 10
         )
         self.create_subscription(Bool, "/start_signal_detector/go", self.on_go, LATCHED)
-        if self.mode == "mpc":
-            self.create_subscription(
-                StartSignal, "/start_signal_detector/state", self.on_signal_state, 10
-            )
-            rgb_info = (
-                "/zed/zed_node/left/image_rect_color/camera_info"
-                if self.get_parameter("use_sim_time").value
-                else "/zed/zed_node/rgb/color/rect/camera_info"
-            )
-            self.create_subscription(CameraInfo, rgb_info, self.on_rgb_info, 10)
         self.create_subscription(Bool, "/lap_counter/done", self.on_done, LATCHED)
         # The depth subscription is made once a publisher exists, so that its
         # QoS can match it -- see `subscribe_depth`.
@@ -370,7 +276,7 @@ class FormulaTwo(Node):
         if self.telemetry_pub is None:
             self.get_logger().warn(
                 "cfr_interfaces has no DriverTelemetry -- ~/telemetry is OFF and "
-                "this run will be hard to analyse.  Rebuild cfr_interfaces."
+                "this run will be hard to analyze.  Rebuild cfr_interfaces."
             )
         self.speed_from_tach = False
         self.relocalized = False
@@ -379,24 +285,16 @@ class FormulaTwo(Node):
 
         self.create_timer(self.control_period, self.tick)
         self.get_logger().info(
-            f"formula_two ready: {'continuous corridor' if self.corridor_mode else f'{self.laps_target} laps'}, "
+            f"formula_three ready: {self.laps_target} laps, "
             f"cap {self.cfg['track']['v_hairpin']}/{self.cfg['track']['v_straight']} m/s, "
             f"driver {self.mode}"
             + ("" if self.scripted else f" ({Path(self.param('policy')).name})")
             + f", depth fallback {self.param('depth_fallback')}"
-            + (
-                ". Waiting for depth and the start signal."
-                if self.policy is not None
-                else ". Waiting for the start signal."
-            )
+            + ". Waiting for depth and the start signal."
         )
 
     def param(self, name):
         return self.get_parameter(name).value
-
-    def lens_xy(self):
-        o = self.scan_origin or (0.0, 0.0, 0.0)
-        return self.camera.x + o[0], o[1]
 
     def load_camera_mount(self):
         """Height, pitch and scan origin from the measured mount, logged so
@@ -424,95 +322,14 @@ class FormulaTwo(Node):
 
     # ------------------------------------------------------------ callbacks
 
-    def base_pose(self, msg):
-        x, y = msg.pose.position.x, msg.pose.position.y
-        yaw = yaw_of(msg.pose)
-        if self.mode == "mpc" and self.param("pose_is_camera"):
-            # The real ZED reports its camera_link (mounting hole) pose, not
-            # the lens; Gazebo bridges the car-center pose. Convert both to
-            # the car center before matching. propagate_camera.py keeps the
-            # offsets equal to vehicle.yaml's camera_mount.
-            pc = self.cfg["formula_sub_zero"]
-            dx = float(pc["physical_camera_offset_x_m"])
-            dy = float(pc["physical_camera_offset_y_m"])
-            x -= math.cos(yaw) * dx - math.sin(yaw) * dy
-            y -= math.sin(yaw) * dx + math.cos(yaw) * dy
-        return x, y, yaw
-
     def on_pose(self, msg):
         self.prev_pose = self.pose
         self.pose = msg
         self.pose_time = self.get_clock().now()
-        stamp = rclpy.time.Time.from_msg(msg.header.stamp).nanoseconds * 1e-9
-        self.pose_history.append((stamp, *self.base_pose(msg)))
-
-    def pose_near(self, stamp):
-        if not self.pose_history:
-            return None
-        nearest = min(self.pose_history, key=lambda item: abs(item[0] - stamp))
-        return nearest[1:] if abs(nearest[0] - stamp) <= 0.12 else None
 
     def on_status(self, msg):
         self.status = msg
         self.status_time = self.get_clock().now()
-
-    def on_rgb_info(self, msg):
-        self.rgb_size = (msg.width, msg.height)
-
-    def on_signal_state(self, msg):
-        if msg.armed and msg.state == StartSignal.RED:
-            self.signal_state = msg
-            self.try_signal_landmark()
-
-    def try_signal_landmark(self):
-        if self.corridor_mode:
-            return
-        if self.signal_state is None:
-            self.signal_range_reason = (
-                "no armed RED detection on /start_signal_detector/state"
-            )
-            return
-        if self.latest_depth_image is None:
-            self.signal_range_reason = "no pose-matched depth image for the signal"
-            return
-        stamp, depth, intrinsics, pitch, roll, camera_y = self.latest_depth_image
-        signal_stamp = (
-            rclpy.time.Time.from_msg(self.signal_state.header.stamp).nanoseconds * 1e-9
-        )
-        gap = abs(stamp - signal_stamp)
-        if gap > 0.12:
-            self.signal_range_reason = (
-                f"signal/depth frame stamps differ by {gap:.2f} s"
-            )
-            return
-        pixel = (self.signal_state.x, self.signal_state.y)
-        if min(pixel) < 0:
-            pixel = (self.signal_state.lock_x, self.signal_state.lock_y)
-        if min(pixel) < 0:
-            self.signal_range_reason = "armed RED detection has no signal pixel"
-            return
-        point = self.signal_point_from_image(
-            depth,
-            intrinsics,
-            pixel,
-            self.rgb_size or (depth.shape[1], depth.shape[0]),
-            float(self.camera_height[0]),
-            pitch,
-            roll,
-            self.lens_xy()[0],
-            camera_y,
-        )
-        if point is None:
-            self.signal_range_reason = (
-                "no valid above-ground depth at the RED signal pixel"
-            )
-            return
-        pose = self.pose_near(stamp)
-        if pose is None:
-            self.signal_range_reason = "no ZED pose within 0.12 s of signal depth"
-            return
-        self.scripted.depth.update_signal(point, pose, stamp)
-        self.signal_range_reason = "signal range captured"
 
     def on_go(self, msg):
         if msg.data and not self.go:
@@ -522,12 +339,7 @@ class FormulaTwo(Node):
     def on_done(self, msg):
         # The official counter is allowed to end the run even if our own
         # station bookkeeping disagrees with it.
-        if (
-            msg.data
-            and not self.corridor_mode
-            and not self.finished
-            and not self.stopping
-        ):
+        if msg.data and not self.finished and not self.stopping:
             self.get_logger().info("lap_counter reports done -- coasting to a stop")
             self.begin_stopping()
 
@@ -536,7 +348,6 @@ class FormulaTwo(Node):
         self.manual_stop = not request.data
         self.stopping = False
         self.stopping_since = None
-        self.stop_confirm_since = None
         self.race_time = None
         self.run_started_at = None
         self.lap_started_at = None
@@ -645,7 +456,7 @@ class FormulaTwo(Node):
 
     @staticmethod
     def decode_depth(msg):
-        """Image -> (H, W) float metres, NaN where there is no depth."""
+        """Image -> (H, W) float meters, NaN where there is no depth."""
         if msg.encoding == "32FC1":
             row = np.frombuffer(msg.data, dtype=np.float32).reshape(
                 msg.height, msg.step // 4
@@ -715,32 +526,6 @@ class FormulaTwo(Node):
                 note
             )
         self.roll_pitch = (roll, pitch)
-        if self.mode == "mpc":
-            capture_pose = self.pose_near(stamp)
-            if capture_pose is not None or self.corridor_mode:
-                # The lens, in the car frame: the same mount in Gazebo
-                # (propagate_camera.py) and on the car.
-                lens_x, lens_y = self.lens_xy()
-                points = self.depth_points_from_image(
-                    depth,
-                    (fx, fy, cx, cy),
-                    float(self.camera_height[0]),
-                    pitch,
-                    roll,
-                    lens_x,
-                    lens_y,
-                    int(self.cfg["formula_sub_zero"]["depth_stride_px"]),
-                    band=(
-                        self.cfg["formula_sub_zero"]["corridor"]["height_band_m"]
-                        if self.corridor_mode
-                        else self.cfg["camera"]["band"]
-                    ),
-                    min_range=float(self.cfg["camera"]["min_range"]),
-                    max_range=float(self.cfg["camera"]["max_range"]),
-                    local_horizon=float(
-                        self.cfg["formula_sub_zero"]["depth_projection_horizon_m"]
-                    ),
-                )
         scan = self.camera.depth_to_scan(
             grid,
             self.camera_height,
@@ -748,27 +533,6 @@ class FormulaTwo(Node):
             np.array([roll]),
             origin=self.scan_origin,
         )
-        if self.mode == "mpc" and self.corridor_mode:
-            self.scripted.depth.update_local(points, stamp)
-        elif self.mode == "mpc" and capture_pose is not None:
-            # The scan is already moved onto (camera.x, 0): see load_camera_mount.
-            self.scripted.depth.update(
-                points,
-                capture_pose,
-                stamp,
-                scan[0],
-                self.camera.azimuth,
-                0.0,
-            )
-            self.latest_depth_image = (
-                stamp,
-                depth,
-                (fx, fy, cx, cy),
-                pitch,
-                roll,
-                lens_y,
-            )
-            self.try_signal_landmark()
         encoded = self.camera.encode(scan).astype(np.float32)
         self.depth_invalid = float(np.mean(encoded <= INVALID + 1e-6))
         bad = self.depth_invalid > float(self.param("depth_invalid_fraction"))
@@ -824,7 +588,7 @@ class FormulaTwo(Node):
             self.holding = True
             self.hold_count += 1
             self.get_logger().warn(
-                f"depth late ({why}) -- prior steering at the floor until it "
+                f"depth late ({why}) -- prior steering at the reference speed until it "
                 f"returns or turns {float(self.param('depth_timeout')):.1f} s old"
             )
         elif self.depth_state == "ok" and self.holding:
@@ -844,7 +608,7 @@ class FormulaTwo(Node):
             else:
                 self.get_logger().error(
                     f"DEPTH LOST ({why}) -- racing on the map alone at the "
-                    "speed floor until depth recovers"
+                    "reference speed until depth recovers"
                 )
         elif (
             self.fallback == "map"
@@ -861,67 +625,24 @@ class FormulaTwo(Node):
         text = f"{state}: {why} | {self.attitude_text()}"
         if self.fallback:
             text += f" | FALLBACK {self.fallback} ({self.fallback_reason})"
-        if self.mode == "mpc":
-            text += f" | {self.scripted.depth.status}"
-            if self.scripted.recovery.phase != "idle":
-                text += f" | recovery {self.scripted.recovery.phase}"
         self.depth_pub.publish(String(data=text))
 
-    # ------------------------------------------------------------- localise
+    # ------------------------------------------------------------- localize
 
     def latch(self, x, y, yaw):
-        if self.corridor_mode:
-            i = self.start_index
-            yaw_start = math.atan2(self.track.ty[i], self.track.tx[i])
-            self.start_pose = (
-                float(self.track.x[i]),
-                float(self.track.y[i]),
-                yaw_start,
-            )
-            self.anchor = (x, y, yaw, yaw_start - yaw)
-            self.get_logger().info(
-                "corridor start: using ZED depth; bale-map alignment is off"
-            )
-            return True
-        if self.mode == "mpc":
-            matched, why = self.scripted.depth.match_start((x, y, yaw))
-            if matched is None:
-                if why == "no recent depth range to the start signal":
-                    age = self.scripted.depth.signal_stamp
-                    if age is not None:
-                        age = self.scripted.depth.capture_stamp - age
-                    detail = (
-                        f"last signal range is {age:.1f} s old"
-                        if age is not None and age > 5.0
-                        else self.signal_range_reason
-                    )
-                    why = f"{why} ({detail})"
-                self.get_logger().warn(
-                    f"waiting for bale-based start alignment: {why}",
-                    throttle_duration_sec=2.0,
-                )
-                return False
-            self.start_pose = matched
-            self.anchor = (x, y, yaw, matched[2] - yaw)
-            self.get_logger().info(
-                f"depth-aligned start: ({matched[0]:.2f}, {matched[1]:.2f}, "
-                f"{math.degrees(matched[2]):.1f} deg); {why}"
-            )
-            return True
         i = self.start_index
         yaw_start = math.atan2(self.track.ty[i], self.track.tx[i])
         self.start_pose = (float(self.track.x[i]), float(self.track.y[i]), yaw_start)
         if self.param("anchor") == "world":
             self.anchor = (0.0, 0.0, 0.0, 0.0)
             self.get_logger().info("anchor=world: pose is taken as track coordinates")
-            return True
+            return
         self.anchor = (x, y, yaw, yaw_start - yaw)
         self.get_logger().info(
             f"anchored: ZED ({x:.2f}, {y:.2f}, {math.degrees(yaw):.1f} deg) "
             f"-> track ({self.start_pose[0]:.2f}, {self.start_pose[1]:.2f}, "
             f"{math.degrees(yaw_start):.1f} deg)"
         )
-        return True
 
     def to_track(self, x, y, yaw):
         if self.param("anchor") == "world" or self.anchor is None:
@@ -936,7 +657,13 @@ class FormulaTwo(Node):
         )
 
     def measured_speed(self):
-        """Use the tachometer, with ZED pose speed below its crawl threshold."""
+        """Tachometer when it is fresh, differenced pose when it is not.
+
+        The training env zeroes anything below 0.3 m/s because the spur
+        tachometer has one magnet and a 0.4 s stall timeout and genuinely
+        cannot see a crawl.  The same floor is applied here so the policy
+        reads the same instrument it learned on.
+        """
         now = self.get_clock().now()
         fresh = self.status_time is not None and (
             (now - self.status_time).nanoseconds * 1e-9 < self.param("status_timeout")
@@ -944,28 +671,26 @@ class FormulaTwo(Node):
         self.speed_from_tach = bool(
             fresh and self.status is not None and self.status.link_ok
         )
-        tach_speed = abs(float(self.status.speed)) if self.speed_from_tach else 0.0
-        pose_speed = 0.0
-        if self.prev_pose is not None:
-            dt = (
-                rclpy.time.Time.from_msg(self.pose.header.stamp)
-                - rclpy.time.Time.from_msg(self.prev_pose.header.stamp)
-            ).nanoseconds * 1e-9
-            if 0.01 < dt < 0.5:
-                pose_speed = (
-                    math.hypot(
-                        self.pose.pose.position.x - self.prev_pose.pose.position.x,
-                        self.pose.pose.position.y - self.prev_pose.pose.position.y,
-                    )
-                    / dt
+        if self.speed_from_tach:
+            speed = abs(float(self.status.speed))
+        elif self.prev_pose is not None:
+            dt = max(
+                (
+                    rclpy.time.Time.from_msg(self.pose.header.stamp)
+                    - rclpy.time.Time.from_msg(self.prev_pose.header.stamp)
+                ).nanoseconds
+                * 1e-9,
+                1e-3,
+            )
+            speed = (
+                math.hypot(
+                    self.pose.pose.position.x - self.prev_pose.pose.position.x,
+                    self.pose.pose.position.y - self.prev_pose.pose.position.y,
                 )
-        if self.corridor_mode:
-            # The one-magnet tachometer reports zero below roughly 0.3 m/s.
-            # Keep steering while the car coasts through that range.
-            if pose_speed > tach_speed + 0.05:
-                self.speed_from_tach = False
-            return max(tach_speed, pose_speed)
-        speed = tach_speed if self.speed_from_tach else pose_speed
+                / dt
+            )
+        else:
+            speed = 0.0
         return 0.0 if speed < 0.3 else speed
 
     # ------------------------------------------------------------- the loop
@@ -984,10 +709,7 @@ class FormulaTwo(Node):
 
     def begin_stopping(self):
         """Throttle off, steering live, until the car is actually at rest."""
-        if self.mode == "mpc":
-            self.scripted.recovery.reset()
         self.stopping = True
-        self.stop_confirm_since = None
         self.stopping_since = self.get_clock().now().nanoseconds * 1e-9
 
     def tick(self):
@@ -1001,17 +723,8 @@ class FormulaTwo(Node):
         # The network cannot drive without a depth frame, and a car that has
         # been anchored and released on a map alone is the policy driving
         # blind.  Hold neutral -- and do not anchor -- until one arrives.
-        no_depth = (
-            self.policy is not None or self.mode == "mpc"
-        ) and self.depth_stamp is None
+        no_depth = self.policy is not None and self.depth_stamp is None
         if self.finished or self.manual_stop or not self.go or stale or no_depth:
-            if self.mode == "mpc":
-                if self.manual_stop or not self.go or self.finished:
-                    self.scripted.recovery.reset()
-                else:
-                    self.scripted.recovery.abort("pose or depth became unavailable")
-                    if self.scripted.recovery.event:
-                        self.get_logger().error(self.scripted.recovery.event)
             if stale and self.go and not self.finished:
                 self.get_logger().warn(
                     "pose is stale -- commanding neutral", throttle_duration_sec=2.0
@@ -1034,21 +747,13 @@ class FormulaTwo(Node):
             self.publish_telemetry(state, now)
             return
 
-        x_raw, y_raw, yaw_raw = self.base_pose(self.pose)
+        x_raw = self.pose.pose.position.x
+        y_raw = self.pose.pose.position.y
+        yaw_raw = yaw_of(self.pose.pose)
         if self.anchor is None:
-            if not self.latch(x_raw, y_raw, yaw_raw):
-                self.send(0.0, 0.0)
-                return
-            initial_station = self.track.start_station
-            if self.mode == "mpc":
-                _, located = self.track.locate(
-                    np.array([self.start_pose[0]]),
-                    np.array([self.start_pose[1]]),
-                    np.array([self.start_pose[2]]),
-                )
-                initial_station = float(located[0])
-            self.obs.set_station(np.array([True]), np.array([initial_station]))
-            self.station = initial_station
+            self.latch(x_raw, y_raw, yaw_raw)
+            self.obs.set_station(np.array([True]), np.array([self.track.start_station]))
+            self.station = self.track.start_station
             self.prev_track_yaw = None
             self.prev_yaw_stamp = None
             self.yaw_rate = np.zeros(1)
@@ -1057,7 +762,7 @@ class FormulaTwo(Node):
         speed = self.measured_speed()
         self.relocalized = False
 
-        # Re-localise after a jump.  The station is tracked incrementally off
+        # Re-localize after a jump.  The station is tracked incrementally off
         # a hint, which is right while the car drives and wrong the moment it
         # is teleported: the hint stays where the car used to be, the search
         # window never reaches the new position, and every command after that
@@ -1067,13 +772,6 @@ class FormulaTwo(Node):
         if self.last_track_xy is not None:
             step = math.hypot(x - self.last_track_xy[0], y - self.last_track_xy[1])
             if step > float(self.param("relocalize_step")):
-                if self.mode == "mpc":
-                    self.get_logger().error(
-                        f"pose jumped {step:.2f} m -- ending FormulaSubZero run"
-                    )
-                    self.manual_stop = True
-                    self.send(0.0, 0.0)
-                    return
                 self.relocalized = True
                 idx, station = self.track.locate(
                     np.array([x]), np.array([y]), np.array([yaw])
@@ -1106,7 +804,7 @@ class FormulaTwo(Node):
                     )
                 else:
                     self.get_logger().warn(
-                        f"pose jumped {step:.2f} m -- re-localised to station "
+                        f"pose jumped {step:.2f} m -- re-localized to station "
                         f"{self.station:.1f} m, run continues"
                     )
         self.last_track_xy = (x, y)
@@ -1184,67 +882,29 @@ class FormulaTwo(Node):
             self.prev_action,
             self.last_steer,
             lap_state,
+            scan=self.scans.frames[:, 0],
         )
         v_cap = frame["v_cap"]
         if self.policy is not None:
             obs = np.concatenate([obs, self.depth_features(now_s)], axis=1)
-        if self.policy is not None or self.mode == "mpc":
             self.check_depth(depth_why)
-        if self.mode == "mpc":
-            action = self.scripted.act_frame(
-                frame,
-                x,
-                y,
-                yaw,
-                speed,
-                float(self.yaw_rate[0]),
-                float(self.last_steer[0]),
-                self.residual,
-                (x_raw, y_raw, yaw_raw),
-                now_s,
-                self.depth_state == "ok"
-                and not self.stopping
-                and self.status_time is not None
-                and (now - self.status_time).nanoseconds * 1e-9
-                < self.param("status_timeout")
-                and self.status is not None
-                and self.status.link_ok
-                and not self.status.estop
-                and self.status.mode == ArduinoStatus.MODE_AUTO_ACTIVE,
-            )
-            if self.scripted.recovery.event:
-                self.get_logger().warn(
-                    f"FormulaSubZero: {self.scripted.recovery.event}"
-                )
-            if self.scripted.last_solver_error:
-                self.get_logger().error(
-                    f"FormulaSubZero MPC failure {self.scripted.failures}: "
-                    f"{self.scripted.last_solver_error}",
-                    throttle_duration_sec=2.0,
-                )
-        elif self.scripted is not None:
+        if self.scripted is not None:
             action = self.scripted.act(
                 frame["station"], np.array([speed]), v_cap, frame["v_floor"]
             )
         elif self.fallback or self.depth_state != "ok":
             # Without trustworthy depth the network's output is not a
             # decision, it is an accident.  The centerline prior steers (zero
-            # residual) and the throttle sits at the floor -- which the
+            # residual) and the throttle follows the reference -- which the
             # stopping phase below turns into zero for the `stop` fallback.
-            action = np.array([[0.0, -1.0]])
+            action = np.array([[0.0, 0.0]])
         else:
             action = self.policy.act(obs)
         steer, velocity = scale_action(
             action, v_cap, frame["steer_ff"], self.residual, frame["v_floor"]
         )
         # Belt and braces: the rule limit, enforced again on the way out.
-        velocity = np.minimum(velocity, v_cap) * float(self.param("speed_scale"))
-        if self.mode == "mpc" and self.scripted.override_command is not None:
-            recovery_steer, recovery_speed = self.scripted.override_command
-            steer = np.array([np.clip(recovery_steer, -1.0, 1.0)])
-            velocity = np.array([recovery_speed * float(self.param("speed_scale"))])
-        if self.mode == "mpc" and self.depth_state != "ok":
-            velocity = np.zeros_like(velocity)
+        velocity = np.clip(velocity * float(self.param("speed_scale")), 0.0, v_cap)
         self.prev_action = np.clip(action, -1.0, 1.0)
         # The prior predicts forward through the command already in flight, so
         # it has to be the REALISED command -- after scale_action folded in
@@ -1258,7 +918,7 @@ class FormulaTwo(Node):
             self.distance += advance
         self.station = float(frame["station"][0])
         laps = int(max(self.distance, 0.0) // self.track.length)
-        if self.laps_target > 0 and laps > self.laps_done:
+        if laps > self.laps_done:
             self.laps_done = laps
             lap_time = clock_s - self.lap_started_at
             delta = (
@@ -1271,11 +931,7 @@ class FormulaTwo(Node):
             )
             self.last_lap_time = lap_time
             self.lap_started_at = clock_s
-        if (
-            self.laps_target > 0
-            and not self.stopping
-            and self.distance >= self.laps_target * self.track.length
-        ):
+        if not self.stopping and self.distance >= self.laps_target * self.track.length:
             self.race_time = clock_s - (self.run_started_at or clock_s)
             self.get_logger().info(
                 f"FINISHED {self.laps_target} laps in {self.race_time:.2f} s "
@@ -1287,18 +943,7 @@ class FormulaTwo(Node):
             # Throttle off, steering still live.  The car is coasting and is
             # still in the corridor, so it still has to be driven.
             since = clock_s - (self.stopping_since or clock_s)
-            settled = speed <= self.stop_speed
-            if self.corridor_mode:
-                if settled and self.stop_confirm_since is None:
-                    self.stop_confirm_since = clock_s
-                elif not settled:
-                    self.stop_confirm_since = None
-                settled = (
-                    self.stop_confirm_since is not None
-                    and clock_s - self.stop_confirm_since >= 0.6
-                    and since >= 0.6
-                )
-            if settled or since >= self.stop_timeout:
+            if speed <= self.stop_speed or since >= self.stop_timeout:
                 self.finished = True
                 where = (
                     f"at {self.distance:.1f} m, lap {self.laps_done}/{self.laps_target} "
@@ -1348,20 +993,11 @@ class FormulaTwo(Node):
         # and in what state.  Without it a car wedged against a bale is
         # indistinguishable in the log from a car that never started: both
         # are silence after the last lap message.
-        if self.corridor_mode:
-            detail = (
-                f"corridor {speed:.2f} m/s  cmd {steer[0]:+.2f}  "
-                f"{self.scripted.depth.status}"
-            )
-        else:
-            detail = (
-                f"station {frame['station'][0]:6.1f} m  lap {self.laps_done}/"
-                f"{self.laps_target}  {speed:4.2f}/{frame['v_cap'][0]:.2f} m/s  "
-                f"cmd {steer[0]:+.2f}  clear {frame['clearance'][0]:+.3f} m  "
-                f"cte {frame['lateral'][0]:+.3f} m"
-            )
         self.get_logger().info(
-            detail,
+            f"station {frame['station'][0]:6.1f} m  lap {self.laps_done}/"
+            f"{self.laps_target}  {speed:4.2f}/{frame['v_cap'][0]:.2f} m/s  "
+            f"cmd {steer[0]:+.2f}  clear {frame['clearance'][0]:+.3f} m  "
+            f"cte {frame['lateral'][0]:+.3f} m",
             throttle_duration_sec=float(self.param("telemetry_period")),
         )
 
@@ -1383,7 +1019,7 @@ class FormulaTwo(Node):
         """One DriverTelemetry per tick, whatever the tick decided.
 
         On the idle branches only the header, state and health fields mean
-        anything; the rest stay zero.  The analyser keys on `state`, so a zero
+        anything; the rest stay zero.  The analyzer keys on `state`, so a zero
         there is never mistaken for the car sitting at station 0.
         """
         if self.telemetry_pub is None:
@@ -1507,7 +1143,7 @@ class FormulaTwo(Node):
 
 def main():
     rclpy.init()
-    node = FormulaTwo()
+    node = FormulaThree()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

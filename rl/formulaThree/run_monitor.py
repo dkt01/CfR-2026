@@ -1,18 +1,5 @@
 #!/usr/bin/env python3
-"""Watch a formulaTwo run from outside the driver, and say whether it was clean.
-
-    python3 run_monitor.py --out /tmp/formula_two_monitor.json
-
-Started by validate.sh beside Gazebo (or the loopback).  The driver's own
-`clear` figure is computed from the map and the pose the driver BELIEVES, so
-it cannot see its own mistakes.  This one uses the pose topic as truth -- in
-Gazebo and the loopback it is ground truth -- and the real footprint (chassis
-box plus tyre faces, config.yaml `collision`), which is what actually touches
-a bale.  It also counts the depth watchdog's holds and losses off
-/formula_one/depth_status.
-
-Rewrites --out once a second, so the verdict survives however the run ends.
-"""
+"""Independent Gazebo clearance and sensor-health monitor for formulaThree."""
 
 from __future__ import annotations
 
@@ -41,18 +28,22 @@ HERE = Path(__file__).resolve().parent
 
 
 class RunMonitor(Node):
-    def __init__(self, cfg, out, status_topic, world_scale=0.0):
-        super().__init__("formula_two_monitor")
+    def __init__(self, cfg, out, status_topic):
+        super().__init__("formula_three_monitor")
         self.track = track_mod.build(cfg, HERE.parents[1])
-        # Match the loopback's seeded as-built bales when requested.
+        # The nominal world: in Gazebo the bales are exactly where the SDF says.
         self.world = World(self.track, cfg, 1, np.random.default_rng(0))
-        self.world.sample(np.array([True]), scale=world_scale,
-                          enabled=world_scale > 0.0)
+        self.world.sample(np.array([True]), enabled=False)
         self.graze = float(cfg["reward"]["graze_margin"])
         self.out = Path(out)
         self.hint = None
         self.state = dict(
             samples=0,
+            speed_samples=0,
+            last_speed=None,
+            last_speed_wall_time=None,
+            last_pose_wall_time=None,
+            max_overspeed=0.0,
             min_clearance=None,
             min_clearance_station=None,
             grazing_samples=0,
@@ -73,6 +64,8 @@ class RunMonitor(Node):
             clock_reversals=0,
         )
         self._last_pose = None
+        self.current_cap = None
+        self.previous_body_pose = None
         self.t0 = time.time()
         # The whole run, not just its worst moment: where Gazebo's car
         # diverges from the model is the thing a failed run should answer.
@@ -107,12 +100,7 @@ class RunMonitor(Node):
         stamp_now = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
         if self._last_pose is not None:
             lx, ly, ls = self._last_pose
-            # A rendered pose can arrive late. Compare displacement with the
-            # elapsed stamp, otherwise a 0.24 s gap at 3.4 m/s looks like a
-            # teleport even though it is physically consistent motion.
-            dt = stamp_now - ls
-            jump_limit = max(0.5, 8.0 * max(dt, 0.0) + 0.1)
-            if math.hypot(p.position.x - lx, p.position.y - ly) > jump_limit:
+            if math.hypot(p.position.x - lx, p.position.y - ly) > 0.5:
                 self.state["pose_jumps"] += 1
             if stamp_now < ls - 1e-3:
                 self.state["clock_reversals"] += 1
@@ -123,9 +111,29 @@ class RunMonitor(Node):
         if self.hint is None:
             self.hint, _ = self.track.locate(x, y, yaw)
         self.hint, station, lateral, _ = self.world.frenet(x, y, yaw, self.hint)
+        self.current_cap = float(self.track.at(station, self.track.v_cap)[0])
         clear = float(self.world.body_clearance(x, y, yaw)[0])
+        # Check the swept body between pose messages, not only their endpoints.
+        current = np.array([x[0], y[0], yaw[0]])
+        if self.previous_body_pose is not None:
+            previous = self.previous_body_pose
+            delta = current - previous
+            delta[2] = np.arctan2(np.sin(delta[2]), np.cos(delta[2]))
+            travel = np.linalg.norm(delta[:2]) + np.linalg.norm(
+                self.world.body, axis=1
+            ).max() * abs(delta[2])
+            if travel <= 0.75:
+                count = max(1, int(np.ceil(travel / 0.02)))
+                poses = previous + np.linspace(0, 1, count + 1)[:, None] * delta
+                # Nominal single-car world broadcasts over the interpolation samples.
+                swept = self.world.body_clearance(poses[:, 0], poses[:, 1], poses[:, 2])
+                clear = min(clear, float(swept.min()) - travel / count)
+            else:
+                self.state["pose_jumps"] += 1
+        self.previous_body_pose = current
         s = self.state
         s["samples"] += 1
+        s["last_pose_wall_time"] = time.time()
         s["max_abs_cte"] = max(s["max_abs_cte"], abs(float(lateral[0])))
         s["grazing_samples"] += int(clear < self.graze)
         s["contact_samples"] += int(clear <= 0.0)
@@ -152,6 +160,13 @@ class RunMonitor(Node):
         self.cmd.write(f"{stamp:.4f},cmd,{msg.steering:.5f},{msg.velocity:.4f}\n")
 
     def on_speed(self, msg):
+        if self.current_cap is not None and np.isfinite(msg.speed):
+            self.state["speed_samples"] += 1
+            self.state["last_speed"] = float(msg.speed)
+            self.state["last_speed_wall_time"] = time.time()
+            self.state["max_overspeed"] = max(
+                self.state["max_overspeed"], abs(msg.speed) - self.current_cap
+            )
         stamp = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
         self.cmd.write(f"{stamp:.4f},speed,{msg.speed:.4f},{msg.target_speed:.4f}\n")
 
@@ -176,14 +191,13 @@ class RunMonitor(Node):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default="/tmp/formula_two_monitor.json")
+    ap.add_argument("--out", default="/tmp/formula_three_monitor.json")
     ap.add_argument("--config", default=str(HERE / "config.yaml"))
     ap.add_argument("--status-topic", default="/formula_one/depth_status")
-    ap.add_argument("--world-scale", type=float, default=0.0)
     args, ros_args = ap.parse_known_args()
     cfg = yaml.safe_load(Path(args.config).read_text())
     rclpy.init(args=ros_args)
-    node = RunMonitor(cfg, args.out, args.status_topic, args.world_scale)
+    node = RunMonitor(cfg, args.out, args.status_topic)
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

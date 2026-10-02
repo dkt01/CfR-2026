@@ -1,26 +1,5 @@
 #!/usr/bin/env python3
-"""A car on ROS topics, without Gazebo -- now with a ZED depth camera.
-
-formulaOne's loopback (pose, tachometer, /drive_cmd into `Plant`), plus a
-depth image rendered from the car's true pose: a full-resolution 640x360
-32FC1 image and its CameraInfo, on the topics the ZED wrapper uses, at
-`depth_hz`.  The render is the training renderer run at full resolution, so
-this checks the NODE's half of the depth path -- decoding, the intrinsics,
-sampling the grid, the stack, the timing -- against an image whose geometry
-is known exactly.
-
-Failure injection, for the watchdog (`depth_mode`, from `depth_fail_after`
-seconds after green):
-
-    ok       depth throughout
-    stop     depth stops arriving
-    nan      frames keep arriving, every pixel NaN
-    none     no depth, ever
-    blip     depth stops for `depth_blip` seconds, then comes back
-
-Like formulaOne's, it is NOT a substitute for Gazebo: the car here is the
-model the policy trained on.
-"""
+"""ROS plumbing harness with an analytic plant and rendered ZED depth."""
 
 from __future__ import annotations
 
@@ -38,7 +17,7 @@ from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
 from sensor_msgs.msg import CameraInfo, Image
 from std_msgs.msg import Bool
 
-from cfr_interfaces.msg import ArduinoStatus, DriveCommand, StartSignal
+from cfr_interfaces.msg import ArduinoStatus, DriveCommand
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import track as track_mod  # noqa: E402
@@ -62,25 +41,15 @@ class Loopback(Node):
         self.declare_parameter("depth_mode", "ok")  # ok | stop | nan | none
         self.declare_parameter("depth_fail_after", 30.0)  # s after green
         self.declare_parameter("depth_blip", 0.6)  # s, for depth_mode blip
-        self.declare_parameter("start_along", 0.0)
-        self.declare_parameter("start_lateral", 0.0)
-        self.declare_parameter("start_heading_deg", 0.0)
-        self.declare_parameter("world_scale", 0.0)
 
         cfg = yaml.safe_load(Path(self.get_parameter("config").value).read_text())
         cfg = {**cfg, "randomize": {**cfg["randomize"], "enabled": False}}
         self.cfg = cfg
-        signal_cfg = cfg.get("formula_sub_zero", {})
-        self.signal_map_x = float(signal_cfg.get("start_signal_x_m", 17.0116))
-        self.signal_map_y = float(signal_cfg.get("start_signal_y_m", 3.8895))
         self.track = track_mod.build(cfg, Path(self.get_parameter("repo_root").value))
         rng = np.random.default_rng(0)
-        # Opt-in as-built bale displacement; the controller keeps the map.
+        # The nominal world: bales where the map says.
         self.world = World(self.track, cfg, 1, rng)
-        world_scale = float(self.get_parameter("world_scale").value)
-        self.world.sample(
-            np.array([True]), scale=world_scale, enabled=world_scale > 0.0
-        )
+        self.world.sample(np.array([True]), enabled=False)
 
         # The same camera, sampled at every pixel of the full image.
         full = copy.deepcopy(cfg)
@@ -104,23 +73,19 @@ class Loopback(Node):
             math.radians(float(cfg["camera"]["hfov_deg"])) / 2
         )
 
-        start = self.track.start_station + float(
-            self.get_parameter("start_along").value
-        )
-        lateral = float(self.get_parameter("start_lateral").value)
-        tx = float(self.track.at(start, self.track.tx))
-        ty = float(self.track.at(start, self.track.ty))
-        x = float(self.track.at(start, self.track.x)) - ty * lateral
-        y = float(self.track.at(start, self.track.y)) + tx * lateral
-        yaw = math.atan2(ty, tx) + math.radians(
-            float(self.get_parameter("start_heading_deg").value)
+        i = int(
+            np.clip(
+                np.searchsorted(self.track.s, self.track.start_station),
+                0,
+                len(self.track.s) - 1,
+            )
         )
         self.plant = Plant(cfg, 1, rng)
         self.plant.reset(
             np.array([True]),
-            np.array([x]),
-            np.array([y]),
-            np.array([yaw]),
+            np.array([self.track.x[i]]),
+            np.array([self.track.y[i]]),
+            np.array([math.atan2(self.track.ty[i], self.track.tx[i])]),
             np.zeros(1),
         )
         self.rate = float(self.get_parameter("rate").value)
@@ -146,9 +111,6 @@ class Loopback(Node):
             CameraInfo, "/zed/zed_node/depth/camera_info", 10
         )
         self.go_pub = self.create_publisher(Bool, "/start_signal_detector/go", LATCHED)
-        self.signal_pub = self.create_publisher(
-            StartSignal, "/start_signal_detector/state", 10
-        )
         self.go_pub.publish(Bool(data=False))
         self.create_timer(1.0 / self.rate, self.tick)
         self.create_timer(
@@ -199,28 +161,6 @@ class Loopback(Node):
             depth = np.full_like(depth, np.nan)
         img = np.full((HEIGHT, WIDTH), np.nan, dtype=np.float32)
         img[self.cam.rows] = depth.astype(np.float32)
-        # Render the uniquely located start light into the registered depth
-        # image and publish the same pixel the color detector would report.
-        # This lets offset-start loopback runs exercise the real landmark path.
-        c, s = math.cos(yaw), math.sin(yaw)
-        dx = self.signal_map_x - float(p.x[0])
-        dy = self.signal_map_y - float(p.y[0])
-        signal_x = c * dx + s * dy - self.cam.x
-        signal_y = -s * dx + c * dy
-        signal_u = int(round(WIDTH / 2 - 0.5 - signal_y / max(signal_x, 1e-6) * self.f))
-        signal_v = int(
-            round(
-                HEIGHT / 2 - 0.5 - (0.813 - self.cam.z) / max(signal_x, 1e-6) * self.f
-            )
-        )
-        signal_visible = (
-            not failed
-            and signal_x > 0.5
-            and 5 <= signal_u < WIDTH - 5
-            and 5 <= signal_v < HEIGHT - 5
-        )
-        if signal_visible:
-            img[signal_v - 4 : signal_v + 5, signal_u - 4 : signal_u + 5] = signal_x
 
         msg = Image()
         msg.header.stamp = now.to_msg()
@@ -239,17 +179,6 @@ class Loopback(Node):
         info.k = [self.f, 0.0, cx, 0.0, self.f, cy, 0.0, 0.0, 1.0]
         info.p = [self.f, 0.0, cx, 0.0, 0.0, self.f, cy, 0.0, 0.0, 0.0, 1.0, 0.0]
         self.info_pub.publish(info)
-        if signal_visible:
-            signal = StartSignal()
-            signal.header = msg.header
-            signal.state = StartSignal.GREEN if self.released else StartSignal.RED
-            signal.go = self.released
-            signal.armed = True
-            signal.x = signal.lock_x = float(signal_u)
-            signal.y = signal.lock_y = float(signal_v)
-            signal.red_pixels = 80 if not self.released else 0
-            signal.green_pixels = 80 if self.released else 0
-            self.signal_pub.publish(signal)
         self.depth_sent += 1
 
     def tick(self):

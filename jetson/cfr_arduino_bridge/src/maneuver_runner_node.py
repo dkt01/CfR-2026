@@ -59,6 +59,14 @@ BAG_TOPICS = [
     "/zed/zed_node/odom",
     "/zed/zed_node/pose",
     "/zed/zed_node/imu/data",
+    # For the Run Lab's camera checks (web/run-lab/server/camera_check.py):
+    # the thinned depth from depth_thinner_node.py, what places it, and the
+    # ZED's own frames.
+    "/zed/zed_node/depth/camera_info",
+    "/run_recorder/depth/compressed",
+    "/run_recorder/depth",
+    "/tf",
+    "/tf_static",
 ]
 
 CSV_COLUMNS = [

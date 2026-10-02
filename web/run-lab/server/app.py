@@ -555,9 +555,16 @@ def archive(name: str, analysis: bool = False):
 
 @app.get("/api/runs/{name}/report.md")
 def report(name: str):
-    s = json.loads(analysis_file(name, "summary.json").read_text())
+    # A calibration run has no Run Lab summary; its report is the one
+    # analyze_run.py (plus camera_check.py) wrote into the run.
+    own = run_dir(name) / "report.md"
+    if own.is_file():
+        text = own.read_text()
+    else:
+        s = json.loads(analysis_file(name, "summary.json").read_text())
+        text = markdown_report(name, s)
     return Response(
-        markdown_report(name, s),
+        text,
         media_type="text/markdown",
         headers={"Content-Disposition": f'attachment; filename="{name}_report.md"'},
     )

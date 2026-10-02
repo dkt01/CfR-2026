@@ -16,6 +16,7 @@ sys.path.insert(0, str(HERE.parent))
 from formulaTwo import track as track_mod
 
 from controller import FormulaSubZeroDriver, coast_visible_speed_cap
+from corridor import CorridorFollower
 from depth_planner import DepthPlanner, depth_points
 from planner import SpeedCoursePlan
 
@@ -74,7 +75,39 @@ def main():
     assert depth.map_consistent
     print("map trust has immediate hazard response and clean-frame debounce")
 
-    driver = FormulaSubZeroDriver(track, cfg)
+    follower = CorridorFollower(cfg)
+    xs = np.linspace(0.6, 3.0, 20)
+    walls = np.vstack((np.column_stack((xs, np.full_like(xs, 0.47))),
+                       np.column_stack((xs, np.full_like(xs, -0.47)))))
+    steer, want = follower.command(walls, 0.0, 0.0)
+    assert abs(steer) < 0.01 and want > 0.5
+    follower.reset()
+    shifted = walls.copy()
+    shifted[:, 1] += 0.10
+    steer, want = follower.command(shifted, 0.0, 0.0)
+    assert steer > 0 and want > 0
+    one_wall = shifted[:len(xs)]
+    assert follower.command(one_wall, 0.0, 0.0)[1] > 0
+    assert follower.command(shifted[len(xs):], 0.0, 0.0)[1] > 0
+    assert follower.command(np.empty((0, 2)), 0.0, 0.0)[1] == 0
+    narrow = walls.copy()
+    narrow[:, 1] *= 0.2
+    assert follower.command(narrow, 0.0, 0.0)[1] == 0
+    blocked = np.vstack((walls, [[0.45, 0.0]]))
+    assert follower.command(blocked, 0.0, 0.0)[1] == 0
+    follower.reset()
+    bent = np.vstack((
+        np.column_stack((xs, 0.47 + 0.30 * xs * xs)),
+        np.column_stack((xs, -0.47 + 0.30 * xs * xs)),
+    ))
+    for _ in range(8):
+        bend_steer, bend_speed = follower.command(bent, 1.2, 0.0)
+    assert bend_steer > 0.15 and bend_speed < 1.5, follower.status
+    print("corridor follower handles straight, curved, missing-wall, and blocked depth")
+
+    map_cfg = copy.deepcopy(cfg)
+    map_cfg["formula_sub_zero"]["navigation"] = "map_mpc"
+    driver = FormulaSubZeroDriver(track, map_cfg)
     assert driver.n > driver.delay_steps
     print("MPC initialized without ROS or Gazebo")
 

@@ -76,6 +76,12 @@ namespace cfr_arduino_bridge {
       command_dead_time_ = declare_parameter<double>("command_dead_time", 0.19);
 
       understeer_gradient_ = declare_parameter<double>("understeer_gradient", 0.007);
+      // Gazebo's tire contacts turn the car wider than the yaw rate this node
+      // asks for (measure_turn_radius.py: ~1.10x the kinematic radius).  The
+      // steering table is the REAL car's effective angle, so the request is
+      // scaled up by this to make Gazebo deliver what the car does.  1.0 is
+      // no compensation.
+      gazebo_yaw_gain_ = declare_parameter<double>("gazebo_yaw_gain", 1.0);
 
       // Drivetrain, for the simulated tachometer.  These mirror the real
       // bridge's parameters of the same name so the sim reports spur RPM on
@@ -122,7 +128,7 @@ namespace cfr_arduino_bridge {
 
       if (wheelbase_ <= 0.0 || max_speed_ <= 0.0 || max_steering_angle_ <= 0.0 || neutral_speed_deadband_ < 0.0 ||
           vehicle_mass_ <= 0.0 || max_acceleration_ <= 0.0 || brake_deceleration_ < 0.0 || command_dead_time_ < 0.0 ||
-          understeer_gradient_ < 0.0 || coast_f0_ < 0.0 || coast_f1_ < 0.0 || coast_f2_ < 0.0) {
+          understeer_gradient_ < 0.0 || gazebo_yaw_gain_ <= 0.0 || coast_f0_ < 0.0 || coast_f1_ < 0.0 || coast_f2_ < 0.0) {
         throw std::invalid_argument("vehicle dimensions and limits must be non-negative, with positive dimensions");
       }
       if (tire_diameter_ <= 0.0 || spur_to_wheel_ratio_ <= 0.0 || tach_window_ <= 0.0 || tach_stall_timeout_ <= 0.0 ||
@@ -225,7 +231,7 @@ namespace cfr_arduino_bridge {
         // so the achieved radius grows with speed instead of staying kinematic.
         // K = 0 collapses this back to the textbook form.
         const double effective_wheelbase = wheelbase_ + understeer_gradient_ * simulated_speed_ * simulated_speed_;
-        twist.angular.z = simulated_speed_ * std::tan(steering) / effective_wheelbase;
+        twist.angular.z = gazebo_yaw_gain_ * simulated_speed_ * std::tan(steering) / effective_wheelbase;
       } else {
         // The bridge snaps its target to zero rather than ramping it.
         slewed_target_ = 0.0;
@@ -499,6 +505,7 @@ namespace cfr_arduino_bridge {
     double brake_deceleration_ = 0.0;
     double command_dead_time_ = 0.19;
     double understeer_gradient_ = 0.007;
+    double gazebo_yaw_gain_ = 1.0;
     double tire_diameter_ = 0.1132;
     double spur_to_wheel_ratio_ = 2.85;
     double tach_window_ = 0.1;

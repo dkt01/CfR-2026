@@ -8,6 +8,7 @@ consumes:
     <run>/arduino_tx.log   host-timestamped frames written to the firmware
     <run>/metadata.yaml    profile, gains, git SHA, battery, result
     <run>/runner.log       what the runner said while it ran
+    <run>/imu.csv          one row per ZED IMU message, same clock as telemetry
     <run>/bag/             rosbag2, raw backup
 
 telemetry.csv is deliberately the primary one rather than the bag: it needs no
@@ -36,6 +37,10 @@ _NUMERIC = {
     "dist_along",
     "dist_total",
     "odom_stamp",
+    "t_msg",
+    "wz",
+    "ax",
+    "ay",
 }
 _INTEGER = {
     "step_index",
@@ -103,9 +108,12 @@ class Segment:
 
 
 class Run:
-    def __init__(self, path, rows, metadata, debug_lines, trace_lines, skipped_lines):
+    def __init__(
+        self, path, rows, metadata, debug_lines, trace_lines, skipped_lines, imu=()
+    ):
         self.path = path
         self.rows = rows
+        self.imu = list(imu)
         self.metadata = metadata
         self.debug_lines = debug_lines
         self.trace_lines = trace_lines
@@ -129,6 +137,18 @@ class Run:
         node = params.get("arduino_bridge") or params.get("/arduino_bridge") or {}
         values = node.get("ros__parameters", node)
         return values.get(name, default)
+
+    @property
+    def steering_trim(self):
+        """What arduino_bridge added to every steering command in this run.
+
+        Analyses report steering in raw servo-command space (vehicle.yaml's),
+        so a run driven with a trim must add it back."""
+        return float(self.parameter("steering_trim", 0.0) or 0.0)
+
+    def imu_between(self, t0, t1):
+        """imu.csv rows with t_ros in [t0, t1]."""
+        return [row for row in self.imu if t0 <= row["t_ros"] <= t1]
 
     def segments(self, phase="running"):
         """Executed steps, in order, excluding gains_wait rows (see Segment)."""
@@ -229,4 +249,13 @@ def load(path):
 
         debug_lines, trace_lines, skipped = parse_trace_file(rx_path)
 
-    return Run(path, rows, metadata, debug_lines, trace_lines, skipped)
+    imu = []
+    imu_path = os.path.join(path, "imu.csv")
+    if os.path.isfile(imu_path):
+        with open(imu_path, "r", encoding="utf-8", newline="") as handle:
+            for raw in csv.DictReader(handle):
+                row = {name: _coerce(name, value) for name, value in raw.items()}
+                if row.get("t_ros") is not None and row.get("wz") is not None:
+                    imu.append(row)
+
+    return Run(path, rows, metadata, debug_lines, trace_lines, skipped, imu)

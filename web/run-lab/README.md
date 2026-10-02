@@ -148,6 +148,16 @@ keys step, and shift-arrow steps 5 s.
   servo lag and `yaw_response_tau`. `server/selftest.py` holds it to cases with
   a known answer. On a run through `ros_loopback` (which *is* the plant) it
   recovers 0.53 s against the plant's 0.58 s.
+- **Camera and pose checks** (`server/camera_check.py`, run on every bag and
+  after each `straight_line_trim` / `figure_eight_calib`, appended to its
+  `report.md`). A floor-plane fit in the depth frames gives the real lens
+  height and tilt, compared against `vehicle.yaml`'s `camera_mount`. The same
+  fit measures how much flat floor reaches the drivers' obstacle band when they
+  trust that mount. The depth FOV is compared with the one the driver config
+  assumes. The pose's and odom's roll and pitch are compared with the IMU's,
+  which catches a ZED tracking frame tilted against gravity. A figure-8 adds the
+  pose lever arm. Run it alone with
+  `web/run-lab/.venv/bin/python web/run-lab/server/camera_check.py runs/<run>`.
 - **Sim runs** (a `/clock` in the bag) are put on sim time, so lap times are
   correct even when Gazebo runs slower than real time.
 

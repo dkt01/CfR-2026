@@ -3,9 +3,9 @@
 The pipeline, in the order it runs on the car:
 
     1. SAMPLE the depth image on a canonical pinhole grid: every 10th column
-       and every 5th row of the 640 x 360 image, at pixel centres -- 64
+       and every 5th row of the 640 x 360 image, at pixel centers -- 64
        azimuths.  `sample_depth`.
-    2. BACK-PROJECT each pixel with the known mount (0.20 m up, levelled by
+    2. BACK-PROJECT each pixel with the known mount (0.20 m up, leveled by
        the ZED's IMU), keep the points 0.07-0.33 m above the ground -- bale
        faces, not ground, not sky -- and take the nearest horizontal range per
        column.  `depth_to_scan`.
@@ -43,7 +43,7 @@ class Camera:
         self.H = hi // rs
         half = np.deg2rad(float(c["hfov_deg"])) / 2
         f = (wi / 2) / np.tan(half)
-        # Exactly on pixel centres (pixel k spans [k, k+1)), so the car's
+        # Exactly on pixel centers (pixel k spans [k, k+1)), so the car's
         # sampler reads one real pixel per ray rather than rounding between two.
         u = cs * np.arange(self.W) + cs // 2 + 0.5
         v = rs * np.arange(self.H) + rs // 2 + 0.5
@@ -107,11 +107,11 @@ class Camera:
         are LEVELLED by that attitude before the height band is applied.
 
         Levelling is not optional on the car.  Measured in Gazebo: through the
-        20 m chicane the chassis rolls ~5 deg, and an unlevelled scan lost 75%
+        20 m chicane the chassis rolls ~5 deg, and an unleveled scan lost 75%
         of its beams there -- at the image edges a 5 deg roll moves a bale
         point 2 m away by ~0.25 m, straight out of a 0.26 m band -- which
         tripped the depth watchdog and abandoned the run.  Training believed
-        level (0, 0), so a levelled scan is the scan the policy learned on.
+        level (0, 0), so a leveled scan is the scan the policy learned on.
         Columns with nothing in the band are inf.
 
         `origin` (dx, dy, dyaw) is where the real lens sits against the
@@ -217,6 +217,41 @@ class Camera:
         with np.errstate(divide="ignore", invalid="ignore"):
             e = np.log(np.maximum(scan, _R0) / _R0) / np.log(self.scan_max / _R0)
         return np.where(np.isfinite(scan), np.clip(e, 0.0, 1.0), INVALID)
+
+    def gap_offset(self, scan, deadzone_rad, max_range):
+        """(B,) lateral offset, (B,) valid -- from one ENCODED scan row.
+
+        Offset is the midpoint between the nearest in-band bale left and
+        right of `deadzone_rad`, in camera-frame meters (+left), decoded
+        straight from `encode`'s log range. Invalid where either side has no
+        bale within `max_range`: open track, straight ahead, or a corner
+        where only one wall is in view. This reads the scan the actor already
+        carries, not the SDF or the pose-anchored centerline, so it centers
+        on what the camera currently sees.
+        """
+        scan = np.atleast_2d(scan)
+        valid = scan > (INVALID + 1e-6)
+        with np.errstate(over="ignore"):
+            rng = np.where(
+                valid, _R0 * (self.scan_max / _R0) ** np.clip(scan, 0.0, 1.0), np.inf
+            )
+        az = self.azimuth[None, :]
+        left = (az > deadzone_rad) & (rng <= max_range)
+        right = (az < -deadzone_rad) & (rng <= max_range)
+
+        def nearest(mask):
+            masked = np.where(mask, rng, np.inf)
+            j = np.argmin(masked, axis=1)
+            r = masked[np.arange(masked.shape[0]), j]
+            ok = np.isfinite(r)
+            y = np.where(ok, r * np.sin(self.azimuth[j]), 0.0)
+            return y, ok
+
+        y_left, ok_left = nearest(left)
+        y_right, ok_right = nearest(right)
+        both = ok_left & ok_right
+        offset = np.where(both, 0.5 * (y_left + y_right), 0.0)
+        return offset, both
 
     # ------------------------------------------------------------- the car
 

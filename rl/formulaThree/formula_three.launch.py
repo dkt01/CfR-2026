@@ -1,31 +1,4 @@
-"""Run the formulaTwo policy against whatever stack is already up.
-
-    ros2 launch rl/formulaTwo/formula_two.launch.py            # the 40M policy
-
-The default policy is the top-level policy.npz + config.yaml when they exist
-(a tree synced to the Orin by jetson/scripts/syncSoftware.sh), and
-bestModel/f2_v3_59M/ otherwise (the repo).
-
-Brings up only the driver and, optionally, RViz.  It assumes something else is
-already publishing the pose, the tachometer and the ZED depth image, and
-consuming /drive_cmd: `speed_course.launch.py sensors:=true laps:=3` in Gazebo (without
-sensors:=true there is NO depth and the car will not move), or the bridge and
-the ZED on the car.
-
-The ROS node name defaults to `formula_one` (node_name:=) so that
-jetson/scripts/record_run.py and the Run Lab, which key on
-/formula_one/telemetry, record and analyse it unchanged.  The manual start
-service is therefore /formula_one/manual_start, as it is for formulaOne.
-Never run both drivers at once: both publish /drive_cmd.
-
-camera_info_topic:=auto picks Gazebo's name under use_sim_time (the bridge
-publishes /zed/zed_node/left/image_rect_color/camera_info for the depth-
-registered image) and the ZED wrapper's /zed/zed_node/depth/camera_info on
-the car.
-
-Recording is as in formulaOne: record:=auto records whenever use_sim_time is
-false.  The label is prefixed f2_.
-"""
+"""Launch formulaThree with its checkpoint config; retain /formula_one telemetry for Run Lab."""
 
 import shlex
 from pathlib import Path
@@ -38,9 +11,9 @@ from launch_ros.actions import Node
 
 HERE = Path(__file__).resolve().parent
 # A synced Orin tree (jetson/scripts/syncSoftware.sh) has the chosen policy
-# and ITS config at the top level and no bestModel/; the repo has bestModel/.
+# and its config at the top level; a checkout defaults to runs/f3_v1/.
 DEPLOYED = HERE / "policy.npz"
-POLICY_DIR = HERE if DEPLOYED.exists() else HERE / "bestModel/f2_v3_59M"
+POLICY_DIR = HERE if DEPLOYED.exists() else HERE / "runs/f3_v1"
 SIM_CAMERA_INFO = "/zed/zed_node/left/image_rect_color/camera_info"
 CAR_CAMERA_INFO = "/zed/zed_node/depth/camera_info"
 
@@ -48,10 +21,13 @@ CAR_CAMERA_INFO = "/zed/zed_node/depth/camera_info"
 def generate_launch_description():
     args = [
         DeclareLaunchArgument("policy", default_value=str(POLICY_DIR / "policy.npz")),
-        DeclareLaunchArgument("config", default_value=str(POLICY_DIR / "config.yaml")),
-        DeclareLaunchArgument("python", default_value="python3"),
         DeclareLaunchArgument(
-            "driver", default_value="policy", description="policy | baseline | mpc"
+            "config",
+            default_value="",
+            description="Default: config beside policy; source config for baseline",
+        ),
+        DeclareLaunchArgument(
+            "driver", default_value="policy", description="policy | baseline"
         ),
         DeclareLaunchArgument(
             "laps", default_value="0", description="0 takes it from config (3)"
@@ -64,7 +40,6 @@ def generate_launch_description():
         DeclareLaunchArgument("use_sim_time", default_value="true"),
         DeclareLaunchArgument("rviz", default_value="true"),
         DeclareLaunchArgument("speed_scale", default_value="1.0"),
-        DeclareLaunchArgument("pose_is_camera", default_value="false"),
         DeclareLaunchArgument("node_name", default_value="formula_one"),
         DeclareLaunchArgument(
             "depth_topic", default_value="/zed/zed_node/depth/depth_registered"
@@ -106,8 +81,8 @@ def generate_launch_description():
     rviz = Node(
         package="rviz2",
         executable="rviz2",
-        name="formula_two_rviz",
-        arguments=["-d", str(HERE / "rviz/formula_two.rviz")],
+        name="formula_three_rviz",
+        arguments=["-d", str(HERE / "rviz/formula_three.rviz")],
         parameters=[{"use_sim_time": LaunchConfiguration("use_sim_time")}],
         condition=IfCondition(LaunchConfiguration("rviz")),
         output="log",
@@ -132,12 +107,16 @@ def driver(context, *args, **kwargs):
         info = SIM_CAMERA_INFO if sim else CAR_CAMERA_INFO
     params = {
         "policy": value("policy"),
-        "config": value("config"),
+        "config": value("config")
+        or str(
+            HERE / "config.yaml"
+            if value("driver") == "baseline"
+            else Path(value("policy")).with_name("config.yaml")
+        ),
         "driver": value("driver"),
         "laps": value("laps"),
         "anchor": value("anchor"),
         "speed_scale": value("speed_scale"),
-        "pose_is_camera": value("pose_is_camera"),
         "use_sim_time": value("use_sim_time"),
         "depth_topic": value("depth_topic"),
         "camera_info_topic": info,
@@ -146,7 +125,7 @@ def driver(context, *args, **kwargs):
         "depth_hold_after": value("depth_hold_after"),
         "depth_timeout": value("depth_timeout"),
     }
-    cmd = [value("python"), str(HERE / "formula_two_node.py"), "--ros-args"]
+    cmd = ["python3", str(HERE / "formula_three_node.py"), "--ros-args"]
     cmd += ["-r", f"__node:={value('node_name')}"]
     for key, val in params.items():
         cmd += ["-p", f"{key}:={val}"]
@@ -165,22 +144,27 @@ def recorder(context, *args, **kwargs):
         return []
     drv = value("driver")
     label = value("record_label") or (
-        drv if drv in ("baseline", "mpc") else Path(value("policy")).parent.name
+        "baseline" if drv == "baseline" else Path(value("policy")).parent.name
     )
     script = HERE.parents[1] / "jetson" / "scripts" / "record_run.py"
     cmd = [
         "python3",
         str(script),
         "--label",
-        f"{'fsz' if drv == 'mpc' else 'f2'}_{label}",
+        f"f3_{label}",
         "--driver",
         drv,
         "--speed-scale",
         value("speed_scale"),
         "--config",
-        value("config"),
+        value("config")
+        or str(
+            HERE / "config.yaml"
+            if drv == "baseline"
+            else Path(value("policy")).with_name("config.yaml")
+        ),
     ]
-    if drv == "policy":
+    if drv != "baseline":
         cmd += ["--policy", value("policy")]
     cmd += shlex.split(value("record_args"))
     return [

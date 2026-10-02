@@ -5,9 +5,9 @@ from __future__ import annotations
 import math
 import time
 
-import casadi as ca
 import numpy as np
 
+from corridor import CorridorFollower
 from depth_planner import DepthPlanner
 from planner import SpeedCoursePlan
 from recovery import StallRecovery
@@ -26,17 +26,22 @@ class FormulaSubZeroDriver:
     def __init__(self, track, cfg):
         self.track = track
         self.cfg = cfg
-        self.plan = SpeedCoursePlan(track, cfg)
-        self.depth = DepthPlanner(track, self.plan, cfg)
-        self.recovery = StallRecovery(track, cfg)
         self.pc = cfg["formula_sub_zero"]
+        self.navigation = self.pc.get("navigation", "map_mpc")
+        if self.navigation not in ("corridor", "map_mpc"):
+            raise ValueError(f"unknown FormulaSubZero navigation: {self.navigation}")
+        self.plan = SpeedCoursePlan(track, cfg) if self.navigation == "map_mpc" else None
+        self.depth = DepthPlanner(track, self.plan, cfg)
+        self.corridor = CorridorFollower(cfg) if self.navigation == "corridor" else None
+        self.recovery = StallRecovery(track, cfg)
         self.plant = cfg["plant"]
         self.n = int(self.pc["horizon"])
         self.dt = float(self.pc["horizon_dt"])
         self.delay_steps = int(self.pc["command_delay_steps"])
         if self.n <= self.delay_steps:
             raise ValueError("MPC horizon must exceed command delay")
-        self._build()
+        if self.navigation == "map_mpc":
+            self._build()
         self.reset()
 
     def reset(self, n=1):
@@ -47,8 +52,12 @@ class FormulaSubZeroDriver:
         self.last_requested_speed = 0.0
         self.override_command = None
         self.recovery.reset()
+        if self.corridor is not None:
+            self.corridor.reset()
 
     def _build(self):
+        import casadi as ca
+
         n, dt = self.n, self.dt
         opt = ca.Opti()
         lateral = opt.variable(n + 1)
@@ -113,6 +122,13 @@ class FormulaSubZeroDriver:
     def act_frame(self, frame, x, y, yaw, speed, measured_rate, last_steer, residual,
                   raw_pose, now_s, recovery_enabled):
         self.override_command = None
+        if self.corridor is not None:
+            points = self.depth.points
+            steer, want = self.corridor.command(points, speed, measured_rate)
+            self.depth.status = self.corridor.status
+            self.override_command = (steer, want)
+            self.last_requested_speed = want
+            return np.array([[0.0, -1.0]], dtype=float)
         station = float(frame["station"][0])
         cap = float(frame["v_cap"][0])
         floor = float(frame["v_floor"][0])

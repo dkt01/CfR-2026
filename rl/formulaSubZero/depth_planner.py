@@ -107,6 +107,11 @@ class DepthPlanner:
         self.half_length = float(collision["chassis_half_length"])
         self.half_width = float(collision["wheel_outer_y"])
 
+    def update_local(self, points, stamp):
+        """Keep car-frame depth for corridor steering without a pose match."""
+        self.points = np.asarray(points, dtype=np.float32)
+        self.capture_stamp = stamp
+
     def update(self, points, raw_pose, stamp, scan, azimuth, camera_y):
         self.points = points
         self.capture_pose = tuple(raw_pose)

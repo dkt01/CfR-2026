@@ -48,6 +48,7 @@ RL_CONFIGS = {
     "formulaOne": REPO_ROOT / "rl/formulaOne/config.yaml",
     "formulaTwo": REPO_ROOT / "rl/formulaTwo/config.yaml",
     "formulaThree": REPO_ROOT / "rl/formulaThree/config.yaml",
+    "formulaSubZero": REPO_ROOT / "rl/formulaSubZero/config.yaml",
 }
 TOLERANCE = 1e-3
 findings: list[str] = []
@@ -68,9 +69,15 @@ def main() -> int:
     steering = vehicle["steering"]
     wheelbase = vehicle["geometry"]["wheelbase"]["value"]
 
-    table = steering["effective_angle_table"]["rows"]
-    table_left = max(angle for _, angle in table)
-    table_right = abs(min(angle for _, angle in table))
+    raw_table = steering["effective_angle_table"]["rows"]
+    center_offset = steering["center_offset"]["value"]
+    # vehicle.yaml's table is in raw servo-command space (measured with
+    # steering_trim 0).  Everything downstream consumes DriveCommand.steering,
+    # which arduino_bridge shifts by steering_trim, so their copies are the
+    # raw table shifted by center_offset (see propagate_plant.py).
+    table = [[round(c - center_offset, 6), a] for c, a in raw_table]
+    table_left = max(angle for _, angle in raw_table)
+    table_right = abs(min(angle for _, angle in raw_table))
     max_left = steering["max_angle_left"]["value"]
     max_right = steering["max_angle_right"]["value"]
     provenance = (
@@ -110,6 +117,13 @@ def main() -> int:
         if steering_trim is not None
         else "arduino_bridge.yaml has no steering_trim parameter - has "
         "arduino_bridge_node.cpp's steering_trim param been added?",
+    )
+    note(
+        isinstance(steering_trim, float),
+        "arduino_bridge steering_trim is written as a float",
+        f"arduino_bridge.yaml has steering_trim: {steering_trim!r}. The node declares a\n"
+        "double and rclcpp will not set it from an int, so the bridge dies at launch.\n"
+        "Write it with a decimal point (0.0, not 0).",
     )
 
     sim = bridge["sim_vehicle"]["ros__parameters"]

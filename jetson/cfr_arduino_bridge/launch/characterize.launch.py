@@ -17,6 +17,7 @@ one-page printable version.
 """
 
 import os
+import re
 from datetime import datetime, timezone
 
 from launch import LaunchDescription
@@ -67,7 +68,14 @@ def _launch_setup(context, *args, **kwargs):
 
     run_root = os.path.expanduser(LaunchConfiguration("run_root").perform(context))
     label = LaunchConfiguration("label").perform(context)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    # The Orin has no clock source in the field: after a reboot away from a
+    # network it reads 1970, and runs were named 19700101T... and lost among
+    # the old ones.  The Run Lab passes its own UTC time here.
+    stamp = LaunchConfiguration("stamp").perform(context) or datetime.now(
+        timezone.utc
+    ).strftime("%Y%m%dT%H%M%SZ")
+    if not re.fullmatch(r"\d{8}T\d{6}Z", stamp):
+        raise RuntimeError(f"stamp {stamp!r} is not YYYYMMDDTHHMMSSZ")
     basename = os.path.splitext(os.path.basename(profile_path))[0]
     suffix = f"_{label}" if label else ""
     run_dir = os.path.join(run_root, f"{stamp}_{basename}{suffix}")
@@ -252,6 +260,17 @@ def _launch_setup(context, *args, **kwargs):
         actions.append(bridge)
         if use_zed:
             actions.append(zed)
+    depth_hz = float(LaunchConfiguration("depth_hz").perform(context))
+    if depth_hz > 0 and (use_sim or use_zed):
+        actions.append(
+            Node(
+                package="cfr_arduino_bridge",
+                executable="depth_thinner_node.py",
+                name="depth_thinner",
+                output="log",
+                parameters=[{"rate_hz": depth_hz, "use_sim_time": use_sim}],
+            )
+        )
     actions += [runner, shutdown_with_runner]
     return actions
 
@@ -277,6 +296,12 @@ def generate_launch_description():
                 "label",
                 default_value="",
                 description="Optional suffix on the run directory, e.g. kp24",
+            ),
+            DeclareLaunchArgument(
+                "stamp",
+                default_value="",
+                description="UTC run-directory stamp, YYYYMMDDTHHMMSSZ; empty uses the "
+                "Orin's clock, which reads 1970 after a reboot off-network",
             ),
             DeclareLaunchArgument(
                 "gains",
@@ -336,6 +361,12 @@ def generate_launch_description():
                 "record_bag",
                 default_value="true",
                 description="Record a rosbag alongside telemetry.csv",
+            ),
+            DeclareLaunchArgument(
+                "depth_hz",
+                default_value="2.0",
+                description="Depth frames per second kept in the bag for the Run Lab's "
+                "camera mount and pose checks; 0 records none",
             ),
             DeclareLaunchArgument(
                 "require_estop_cycle",

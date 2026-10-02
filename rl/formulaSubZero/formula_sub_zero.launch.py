@@ -10,13 +10,15 @@ from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
 HERE = Path(__file__).resolve().parent
-PYTHON = os.environ.get("FORMULA_SUB_ZERO_PYTHON", str(HERE / ".venv/bin/python"))
+PYTHON = os.environ.get("FORMULA_SUB_ZERO_PYTHON",
+                        str(HERE / ".venv/bin/python") if (HERE / ".venv/bin/python").exists()
+                        else "python3")
 
 
 def generate_launch_description():
-    defaults = {"config": str(HERE / "config.yaml"), "python": PYTHON, "laps": "3",
+    defaults = {"config": str(HERE / "config.yaml"), "python": PYTHON, "laps": "0",
                 "rviz": "false", "use_sim_time": "false", "speed_scale": "0.3",
-                "record": "auto", "record_label": "mpc", "anchor": "signal", "driver": "mpc",
+                "record": "auto", "record_label": "corridor", "anchor": "signal", "driver": "mpc",
                 "pose_is_camera": "true"}
     return LaunchDescription([
         *(DeclareLaunchArgument(k, default_value=v) for k, v in defaults.items()),

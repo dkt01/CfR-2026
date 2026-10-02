@@ -11,10 +11,12 @@ the car than that command does, and it cannot skip the interlock.
 
 from __future__ import annotations
 
+import json
 import re
 import shlex
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -31,10 +33,14 @@ ARDUINO_BRIDGE_YAML = (
 sys.path.insert(0, str(JETSON_SCRIPTS))
 
 # Profiles this page offers, and what each one's patch should propagate to
-# once applied.  "trim" -> vehicle.yaml + the real steering_trim parameter,
-# never the RL configs (a hardware defect being trimmed out, not a plant
-# shape the simulator should reproduce).  "plant" -> vehicle.yaml + all three
-# rl/formula*/config.yaml plant: blocks, via propagate_plant.py.
+# once applied.  "trim" -> vehicle.yaml + the real steering_trim parameter, and
+# then propagate_plant.py too: the sim and RL tables are vehicle.yaml's raw
+# table shifted by center_offset, so a new offset moves every copy even though
+# the table itself was not re-measured.  "plant" -> vehicle.yaml + the same
+# two steps, since a figure-8 re-measures both the table and the offset.
+# Past this the Orin's clock is wrong, not just drifting.
+CLOCK_SKEW_S = 60
+
 PROFILES = {
     "straight_line_trim": {
         "description": "10 m at 1 m/s, dead straight - a fast steering.center_offset re-check.",
@@ -57,8 +63,26 @@ def launch(profile, job, host):
     """
     if profile not in PROFILES:
         raise ValueError(f"unknown profile {profile!r}")
+    now = time.time()
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(now))
+    try:
+        skew = int(orin.ssh(host, "date -u +%s", timeout=10).stdout.strip()) - now
+    except (ValueError, subprocess.TimeoutExpired):
+        skew = None
+    if skew is None or abs(skew) > CLOCK_SKEW_S:
+        reads = (
+            time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(now + skew))
+            if skew is not None
+            else "unreadable"
+        )
+        job.log(
+            f"WARNING: the Orin's clock reads {reads} UTC, not {stamp}. The run is named "
+            f"from this laptop's clock, but its file times and metadata timestamps are "
+            f"the Orin's. Set it: ssh {host} 'sudo date -u -s @{int(now)}'"
+        )
     command = orin.ros_command(
         f"ros2 launch cfr_arduino_bridge characterize.launch.py profile:={shlex.quote(profile)}"
+        f" stamp:={stamp}"
     )
     job.log(f"ssh {host} {command}")
     proc = subprocess.Popen(
@@ -119,15 +143,29 @@ def pull_and_analyze(run_name, job, host, remote, runs_local):
     )
     if result.returncode != 0:
         raise RuntimeError(f"analyze_run.py failed:\n{result.stdout}\n{result.stderr}")
+    # Camera mount, depth band and tracking-frame checks into the same
+    # report.  A failure here must not lose the steering result above.
+    job.update(0.995, "checking the camera and pose")
+    check = subprocess.run(
+        [sys.executable, str(HERE / "camera_check.py"), str(run_path), "--report"],
+        capture_output=True,
+        text=True,
+    )
+    if check.returncode != 0:
+        job.log(f"camera_check.py failed:\n{check.stdout}\n{check.stderr}")
     patch_path = run_path / "vehicle_patch.yaml"
     report_path = run_path / "report.md"
     import yaml
 
     patch = yaml.safe_load(patch_path.read_text()) if patch_path.exists() else None
+    camera_path = run_path / "camera_check.json"
     return {
         "run": run_name,
         "report": report_path.read_text() if report_path.exists() else "",
         "values": (patch or {}).get("values", {}),
+        "camera_check": json.loads(camera_path.read_text())
+        if camera_path.exists()
+        else None,
     }
 
 
@@ -155,11 +193,10 @@ def apply(run_name, profile, runs_local):
         ("apply_vehicle_patch", _run_script("apply_vehicle_patch.py", str(run_path)))
     ]
 
-    propagation = PROFILES[profile]["propagation"]
-    if propagation == "trim":
-        steps.append(("apply_steering_trim", _run_script("apply_steering_trim.py")))
-    elif propagation == "plant":
-        steps.append(("propagate_plant", _run_script("propagate_plant.py")))
+    # Both profiles can move center_offset, and propagate_plant.py shifts the
+    # table by it, so the bridge trim and the table copies must change together.
+    steps.append(("apply_steering_trim", _run_script("apply_steering_trim.py")))
+    steps.append(("propagate_plant", _run_script("propagate_plant.py")))
 
     consistency = _run_script("check_steering_consistency.py")
     steps.append(("check_steering_consistency", consistency))
