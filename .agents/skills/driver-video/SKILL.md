@@ -17,6 +17,8 @@ $S/video.sh replay --course obstacle --policy rl/obstacleRacer/runs/v6/best_mode
 $S/video.sh gazebo --course speed    --policy rl/formulaOne/bestModel/v12/policy.npz
 $S/video.sh replay --course speed    --policy rl/formulaOne/bestModel/v12/policy.npz --pick any
 $S/video.sh gazebo --course obstacle --policy rl/obstacleRacer/runs/v8/policy.npz --segmentation
+$S/video.sh gazebo --course obstacle --driver planz --seed 208 --segmentation
+$S/video.sh gazebo --course speed    --driver planz
 $S/video.sh stop
 ```
 
@@ -67,6 +69,11 @@ replay unasked.
   shows whether any numpy episode finishes. v12's never did (it grazes a bale
   at about 6 s, which the numpy sim counts as a crash), so its replay needs
   `--pick any` and shows only that. Gazebo mode is the way to film v12.
+- **Plan Z** (`drivers/planZ`, either course) has no policy: pass
+  `--driver planz` instead of `--policy`, and `--knobs "name=value ..."` to set
+  its knobs. Gazebo mode only (there is no numpy rollout to replay). It runs
+  the whole race, 2 laps of the Obstacle Course or 3 of the Speed Course, with
+  the ZED rendered on both, and the video lands in `drivers/planZ/video/`.
 - bale_follower was trained in Gazebo and has no numpy sim. It isn't covered.
 
 Paths can be relative to the repo. `runs/` is gitignored, so from a worktree

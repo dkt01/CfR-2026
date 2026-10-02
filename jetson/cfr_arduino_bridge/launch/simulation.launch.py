@@ -28,6 +28,7 @@ from launch_ros.descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from layout_params import hoop_parameters  # noqa: E402
 from sensors_world import resolve_world  # noqa: E402
 
 # Both worlds carry these two markers, one at world level and one inside the
@@ -70,6 +71,22 @@ def generate_launch_description():
         description=(
             "Draw the loose straw around the bales (visual only).  false: the "
             "rendered depth sees the bale faces alone, as training renders them"
+        ),
+    )
+    camera_rpy_arg = DeclareLaunchArgument(
+        "camera_rpy_deg",
+        default_value="0 0 0",
+        description=(
+            'The simulated ZED turned on its mount, "roll pitch yaw" in degrees '
+            "(sensors_world.py): a camera not bolted on square, with sensors:=true"
+        ),
+    )
+    lateral_gate_arg = DeclareLaunchArgument(
+        "lateral_gate",
+        default_value="0.0",
+        description=(
+            "lap_counter: m either side of the start straight a crossing of the "
+            "line's plane still counts; 0 is off (obstacle_course.launch.py sets 3.0)"
         ),
     )
     world_name_arg = DeclareLaunchArgument(
@@ -191,18 +208,27 @@ def generate_launch_description():
     # hoops this watches; the Speed Course shares this launch file and its
     # layout carries no hoops.names, so hoop_monitor_node just reports an
     # always-clear status there.
-    hoop_monitor = Node(
-        package="cfr_arduino_bridge",
-        executable="hoop_monitor_node.py",
-        name="hoop_monitor",
-        output="screen",
-        parameters=[LaunchConfiguration("layout_file"), {"use_sim_time": True}],
-        remappings=[
-            ("pose", "/zed/zed_node/pose"),
-            ("hoop_layout", "/obstacle_randomizer/hoop_layout"),
-        ],
-        condition=IfCondition(LaunchConfiguration("randomizer")),
-    )
+    # The hoops are read out of the layout file here rather than the file
+    # being handed over: it is keyed by the randomizer's name, and the
+    # monitor would load nothing from it (layout_params.py).
+    def hoop_monitor_node(context):
+        layout = LaunchConfiguration("layout_file").perform(context)
+        return [
+            Node(
+                package="cfr_arduino_bridge",
+                executable="hoop_monitor_node.py",
+                name="hoop_monitor",
+                output="screen",
+                parameters=[hoop_parameters(layout), {"use_sim_time": True}],
+                remappings=[
+                    ("pose", "/zed/zed_node/pose"),
+                    ("hoop_layout", "/obstacle_randomizer/hoop_layout"),
+                ],
+                condition=IfCondition(LaunchConfiguration("randomizer")),
+            )
+        ]
+
+    hoop_monitor = OpaqueFunction(function=hoop_monitor_node)
 
     command_bridge = Node(
         package="cfr_arduino_bridge",
@@ -346,7 +372,10 @@ def generate_launch_description():
             {
                 "target_laps": ParameterValue(
                     LaunchConfiguration("laps"), value_type=int
-                )
+                ),
+                "lateral_gate": ParameterValue(
+                    LaunchConfiguration("lateral_gate"), value_type=float
+                ),
             },
         ],
         remappings=[
@@ -364,6 +393,8 @@ def generate_launch_description():
             websocket_arg,
             sensors_arg,
             strands_arg,
+            camera_rpy_arg,
+            lateral_gate_arg,
             world_name_arg,
             randomizer_arg,
             layout_arg,

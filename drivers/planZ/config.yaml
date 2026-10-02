@@ -1,0 +1,211 @@
+# Plan Z -- every knob, grouped by the failure it answers.  Leaf names are
+# unique, so any of them can be set for one run by name:
+#   launchPlanZ.sh --course speed steer_trim=0.02 sections.track=2.5
+#   ros2 launch plan_z_sim.launch.py knobs:="steer_trim=0.02 lag_room=0.5"
+# Angles are degrees where the name says so, else radians; lengths are meters.
+
+control_hz: 20.0
+
+# --- Too fast / too slow.  The car has no brakes: every speed below is one
+# it can coast down from in the room it has.
+speed:
+  speed_scale: 1.0        # multiplies every speed command (the wrapper's -s)
+  v_max: 3.0              # m/s, before speed_scale
+  v_min: 0.7              # m/s floor on a nonzero command: under ~0.6 the
+                          # throttle dithers and the tach reads nothing
+  lat_accel: 1.5          # m/s^2 on the bend being driven and on the route's
+                          # (the skidpad held 5.4)
+  sight_decel: 0.75       # m/s^2 assumed for stopping short of what stands in
+                          # the way; coast drag is ~0.6 + 0.13 v
+  sight_margin: 0.45      # m kept in hand in front of it
+  route_decel_trust: 0.8  # share of coast drag the route's lift points assume
+  accel: 2.0              # m/s^2, the bridge's speed_slew_rate
+  throttle_rate: 1.5      # m/s^2 the speed command is raised at
+  coast_f0: 2.18          # N    m dv/dt = -(f0 + f1 v), vehicle.yaml
+  coast_f1: 0.47          # N/(m/s)
+  mass: 3.599
+  lag_s: 0.45             # s ahead the route's speed cap is read
+
+# Speed cap per route section (m/s, before speed_scale); `default` covers the
+# lanes between obstacles.
+sections:
+  default: 1.5
+  track: 3.0              # the Speed Course
+  overpass_ramp: 1.6
+  helical_ramp: 1.0
+  tunnel: 1.2
+  narrow_region: 0.9      # the 20 in lane: 9 cm a side
+  gravel_pit: 1.5
+  banked_turn: 0.7        # a U-turn at full lock through a 0.6 m gap
+  potholes: 1.0
+  wide_open_region: 0.7
+  buckets: 0.7
+  hoops: 1.0
+  car_wash: 1.4
+
+# --- Car pulls to one side, weaves, turns in late.
+steering:
+  steer_trim: 0.0         # rad of road wheel the car turns with a zero
+                          # command, + if it pulls LEFT; subtracted
+  auto_trim: true         # learn the rest from yaw rate against the command
+  auto_trim_rate: 0.4     # 1/s
+  auto_trim_limit: 0.08   # rad
+  turn_radius_scale: 1.10 # the car's turn radius over the bicycle model's;
+                          # raise if it runs wide in every bend
+  dead_time: 0.19         # s from a command to the first response (measured)
+  yaw_tau: 0.38           # s the yaw rate then takes to follow, until the
+                          # car has shown its own (auto_lag)
+  auto_lag: true          # learn that lag from yaw rate against the command:
+                          # Gazebo's car takes about 1 s, a real servo less
+  auto_lag_min_speed: 1.2 # m/s below which it is not judged (throttle dither)
+  auto_lag_memory_s: 30.0 # s of driving the estimate is drawn from
+  auto_lag_excite: 0.02   # how much turning it takes to trust it
+  auto_lag_settle_s: 1.0  # s the model takes to move to a new estimate
+  feedforward_lead_s: 0.35  # s past the dead time the car's place on the
+                          # path is read
+  lead_per_tau: 0.6       # ... and the path's bend this much of the lag past
+                          # the dead time, where that is further: raise if
+                          # it turns in late, lower if early
+  lag_cautious: 0.8       # s of lag the car is driven for until it has
+                          # shown its own
+  lag_reach: 2.2          # m the car may travel in one lag: top speed is
+                          # lag_reach / lag (no limit on a car that answers
+                          # in 0.4 s; 2.2 m/s on Gazebo's, which takes 1 s)
+  lag_room: 0.6           # m: bends are taken no faster than
+                          # sqrt(lag_room * radius) / lag.  Raise for pace
+                          # once it holds the middle of the hairpins, lower
+                          # if it runs wide into them
+  track_lag: 2.5          # track_omega is held under this over the lag
+  lag_zeta: 1.2           # track_damping added per second of lag over 0.4
+  track_omega: 3.0        # rad/s the car is pulled back onto the path at;
+                          # lower if it weaves at speed, raise if it wanders
+  track_length_min: 0.6   # m: the shortest distance that pull acts over
+  track_damping: 0.7
+  yaw_damping: 0.15       # s: curvature taken off per rad/s the car is turning
+                          # beyond what the path calls for; raise if it swings
+                          # wide of the exit of a bend, or weaves
+  smoothing_s: 0.05       # low-pass on the steering command
+  curvature_use: 0.95     # share of the measured steering limits planned with
+
+# --- Brushes bales / refuses gaps it should fit through.
+body:
+  body_margin: 0.035      # m of air demanded beside the body (it is 0.325 wide)
+  clearance_weight: 3.0   # how hard the path is kept off walls on the grid
+  soft_half_width: 0.42   # m either side of the route, through the car wash,
+                          # within which what the camera sees is strands to
+                          # be driven through (its posts stand at 0.58)
+  center_reach: 1.0       # m: with a wall this near on both sides, the path
+                          # runs down the middle of the two
+  center_air: 0.25        # m of air kept off a wall on one side only
+  veto_horizon_s: 0.6     # s past the dead time a command is checked over
+
+# --- Clips what it has just passed / steers round things that are not there.
+memory:
+  memory_s: 3.0           # s a scan return is remembered once out of view
+  open_memory_s: 45.0     # the same inside an open region (Wide Section,
+                          # buckets), where the way out has to be found
+  insert_range: 3.0       # m: returns beyond this are too noisy to remember
+  carve_tolerance: 0.25   # m a newer scan must see past a point to erase it
+  noise_a: 0.005          # m: a return's range noise is taken as
+  noise_b: 0.004          # noise_a + noise_b * range^2 (1 sigma), and it
+  noise_sigmas: 2.0       # is given this many sigmas of benefit of the doubt
+  shadow_m: 0.3           # m of unseen ground beside a wall taken to be more
+                          # of the wall, until the camera has looked at it
+  unseen_cost: 4.0        # cells of path per cell of ground the camera has
+                          # not looked at: do not turn in blind
+  seen_memory_s: 10.0     # s ground stays looked-at
+  see_range: 5.0          # m: beyond this the scan is not trusted to be empty
+
+# --- Course built off the drawing, the car parked askew, the pose drifting.
+route:
+  route_hint: true        # false drives on the scan alone
+  path_length: 4.0        # m of route, or of searched way, pursued
+  field_drive: true       # where the way is searched for, steer by the
+                          # search's field and the car's own arcs, not along
+                          # a line drawn over the grid
+  field_look_m: 1.2       # m ahead each arc is judged at
+  field_min_m: 0.3        # m of clear arc it takes to be worth driving
+  field_gain: 1.0         # cells nearer the goal an arc has to end to count
+  field_steady: 2.0       # cells an arc costs per 1/m it differs from the
+                          # wheel as it is: do not dither between two ways
+  field_heading: 0.0      # how much an arc is favored for ending pointed
+                          # down the field (m of lookahead it is worth)
+  field_patience_s: 10.0  # s without getting nearer the goal before the field
+  field_rest_s: 12.0      # is left for this long and the grid's line followed
+  field_reverse_cost: 4.0 # cells a backing move costs, beside its length
+  search_period_s: 0.5    # s at least between searches for a way, where the
+                          # route gives none; and a way still clear is kept
+  search_keep_s: 4.0      # this long
+  block_check_m: 2.5      # m of the route checked for something standing on it
+  goal_lookahead: 2.5     # m ahead along the route a searched way heads for,
+  goal_turn_deg: 70.0     # but no further round a bend than this
+  lane_half_width: 0.1    # m either side of the route that costs nothing;
+  lane_weight: 0.3        # beyond it each 0.1 m costs this many cells of
+                          # path.  A cost, not a wall: what the camera sees
+                          # still decides, and open regions have no lane
+  route_align: true       # keep fitting the route to the path driven
+  align_window_m: 4.0     # m of path fitted
+  align_gain: 0.3         # share of the misfit taken out every 0.5 m
+  align_turn_max: 0.01    # rad at most, each time
+  align_shift_max: 0.05   # m at most, each time
+  align_wall_gain: 0.15   # share of the route's offset from the middle of
+                          # the walls taken out every camera frame
+  route_offset_x: 0.0     # m, the course's shift from the drawing, in the
+  route_offset_y: 0.0     # frame of the parked car (x ahead, y left)
+  route_offset_yaw_deg: 0.0
+  relocalize_step: 1.0    # m: a pose jump this big is a loop closure
+  pose_forward: 0.0       # m the pose's reference point sits ahead of the
+                          # chassis center (0 in Gazebo, 0.315 for the ZED)
+  open_lead_m: 1.5        # m before an open region its way through is searched
+  open_exit_ahead_m: 1.5  # m past an open region's exit the way out heads for
+  open_exit_radius: 0.5   # m from an open region's exit that counts as there
+  fence_inside_m: 0.7     # m inside an open region's fence the car has to be
+                          # before the fence is put up behind it
+  fence_gap_m: 0.45       # m of fence left open either side of a way out
+  stage_radius: 0.5       # m from a place on the way through one that does
+
+# --- Misses hoops.
+gates:
+  gate_aim: true          # steer through a visible hoop's center
+  gate_range: 5.5         # m: hoops nearer than this are aimed at
+  gate_route_tolerance: 1.8   # m off the route a hoop may stand
+  gate_memory_s: 8.0      # s a hoop is kept in mind after it was last seen
+  gate_blend_m: 2.0       # m either side of a hoop over which the lane's line
+                          # is eased across to its middle
+  gate_through: 0.7       # m past the hoop the goal is put
+  gate_wing: 1.2          # m either side of a hoop treated as wall, so the
+                          # way to the goal is through it and not round it
+
+# --- Wedged.
+recovery:
+  stuck_s: 1.5            # s without moving while commanding speed
+  stuck_distance: 0.12    # m that counts as moving
+  reverse_speed: 0.5      # m/s
+  reverse_distance: 0.8   # m backed off at most before driving on
+  reverse_lock: 0.9       # steering command while backing to come round
+  bump_memory_s: 4.0      # s a thing the car has bumped into unseen is kept
+                          # in mind
+  reverse_timeout_s: 4.0  # the Arduino takes ~1 s to change direction
+
+# --- Scan skewed, or floor read as wall.
+camera:
+  camera_yaw_deg: 0.0     # the camera's mount yaw, + if it points LEFT
+  auto_camera_yaw: true   # learn the rest on the straights, from the lane
+                          # seeming to point off while the car runs true
+  auto_camera_yaw_rate: 0.4       # 1/s
+  auto_camera_yaw_limit_deg: 6.0
+  camera_pitch_deg: 0.0   # + if it points DOWN more than the attitude source says
+  camera_roll_deg: 0.0
+  level_source: auto      # auto | imu | pose | none
+  scan_bins: 36
+  fov_deg: 110.0
+  max_range: 6.0
+  min_range: 0.30
+  camera_forward: 0.315   # m ahead of the chassis center
+  cloud_stride: 2
+  cloud_latency_s: 0.08   # capture to planner when the cloud carries no stamp
+
+# --- Test faults (validate.sh, sim_numpy.py).  Zero on the car.
+inject:
+  inject_pose_drift: 0.0      # m of position error per m driven
+  inject_yaw_drift_deg: 0.0   # deg of heading error per m driven

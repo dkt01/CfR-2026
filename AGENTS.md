@@ -10,6 +10,8 @@ protocol, the onboard serial protocol, speed control, and simulation.
 
 * `jetson/` -- ROS 2 workspace for the car ([jetson/README.md](jetson/README.md))
 * `rl/bale_follower/` -- PPO training for the bale-following policy
+* `drivers/planZ/` -- Plan Z, the backup driver for both courses that is not a
+  learned policy ([drivers/planZ/README.md](drivers/planZ/README.md))
 * `web/run-lab/`, `web/gzweb-viewer/` -- drive-log analysis UI and browser sim viewer
 * `zed/` -- ZED camera configuration
 * `docs/` -- characterization procedure and results
