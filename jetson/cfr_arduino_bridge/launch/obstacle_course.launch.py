@@ -49,6 +49,15 @@ def generate_launch_description():
             description="Laps before lap_counter latches ~/done; one run is one lap",
         ),
         DeclareLaunchArgument(
+            "lateral_gate",
+            default_value="3.0",
+            description=(
+                "lap_counter's cross-track gate, m. The pothole lane crosses the "
+                "plane of the start line 8.3 m to the side, heading the same way, "
+                "30 m into the lap: without the gate that is counted as a lap"
+            ),
+        ),
+        DeclareLaunchArgument(
             "cmd_vel_to_drive",
             default_value="true",
             description=(
@@ -75,6 +84,7 @@ def generate_launch_description():
             "world_name": "cfr_obstacle_course",
             "randomizer": "true",
             "laps": LaunchConfiguration("laps"),
+            "lateral_gate": LaunchConfiguration("lateral_gate"),
             "layout_file": PathJoinSubstitution(
                 [package_share, "config", "obstacle_course_layout.yaml"]
             ),

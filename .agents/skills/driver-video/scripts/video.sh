@@ -7,10 +7,15 @@
 #   video.sh replay --course obstacle --policy rl/obstacleRacer/runs/v6/best_model.zip --seed 104
 #   video.sh gazebo --course speed    --policy rl/formulaOne/bestModel/v12/policy.npz
 #   video.sh replay --course speed    --policy rl/formulaOne/bestModel/v12/policy.npz --pick any
+#   video.sh gazebo --course obstacle --driver planz --seed 208 --segmentation
+#   video.sh gazebo --course speed    --driver planz --rtf 0.3
 #   video.sh stop                     # stop the container (it keeps its build)
 #
 # Options:
 #   --policy PATH     policy.npz, or an SB3 .zip (exported to .npz first)
+#   --driver planz    gazebo only: film drivers/planZ, the driver with no policy,
+#                     instead (2 laps of the Obstacle Course, 3 of the Speed
+#                     Course); --knobs "name=value ..." sets its knobs
 #   --config PATH     the policy's config.yaml (default: beside the policy)
 #   --seed N          obstacle layout seed (default 104)
 #   --out FILE.mp4    default: <policy dir>/video/<name>.mp4
@@ -22,6 +27,7 @@
 #   --pick P          replay: fastest | first | median | any  (any = longest run if none finish)
 #   --track NPZ       replay: reuse a rollout.py track instead of rolling out again
 #   --limit N         replay: render only the first N frames (a quick look)
+#   --segmentation    add a class-colored point cloud view beside the ZED view
 #   --keep            leave the container running afterwards
 #   --rebuild         rebuild the container's ROS workspace from the repo first
 set -euo pipefail
@@ -43,11 +49,14 @@ MODE=${1:-}; shift || true
 [[ "$MODE" == "gazebo" || "$MODE" == "replay" ]] || die "first argument: gazebo | replay | stop"
 
 COURSE=""; POLICY=""; CONFIG=""; SEED=104; OUT=""; LABEL=""; TIMEOUT=180; RTF=0.1
-EPISODES=""; PICK=fastest; TRACK=""; LIMIT=0; KEEP=false; REBUILD=false
+EPISODES=""; PICK=fastest; TRACK=""; LIMIT=0; KEEP=false; REBUILD=false; SEGMENTATION=false
+DRIVER=""; KNOBS=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --course) COURSE=$2; shift 2;;
     --policy) POLICY=$2; shift 2;;
+    --driver) DRIVER=$2; shift 2;;
+    --knobs) KNOBS=$2; shift 2;;
     --config) CONFIG=$2; shift 2;;
     --seed) SEED=$2; shift 2;;
     --out) OUT=$2; shift 2;;
@@ -58,14 +67,20 @@ while [[ $# -gt 0 ]]; do
     --pick) PICK=$2; shift 2;;
     --track) TRACK=$2; shift 2;;
     --limit) LIMIT=$2; shift 2;;
+    --segmentation) SEGMENTATION=true; shift;;
     --keep) KEEP=true; shift;;
     --rebuild) REBUILD=true; shift;;
     *) die "unknown argument: $1";;
   esac
 done
 [[ "$COURSE" == "obstacle" || "$COURSE" == "speed" ]] || die "--course obstacle | speed"
-[[ -n "$POLICY" || -n "$TRACK" ]] || die "--policy is required"
-[[ "$MODE" == replay || -n "$POLICY" ]] || die "gazebo mode needs --policy"
+[[ -z "$DRIVER" || "$DRIVER" == planz ]] || die "--driver planz is the only driver without a policy"
+if [[ "$DRIVER" == planz ]]; then
+  [[ "$MODE" == gazebo ]] || die "--driver planz has no numpy rollout to replay: use gazebo mode"
+else
+  [[ -n "$POLICY" || -n "$TRACK" ]] || die "--policy is required"
+  [[ "$MODE" == replay || -n "$POLICY" ]] || die "gazebo mode needs --policy"
+fi
 
 # Paths may be relative to the caller or to the repo; runs/ is gitignored, so
 # from a worktree they usually live in the main checkout -- try that too.
@@ -91,7 +106,13 @@ fi
 
 RLDIR=$([[ "$COURSE" == obstacle ]] && echo obstacleRacer || echo formulaOne)
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/driver-video.XXXXXX")
-if [[ -n "$POLICY" ]]; then
+if [[ "$DRIVER" == planz ]]; then
+  NAME=planz
+  LABEL=${LABEL:-"Plan Z"}
+  # Two laps is the Obstacle Course's run; one can be over in a minute and
+  # says nothing about the second pass through what the first disturbed.
+  [[ "$TIMEOUT" == 180 ]] && TIMEOUT=420
+elif [[ -n "$POLICY" ]]; then
   POLICY=$(resolve "$POLICY")
   CONFIG=$(resolve "${CONFIG:-$(dirname "$POLICY")/config.yaml}")
   if [[ "$POLICY" == *.zip ]]; then
@@ -110,7 +131,11 @@ else
 fi
 [[ "$COURSE" == obstacle ]] && TAG="${NAME}_seed${SEED}_${MODE}" || TAG="${NAME}_${MODE}"
 if [[ -z "$OUT" ]]; then
-  OUT="$(dirname "${POLICY:-$TRACK}")/video/$TAG.mp4"
+  if [[ "$DRIVER" == planz ]]; then
+    OUT="$REPO/drivers/planZ/video/$TAG.mp4"
+  else
+    OUT="$(dirname "${POLICY:-$TRACK}")/video/$TAG.mp4"
+  fi
 fi
 mkdir -p "$(dirname "$OUT")"
 OUT="$(cd "$(dirname "$OUT")" && pwd)/$(basename "$OUT")"
@@ -162,10 +187,15 @@ LAUNCH=$([[ "$COURSE" == obstacle ]] && echo obstacle_course.launch.py || echo s
 # film cameras need the Sensors system patched in.
 SENSORS_PLUGIN=--sensors-plugin
 [[ "$MODE" == gazebo && "$COURSE" == obstacle ]] && SENSORS_PLUGIN=""
+# Plan Z steers from the rendered ZED on both courses.
+[[ "$DRIVER" == planz ]] && SENSORS_PLUGIN=""
 in_box "python3 /work/capture.py patch-world --course $COURSE --rtf $RTF $SENSORS_PLUGIN"
 bg() { dk exec -d "$CONTAINER" bash -c "source /opt/ros/jazzy/setup.bash && source ~/ros2_ws/install/setup.bash && export LIBGL_ALWAYS_SOFTWARE=1 && $1 > $2 2>&1"; }
 if [[ "$MODE" == replay ]]; then
   bg "ros2 launch cfr_arduino_bridge $LAUNCH sensors:=false path_follower:=false cmd_vel_to_drive:=false" /work/sim.log
+elif [[ "$DRIVER" == planz ]]; then
+  LAPS=$([[ "$COURSE" == obstacle ]] && echo 2 || echo 3)
+  bg "ros2 launch /repo/drivers/planZ/plan_z_sim.launch.py course:=$COURSE laps:=$LAPS ${KNOBS:+knobs:='$KNOBS'}" /work/sim.log
 elif [[ "$COURSE" == obstacle ]]; then
   bg "ros2 launch /repo/rl/obstacleRacer/obstacle_racer_sim.launch.py policy:=/work/policy.npz config:=/work/config.yaml laps:=1" /work/sim.log
 else
@@ -174,7 +204,9 @@ else
   bg "ros2 launch /repo/rl/formulaOne/formula_one.launch.py policy:=/work/policy.npz config:=/work/config.yaml rviz:=false record:=false use_sim_time:=true" /work/driver.log
 fi
 W="/world/$WORLD"
-bg "ros2 run ros_gz_bridge parameter_bridge /video/chase@sensor_msgs/msg/Image[gz.msgs.Image /video/zed@sensor_msgs/msg/Image[gz.msgs.Image /video/map@sensor_msgs/msg/Image[gz.msgs.Image $W/control@ros_gz_interfaces/srv/ControlWorld $W/set_pose@ros_gz_interfaces/srv/SetEntityPose $W/create@ros_gz_interfaces/srv/SpawnEntity $W/remove@ros_gz_interfaces/srv/DeleteEntity --ros-args -p use_sim_time:=true" /work/bridge.log
+SEGMENT_BRIDGE=""
+[[ "$SEGMENTATION" == true ]] && SEGMENT_BRIDGE="/video/zed/image@sensor_msgs/msg/Image[gz.msgs.Image /video/zed/points@sensor_msgs/msg/PointCloud2[gz.msgs.PointCloudPacked"
+bg "ros2 run ros_gz_bridge parameter_bridge /video/chase@sensor_msgs/msg/Image[gz.msgs.Image /video/zed@sensor_msgs/msg/Image[gz.msgs.Image /video/map@sensor_msgs/msg/Image[gz.msgs.Image $SEGMENT_BRIDGE $W/control@ros_gz_interfaces/srv/ControlWorld $W/set_pose@ros_gz_interfaces/srv/SetEntityPose $W/create@ros_gz_interfaces/srv/SpawnEntity $W/remove@ros_gz_interfaces/srv/DeleteEntity --ros-args -p use_sim_time:=true" /work/bridge.log
 log "waiting for the stack"
 READY="$W/set_pose"
 [[ "$MODE" == gazebo && "$COURSE" == obstacle ]] && READY=/obstacle_racer/manual_start
@@ -188,9 +220,10 @@ SEEDTXT=""
 if [[ "$MODE" == gazebo ]]; then
   SUB="Gazebo physics | ${SEEDTXT}sim-time playback"
   EXTRA="--seed $SEED --timeout $TIMEOUT --rtf $RTF"
-  if [[ "$COURSE" == obstacle ]]; then
+  if [[ "$COURSE" == obstacle || "$DRIVER" == planz ]]; then
     EXTRA="$EXTRA --zed-topic /zed/zed_node/left/image_rect_color"
-  else
+  fi
+  if [[ "$COURSE" == speed ]]; then
     EXTRA="$EXTRA --laps $LAPS"
   fi
   NOTE=""
@@ -199,6 +232,7 @@ else
   EXTRA="--track /work/track.npz --limit $LIMIT"
   NOTE="not Gazebo physics"
 fi
+[[ "$SEGMENTATION" == true ]] && EXTRA="$EXTRA --segmentation"
 TITLE="$LABEL on the $([[ $COURSE == obstacle ]] && echo Obstacle || echo Speed) Course"
 log "filming ($MODE): $TITLE"
 TEXT=$(printf '%q ' --title "$TITLE" --subtitle "$SUB" --note "$NOTE")  # any apostrophes survive

@@ -8,6 +8,7 @@ package), so both launch files insert this directory into sys.path first.
 
 from __future__ import annotations
 
+import math
 import re
 import tempfile
 from pathlib import Path
@@ -47,6 +48,14 @@ SENSORS_CAMERA = """<sensor name="zed2i" type="rgbd_camera">
 STRANDS_VISUAL = re.compile(r'\n[ \t]*<visual name="[^"]*_strands">.*?</visual>')
 
 
+def camera_pose(rpy_deg):
+    """The simulated ZED's <pose>, turned on its mount by `rpy_deg` ("roll
+    pitch yaw", degrees): a camera that is not bolted on square, for checking
+    what a driver makes of one."""
+    roll, pitch, yaw = (math.radians(float(v)) for v in str(rpy_deg).split())
+    return f"<pose>0.315 0 0.20 {roll:.5f} {pitch:.5f} {yaw:.5f}</pose>"
+
+
 def _flag(context, name, default):
     """A launch argument as a bool, `default` where the including launch file
     does not declare it (training.launch.py has no strands:=)."""
@@ -78,7 +87,12 @@ def resolve_world(context, *_args, **_kwargs):
         if sensors
         else ()
     )
+    mount = context.launch_configurations.get("camera_rpy_deg", "0 0 0")
     for marker, replacement in markers:
+        if marker == CAMERA_MARKER:
+            replacement = replacement.replace(
+                "<pose>0.315 0 0.20 0 0 0</pose>", camera_pose(mount)
+            )
         if marker not in text:
             raise RuntimeError(
                 f"{world.name} has no {marker}, so sensors:=true cannot add the "

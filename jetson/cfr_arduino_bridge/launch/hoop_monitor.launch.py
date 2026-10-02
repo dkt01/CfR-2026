@@ -11,11 +11,17 @@ randomizer -- see simulation.launch.py. This file is for the car, or for a
 bench run with the layout file supplied directly.
 """
 
+import sys
+from pathlib import Path
+
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from layout_params import hoop_parameters  # noqa: E402
 
 
 def generate_launch_description():
@@ -38,16 +44,24 @@ def generate_launch_description():
         description="Map-frame pose; the loop-closed one, not ~/odom",
     )
 
-    monitor = Node(
-        package="cfr_arduino_bridge",
-        executable="hoop_monitor_node.py",
-        name="hoop_monitor",
-        output="screen",
-        parameters=[LaunchConfiguration("layout_file")],
-        remappings=[
-            ("pose", LaunchConfiguration("pose_topic")),
-            ("hoop_layout", "/obstacle_randomizer/hoop_layout"),
-        ],
-    )
+    # The file is keyed by the randomizer's node name, so its hoops are read
+    # out here: handed over whole, the monitor loads nothing (layout_params.py).
+    def monitor_node(context):
+        layout = LaunchConfiguration("layout_file").perform(context)
+        return [
+            Node(
+                package="cfr_arduino_bridge",
+                executable="hoop_monitor_node.py",
+                name="hoop_monitor",
+                output="screen",
+                parameters=[hoop_parameters(layout)],
+                remappings=[
+                    ("pose", LaunchConfiguration("pose_topic")),
+                    ("hoop_layout", "/obstacle_randomizer/hoop_layout"),
+                ],
+            )
+        ]
+
+    monitor = OpaqueFunction(function=monitor_node)
 
     return LaunchDescription([layout_arg, pose_arg, monitor])

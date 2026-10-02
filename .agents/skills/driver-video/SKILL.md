@@ -16,13 +16,19 @@ $S/video.sh gazebo --course obstacle --policy rl/obstacleRacer/runs/v6/policy.np
 $S/video.sh replay --course obstacle --policy rl/obstacleRacer/runs/v6/best_model.zip --seed 104
 $S/video.sh gazebo --course speed    --policy rl/formulaOne/bestModel/v12/policy.npz
 $S/video.sh replay --course speed    --policy rl/formulaOne/bestModel/v12/policy.npz --pick any
+$S/video.sh gazebo --course obstacle --policy rl/obstacleRacer/runs/v8/policy.npz --segmentation
+$S/video.sh gazebo --course obstacle --driver planz --seed 208 --segmentation
+$S/video.sh gazebo --course speed    --driver planz
 $S/video.sh stop
 ```
 
 It runs for many minutes, so start it with `run_in_background` and wait for
 the completion notice. The output lands at `<policy dir>/video/<run>_<policy>[_seed<N>]_<mode>.mp4`
 (or `--out`), with a `_summary.json` beside it. Run `video.sh` with no
-arguments, or read its header, for every option.
+arguments, or read its header, for every option. Add `--segmentation` to either
+mode on either course to show the ZED point cloud classified by the same
+compiled segmenter used on the car. It adds sensor rendering and processing
+work, so use it when the user asks to see what the car perceives.
 
 ## Pick the mode from what the user wants to see
 
@@ -63,6 +69,11 @@ replay unasked.
   shows whether any numpy episode finishes. v12's never did (it grazes a bale
   at about 6 s, which the numpy sim counts as a crash), so its replay needs
   `--pick any` and shows only that. Gazebo mode is the way to film v12.
+- **Plan Z** (`drivers/planZ`, either course) has no policy: pass
+  `--driver planz` instead of `--policy`, and `--knobs "name=value ..."` to set
+  its knobs. Gazebo mode only (there is no numpy rollout to replay). It runs
+  the whole race, 2 laps of the Obstacle Course or 3 of the Speed Course, with
+  the ZED rendered on both, and the video lands in `drivers/planZ/video/`.
 - bale_follower was trained in Gazebo and has no numpy sim. It isn't covered.
 
 Paths can be relative to the repo. `runs/` is gitignored, so from a worktree
@@ -73,7 +84,7 @@ numpy sims.
 
 ## What the video shows
 
-The frame is 1280×720:
+The default frame is 1280×720:
 - **Left:** a chase camera that follows the car's heading and height with the
   horizon kept level, so the car's own pitch and roll are visible on the
   ramps, helix and bank.
@@ -83,6 +94,13 @@ The frame is 1280×720:
 - **Telemetry:** time, speed, commanded speed or the speed cap, steering, and
   hoops or laps.
 - **Caption:** driver, course, and which physics was used.
+
+With `--segmentation`, the frame widens to 1600×720. The ZED view and a
+class-colored point cloud view sit side by side. Its legend identifies ground,
+obstacle, hoop, car wash, and overhead. Dark pixels had no classified point.
+In Gazebo mode on the Obstacle Course this uses the same noisy ZED cloud the
+driver receives; in Speed Course Gazebo mode and replay it uses the filming
+camera's RGB-D cloud at the ZED mount. Replay still uses numpy physics.
 
 Playback is real time in sim time, whatever the real-time factor was. Gazebo
 mode trims the wait for the start.
