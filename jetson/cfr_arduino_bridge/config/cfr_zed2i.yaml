@@ -3,9 +3,9 @@
 # Passed to zed_camera.launch.py as `ros_params_override_path` by
 # jetson/scripts/launch.sh, zed/scripts/launch_zed.sh and
 # left_wall_robot.launch.py.  Everything not named here keeps the wrapper's own
-# default.  There are two copies of this file -- this one, which is installed
-# with cfr_arduino_bridge and so is the one that reaches the Orin, and
-# zed/config/cfr_zed2i.yaml for launch_zed.sh -- and they must stay identical.
+# default.  This is the one copy: it installs with cfr_arduino_bridge and so is
+# what reaches the Orin, and zed/config/cfr_zed2i.yaml is a symlink to it for
+# launch_zed.sh (the two used to be hand-duplicated and drifted apart).
 #
 # What it is for: formula_one_node drives from `/zed/zed_node/pose` and nothing
 # else.  It has no camera input; it reads the map-frame pose against a known
@@ -55,10 +55,42 @@
       # Drop corrupted frames (USB glitches) before they reach tracking.
       enable_image_validity_check: 1
 
+    video:
+      # Manual, to bound motion blur: auto lengthens exposure before adding
+      # gain, up to the full 16.7 ms frame in shade or overcast.  EXPOSURE is
+      # a percentage of the frame period (10 is ~1.7 ms at 60 fps).  A
+      # starting point only: tune on the course with `ros2 param set` (both
+      # are dynamic).  Keep the straw unclipped -- remove_saturated_areas
+      # turns saturated pixels into depth holes -- and raise gain before
+      # exposure.
+      # https://docs.stereolabs.com/docs/development/zed-sdk/modules/camera/camera-controls
+      auto_exposure_gain: true
+      #exposure: 10
+      #gain: 20
+
+    region_of_interest:
+      # Ignore the top 20% (sky, sun, canopy, spectators); the cut starts
+      # ~25 deg above the level horizon.  Masked pixels are invalid in depth
+      # too, so they are gone from ~/depth and the point cloud as well as
+      # tracking; formula_two_node's scan rows stop just below the cut.  The
+      # RGB image is not masked.  The wrapper reads apply_to_* only when a
+      # polygon is set.  Check the mask on ~/roi_mask/image.
+      automatic_roi: false
+      manual_polygon: '[[0.0,0.2],[1.0,0.2],[1.0,1.0],[0.0,1.0]]'
+      apply_to_depth: true
+      apply_to_positional_tracking: true
+      apply_to_spatial_mapping: true
+      publish_roi_mask: true
+
     depth:
-      # GEN_3 tracking does not need depth, but the point cloud consumers and
-      # the recorder do, and a heavier model steals the GPU time that holds
-      # the grab rate at 60.  Pinned at the lightest neural mode.
+      # Depth mode shapes the depth map and point cloud (formula_two_node's
+      # input), not the pose: GEN_3 is feature-based and ignores depth.  Only
+      # GEN_1 tracks on depth, and Stereolabs' outdoor benchmark has it far
+      # worse than GEN_3 in any depth mode (mean APE 2.45-3.90 m vs 0.29 m).
+      # Depth still costs GPU on every grabbed frame while subscribed, and
+      # the Orin already holds only 40-46 Hz of the 60 fps grab at
+      # NEURAL_LIGHT (~/pose rate in recorded runs).
+      # https://docs.stereolabs.com/docs/development/zed-sdk/modules/positional-tracking/modes
       depth_mode: 'NEURAL_LIGHT'
 
     pos_tracking:

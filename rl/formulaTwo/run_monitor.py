@@ -41,12 +41,13 @@ HERE = Path(__file__).resolve().parent
 
 
 class RunMonitor(Node):
-    def __init__(self, cfg, out, status_topic):
+    def __init__(self, cfg, out, status_topic, world_scale=0.0):
         super().__init__("formula_two_monitor")
         self.track = track_mod.build(cfg, HERE.parents[1])
-        # The nominal world: in Gazebo the bales are exactly where the SDF says.
+        # Match the loopback's seeded as-built bales when requested.
         self.world = World(self.track, cfg, 1, np.random.default_rng(0))
-        self.world.sample(np.array([True]), enabled=False)
+        self.world.sample(np.array([True]), scale=world_scale,
+                          enabled=world_scale > 0.0)
         self.graze = float(cfg["reward"]["graze_margin"])
         self.out = Path(out)
         self.hint = None
@@ -106,7 +107,12 @@ class RunMonitor(Node):
         stamp_now = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
         if self._last_pose is not None:
             lx, ly, ls = self._last_pose
-            if math.hypot(p.position.x - lx, p.position.y - ly) > 0.5:
+            # A rendered pose can arrive late. Compare displacement with the
+            # elapsed stamp, otherwise a 0.24 s gap at 3.4 m/s looks like a
+            # teleport even though it is physically consistent motion.
+            dt = stamp_now - ls
+            jump_limit = max(0.5, 8.0 * max(dt, 0.0) + 0.1)
+            if math.hypot(p.position.x - lx, p.position.y - ly) > jump_limit:
                 self.state["pose_jumps"] += 1
             if stamp_now < ls - 1e-3:
                 self.state["clock_reversals"] += 1
@@ -173,10 +179,11 @@ def main():
     ap.add_argument("--out", default="/tmp/formula_two_monitor.json")
     ap.add_argument("--config", default=str(HERE / "config.yaml"))
     ap.add_argument("--status-topic", default="/formula_one/depth_status")
+    ap.add_argument("--world-scale", type=float, default=0.0)
     args, ros_args = ap.parse_known_args()
     cfg = yaml.safe_load(Path(args.config).read_text())
     rclpy.init(args=ros_args)
-    node = RunMonitor(cfg, args.out, args.status_topic)
+    node = RunMonitor(cfg, args.out, args.status_topic, args.world_scale)
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

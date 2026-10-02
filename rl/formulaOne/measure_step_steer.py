@@ -46,6 +46,7 @@ import rclpy
 import yaml
 from geometry_msgs.msg import PoseStamped
 from rclpy.node import Node
+from rclpy.parameter import Parameter
 from rclpy.qos import qos_profile_sensor_data
 from scipy.signal import savgol_filter
 
@@ -77,11 +78,18 @@ def yaw_of(msg):
 
 class Driver(Node):
     def __init__(self):
-        super().__init__("measure_step_steer")
+        # SIM time throughout.  This used to stamp poses and the step with
+        # time.time(), so every transient stretched by 1/real_time_factor: the
+        # same Gazebo fitted yaw_tau 0.80 s at RTF 0.4 and 0.08 s at RTF 1.0
+        # (2026-10-01).  A loaded machine made the car look laggy.
+        super().__init__(
+            "measure_step_steer",
+            parameter_overrides=[Parameter("use_sim_time", value=True)],
+        )
         self.pub = self.create_publisher(
             DriveCommand, "/drive_cmd", qos_profile_sensor_data
         )
-        self.samples = []  # (t_wall, yaw)
+        self.samples = []  # (t_sim, yaw)
         self.recording = False
         self.t0 = None
         self.create_subscription(
@@ -93,7 +101,11 @@ class Driver(Node):
 
     def on_pose(self, msg):
         if self.recording:
-            self.samples.append((time.time(), yaw_of(msg)))
+            stamp = msg.header.stamp
+            self.samples.append((stamp.sec + stamp.nanosec * 1e-9, yaw_of(msg)))
+
+    def now_s(self):
+        return self.get_clock().now().nanoseconds * 1e-9
 
     def tick(self):
         m = DriveCommand()
@@ -106,9 +118,21 @@ class Driver(Node):
 
 
 def spin(node, seconds):
-    stop = time.time() + seconds
-    while time.time() < stop:
+    """Spin for `seconds` of SIM time.  Falls back to wall time while no
+    /clock has arrived, so the startup check still ends without a sim."""
+    wall_stop = time.time() + max(10.0 * seconds, 10.0)
+    start = None
+    while time.time() < wall_stop:
         rclpy.spin_once(node, timeout_sec=0.02)
+        now = node.now_s()
+        if now <= 0.0:
+            if time.time() > wall_stop - 9.0 * seconds:
+                return  # no clock: behave as a plain wall-time wait
+            continue
+        if start is None:
+            start = now
+        if now - start >= seconds:
+            return
 
 
 def unwrap_rel(t, yaw):
@@ -193,7 +217,7 @@ def run_one(node, cfg, x, y, speed, step_command, settle, pre, post):
 
     node.recording, node.samples = True, []
     spin(node, pre)  # baseline, steer still 0
-    step_t = time.time()
+    step_t = node.now_s()
     node.steer = step_command  # THE STEP
     spin(node, post)
     node.recording = False

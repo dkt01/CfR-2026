@@ -64,7 +64,27 @@ def sweep_config(base, dead, servo, lag, laps):
     return cfg
 
 
-def drive(cfg, trk, gains, deterministic, seed=0, dr_scale=1.0):
+def _tile_blocks(obj, n, block, skip=()):
+    """Copy the first `block` cars' per-car state onto every later block.
+
+    COMMON RANDOM NUMBERS: every candidate is then driven on exactly the same
+    randomised cars (parameters, start pose, sensor draws), so differences
+    between candidates are the gains, not the dice.  Without this the SAME
+    gains scored 88% and 75% on two draws of 24 cars.
+    """
+    reps = n // block
+    for name, val in list(vars(obj).items()):
+        if name in skip:
+            continue
+        if isinstance(val, np.ndarray) and val.ndim >= 1 and val.shape[0] == n:
+            val[:] = np.tile(val[:block], (reps,) + (1,) * (val.ndim - 1))
+        elif isinstance(val, dict):
+            for v in val.values():
+                if isinstance(v, np.ndarray) and v.ndim >= 1 and v.shape[0] == n:
+                    v[:] = np.tile(v[:block], (reps,) + (1,) * (v.ndim - 1))
+
+
+def drive(cfg, trk, gains, deterministic, seed=0, dr_scale=1.0, block=None):
     """Drive the prior alone, at the floor, one car per row of `gains`.
 
     Returns per-car finish, min clearance, and cross-track statistics on the
@@ -90,6 +110,12 @@ def drive(cfg, trk, gains, deterministic, seed=0, dr_scale=1.0):
     ob.k_heading = np.asarray(gains["k_heading"], float)
 
     env.reset()
+    if block:
+        for obj in (env, env.plant, env.world, env.scans):
+            _tile_blocks(obj, n, block)
+        _tile_blocks(ob, n, block, skip=("ff_horizon", "lead_scale", "k_lateral", "k_rate", "k_heading"))
+        env._sense()
+        env._observe()
     action = np.tile([[0.0, -1.0]], (n, 1))  # prior steering, speed floor
     done = np.zeros(n, bool)
     finished = np.zeros(n, bool)
@@ -131,7 +157,7 @@ def main():
         help="dead time, servo lag, chassis lag (s); default: fitted to Gazebo",
     )
     ap.add_argument("--laps", type=int, default=2)
-    ap.add_argument("--field", type=int, default=24)
+    ap.add_argument("--field", type=int, default=32)
     ap.add_argument("--top", type=int, default=120)
     ap.add_argument("--min-clear", type=float, default=0.05)
     ap.add_argument("--min-field", type=float, default=0.90)
@@ -150,11 +176,13 @@ def main():
     )
 
     grid = dict(
-        horizon_s=[0.35, 0.45, 0.55, 0.70, 0.85],
-        lead_scale=[0.25, 0.50, 0.75, 1.00],
-        k_lateral=[0.4, 0.8, 1.2, 1.6],
-        k_rate=[0.04, 0.08, 0.16, 0.24, 0.32],
-        k_heading=[0.2, 0.4, 0.6],
+        # The first sweep's winners sat on the low edges of horizon and lead
+        # and the high edge of k_heading, so the grid extends past them.
+        horizon_s=[0.20, 0.25, 0.30, 0.35, 0.45],
+        lead_scale=[0.0, 0.10, 0.25, 0.50],
+        k_lateral=[0.8, 1.2, 1.6, 2.0, 2.4],
+        k_rate=[0.08, 0.16, 0.24, 0.32],
+        k_heading=[0.4, 0.6, 0.8, 1.0],
     )
     combos = [dict(zip(KEYS, c)) for c in itertools.product(*(grid[k] for k in KEYS))]
     combos.append(current)  # the "before", on the same car
@@ -200,7 +228,7 @@ def main():
     print(
         f"  {len(pool)} candidates x {F} randomised cars = {len(pool) * F} cars in one batch..."
     )
-    f = drive(cfg, trk, g, deterministic=False, seed=11, dr_scale=0.5)
+    f = drive(cfg, trk, g, deterministic=False, seed=11, dr_scale=0.5, block=F)
     results = []
     for j, i in enumerate(pool):
         sl = slice(j * F, (j + 1) * F)

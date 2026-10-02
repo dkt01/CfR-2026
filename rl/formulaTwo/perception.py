@@ -98,7 +98,7 @@ class Camera:
 
     # ------------------------------------------------------------ the scan
 
-    def depth_to_scan(self, depth, height=None, pitch=None, roll=None):
+    def depth_to_scan(self, depth, height=None, pitch=None, roll=None, origin=None):
         """(B, rows, W) depth -> (B, W) nearest in-band horizontal range.
 
         `height`, `pitch` and `roll` are what the CAR BELIEVES about its
@@ -113,6 +113,12 @@ class Camera:
         tripped the depth watchdog and abandoned the run.  Training believed
         level (0, 0), so a levelled scan is the scan the policy learned on.
         Columns with nothing in the band are inf.
+
+        `origin` (dx, dy, dyaw) is where the real lens sits against the
+        camera this config trained with, at (camera.x, 0) facing forward: the
+        car's left lens is ~0.06 m left of it.  Points are moved there and
+        re-binned by azimuth, so the policy sees ranges from the camera it
+        knows.  Training passes nothing.
         """
         b = depth.shape[0]
         height = np.full(b, self.z) if height is None else np.asarray(height, float)
@@ -132,7 +138,72 @@ class Camera:
             r = depth * np.sqrt(x2 * x2 + y1 * y1)
             z = height[:, None, None] + depth * z2
             keep = np.isfinite(depth) & (z >= self.band[0]) & (z <= self.band[1])
-        return np.where(keep, r, np.inf).min(axis=1)
+        if origin is None or not np.any(origin):
+            return np.where(keep, r, np.inf).min(axis=1)
+        return self._reorigin(depth * x2, depth * y1, keep, origin)
+
+    def _reorigin(self, fwd, lat, keep, origin):
+        """In-band points (camera-heading frame) -> scan from the trained origin."""
+        dx, dy, dyaw = (float(v) for v in origin)
+        c, s = np.cos(dyaw), np.sin(dyaw)
+        b, rows, w = keep.shape
+        fwd, lat = np.broadcast_to(fwd, keep.shape), np.broadcast_to(lat, keep.shape)
+        x = c * fwd - s * lat + dx
+        y = s * fwd + c * lat + dy
+        with np.errstate(divide="ignore", invalid="ignore"):
+            slope = y / x
+        ok = keep & (x > 0)
+        # self.a falls left to right; bin each point to its nearest column.
+        order = -self.a
+        idx = np.clip(np.searchsorted(order, -slope[ok]), 1, w - 1)
+        nearer = np.abs(order[idx - 1] + slope[ok]) < np.abs(order[idx] + slope[ok])
+        col = idx - nearer
+        half = 0.5 * np.abs(np.diff(self.a)).max()
+        inside = np.abs(self.a[col] - slope[ok]) <= half
+        batch = np.broadcast_to(np.arange(b)[:, None, None], keep.shape)[ok]
+        out = np.full((b, w), np.inf)
+        np.minimum.at(out, (batch[inside], col[inside]), np.hypot(x, y)[ok][inside])
+        # A shifted origin spreads near walls over more columns than the
+        # sampled pixels cover, leaving single empty columns inside a wall;
+        # one between two hits is that, not open track.
+        gap = (
+            ~np.isfinite(out[:, 1:-1])
+            & np.isfinite(out[:, :-2])
+            & np.isfinite(out[:, 2:])
+        )
+        out[:, 1:-1] = np.where(gap, 0.5 * (out[:, :-2] + out[:, 2:]), out[:, 1:-1])
+        return self._hold_unseen_edges(out, dx, dy, dyaw)
+
+    def _hold_unseen_edges(self, out, dx, dy, dyaw):
+        """Edge columns the real lens cannot see from where it sits: hold the
+        outermost seen range.  Left empty they read as a wall vanishing at
+        the FOV edge -- at a hairpin, beside the inner wall, which stopped
+        the car in loopback (training only ever drops ~2 edge columns).  A
+        wall there changes range slowly with azimuth, so holding is ~1%.
+        A column the real lens could see but found empty stays empty.
+        """
+        # The outermost sampled ray, plus half the (narrow) spacing out there.
+        edge = np.abs(self.azimuth).max() + 0.5 * np.abs(np.diff(self.azimuth)).min()
+        b, w = out.shape
+        for i in range(b):
+            seen = np.flatnonzero(np.isfinite(out[i]))
+            if not len(seen):
+                continue
+            for first, step in ((seen[0], -1), (seen[-1], 1)):
+                r = out[i, first]
+                j = first + step
+                while 0 <= j < w:
+                    # This column's ray at range r, bearing from the real lens.
+                    px, py = (
+                        r * np.cos(self.azimuth[j]) - dx,
+                        r * np.sin(self.azimuth[j]) - dy,
+                    )
+                    bearing = np.arctan2(py, px) - dyaw
+                    if abs(bearing) <= edge:
+                        break
+                    out[i, j] = r
+                    j += step
+        return out
 
     def encode(self, scan):
         """Log range in [0, 1]; invalid columns are INVALID (-0.25).

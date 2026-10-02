@@ -127,6 +127,7 @@ install(TARGETS ${CFR_NODES}
 
 install(PROGRAMS src/teleport_api.py src/maneuver_runner_node.py src/obstacle_randomizer_node.py
   src/start_signal_detector_node.py src/lap_counter_node.py src/hoop_monitor_node.py
+  src/depth_thinner_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -177,6 +178,17 @@ if(BUILD_TESTING)
   # the vehicle.yaml patcher.  Plain unittest, so it also runs as a bare script
   # on a laptop with no test runner installed - which is where runs get analysed.
   ament_add_pytest_test(test_characterize test/test_characterize.py)
+
+  # Camera mount calibration (floor plane, targets, lever arm), against
+  # rendered scenes and drives with a known mount.  numpy only, no ROS.
+  ament_add_pytest_test(test_camera_extrinsics test/test_camera_extrinsics.py)
+  # Gazebo's ZED and SubZero's pose offset are copies of vehicle.yaml's
+  # camera_mount; fail the build when one was edited without the other.
+  ament_add_test(test_camera_mount_propagated
+    GENERATE_RESULT_FOR_RETURN_CODE_ZERO
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/propagate_camera.py" --check
+    OUTPUT_FILE "${CMAKE_BINARY_DIR}/test_results/${PROJECT_NAME}/test_camera_mount_propagated.txt"
+  )
 
   # The Gazebo vehicle model is generated from config/vehicle.yaml into EVERY
   # world in WORLD_SPAWN_POSES (speed_course.sdf and obstacle_course.sdf).

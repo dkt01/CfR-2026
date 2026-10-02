@@ -124,7 +124,10 @@ def main():
     right = p2.steering_angle(np.full(n, -1.0))[0]
     check(
         "steering is asymmetric, as measured",
-        abs(left / abs(right) - 1.34) < 0.05,
+        # 1.07, not the old 1.34: the 2026-09-30 figure-8 measured 0.421 left
+        # / 0.375 right, and +1.0 only reaches raw +0.925 once the bridge's
+        # steering_trim is added, so 0.402 left.
+        abs(left / abs(right) - 1.07) < 0.05,
         f"left {left:.3f} rad, right {right:.3f} rad",
     )
 

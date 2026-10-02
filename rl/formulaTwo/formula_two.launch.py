@@ -49,8 +49,9 @@ def generate_launch_description():
     args = [
         DeclareLaunchArgument("policy", default_value=str(POLICY_DIR / "policy.npz")),
         DeclareLaunchArgument("config", default_value=str(POLICY_DIR / "config.yaml")),
+        DeclareLaunchArgument("python", default_value="python3"),
         DeclareLaunchArgument(
-            "driver", default_value="policy", description="policy | baseline"
+            "driver", default_value="policy", description="policy | baseline | mpc"
         ),
         DeclareLaunchArgument(
             "laps", default_value="0", description="0 takes it from config (3)"
@@ -63,6 +64,7 @@ def generate_launch_description():
         DeclareLaunchArgument("use_sim_time", default_value="true"),
         DeclareLaunchArgument("rviz", default_value="true"),
         DeclareLaunchArgument("speed_scale", default_value="1.0"),
+        DeclareLaunchArgument("pose_is_camera", default_value="false"),
         DeclareLaunchArgument("node_name", default_value="formula_one"),
         DeclareLaunchArgument(
             "depth_topic", default_value="/zed/zed_node/depth/depth_registered"
@@ -135,6 +137,7 @@ def driver(context, *args, **kwargs):
         "laps": value("laps"),
         "anchor": value("anchor"),
         "speed_scale": value("speed_scale"),
+        "pose_is_camera": value("pose_is_camera"),
         "use_sim_time": value("use_sim_time"),
         "depth_topic": value("depth_topic"),
         "camera_info_topic": info,
@@ -143,7 +146,7 @@ def driver(context, *args, **kwargs):
         "depth_hold_after": value("depth_hold_after"),
         "depth_timeout": value("depth_timeout"),
     }
-    cmd = ["python3", str(HERE / "formula_two_node.py"), "--ros-args"]
+    cmd = [value("python"), str(HERE / "formula_two_node.py"), "--ros-args"]
     cmd += ["-r", f"__node:={value('node_name')}"]
     for key, val in params.items():
         cmd += ["-p", f"{key}:={val}"]
@@ -162,14 +165,14 @@ def recorder(context, *args, **kwargs):
         return []
     drv = value("driver")
     label = value("record_label") or (
-        "baseline" if drv == "baseline" else Path(value("policy")).parent.name
+        drv if drv in ("baseline", "mpc") else Path(value("policy")).parent.name
     )
     script = HERE.parents[1] / "jetson" / "scripts" / "record_run.py"
     cmd = [
         "python3",
         str(script),
         "--label",
-        f"f2_{label}",
+        f"{'fsz' if drv == 'mpc' else 'f2'}_{label}",
         "--driver",
         drv,
         "--speed-scale",
@@ -177,7 +180,7 @@ def recorder(context, *args, **kwargs):
         "--config",
         value("config"),
     ]
-    if drv != "baseline":
+    if drv == "policy":
         cmd += ["--policy", value("policy")]
     cmd += shlex.split(value("record_args"))
     return [

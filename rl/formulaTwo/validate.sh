@@ -43,14 +43,25 @@ POLICY="$PWD/bestModel/f2_v3_59M/policy.npz"
 LAPS=$(python3 -c "import yaml;print(yaml.safe_load(open('config.yaml'))['env']['laps'])")
 GUI=false; RVIZ=true; DRIVER=policy; LOOPBACK=false; SPEED=1.0; WEB=true
 MANUAL_START=false
+CONTINUOUS=false
 FALLBACK=stop
+CONFIG_OVERRIDE=""
+PYTHON=python3
 CHECK=0
+START_ALONG=0.0; START_LATERAL=0.0; START_HEADING=0.0; WORLD_SCALE=0.0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --policy)  POLICY="$(realpath "$2")"; shift 2;;
     --baseline) DRIVER=baseline; shift;;
+    --mpc) DRIVER=mpc; shift;;
+    --config) CONFIG_OVERRIDE="$(realpath "$2")"; shift 2;;
+    --python) PYTHON="$2"; shift 2;;
     --speed-scale) SPEED="$2"; shift 2;;
     --loopback) LOOPBACK=true; WEB=false; shift;;
+    --start-along) START_ALONG="$2"; shift 2;;
+    --start-lateral) START_LATERAL="$2"; shift 2;;
+    --start-heading-deg) START_HEADING="$2"; shift 2;;
+    --world-scale) WORLD_SCALE="$2"; shift 2;;
     --laps)    LAPS="$2"; shift 2;;
     --gui)     GUI=true; shift;;
     --no-rviz) RVIZ=false; shift;;
@@ -58,6 +69,7 @@ while [[ $# -gt 0 ]]; do
     --no-web)  WEB=false; shift;;
     --depth-fallback) FALLBACK="$2"; shift 2;;
     --manual-start) MANUAL_START=true; shift;;
+    --continuous) CONTINUOUS=true; shift;;
     --sensors) shift;;  # always on; accepted for formulaOne muscle memory
     --no-sensors)
       echo "formulaTwo drives on the rendered ZED's depth: without sensors:=true"
@@ -67,17 +79,26 @@ while [[ $# -gt 0 ]]; do
     *) echo "unknown argument: $1"; exit 1;;
   esac
 done
-[[ "$DRIVER" == "baseline" || -f "$POLICY" ]] || \
+for name in START_ALONG START_LATERAL START_HEADING WORLD_SCALE; do
+  if [[ "${!name}" =~ ^-?[0-9]+$ ]]; then
+    printf -v "$name" '%s.0' "${!name}"
+  fi
+done
+[[ "$LOOPBACK" == true || "$WORLD_SCALE" == 0.0 ]] || \
+  { echo "--world-scale requires --loopback" >&2; exit 2; }
+[[ "$DRIVER" != "policy" || -f "$POLICY" ]] || \
   { echo "no policy at $POLICY -- run ./train.sh, or pass --baseline"; exit 1; }
 # A policy drives with the config it was trained under: the run directory's,
 # when there is one beside it.
 CONFIG="$PWD/config.yaml"
-[[ -f "$(dirname "$POLICY")/config.yaml" ]] && CONFIG="$(dirname "$POLICY")/config.yaml"
+[[ "$DRIVER" == "policy" && -f "$(dirname "$POLICY")/config.yaml" ]] && CONFIG="$(dirname "$POLICY")/config.yaml"
+[[ -n "$CONFIG_OVERRIDE" ]] && CONFIG="$CONFIG_OVERRIDE"
 
 export ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-80}
 export GZ_PARTITION=${GZ_PARTITION:-formula_two}
 echo "ROS_DOMAIN_ID=$ROS_DOMAIN_ID  GZ_PARTITION=$GZ_PARTITION"
-echo "policy $POLICY"
+echo "driver $DRIVER"
+if [[ "$DRIVER" == policy ]]; then echo "policy $POLICY"; fi
 echo "config $CONFIG"
 
 [[ -f "$REPO/install/setup.bash" ]] || { echo "build the workspace first: colcon build"; exit 1; }
@@ -145,13 +166,18 @@ if [[ -n "$pubs" && "$pubs" != 0 ]]; then
   exit 1
 fi
 
-SIM_LOG=/tmp/formula_two_sim.log
+LOG_DIR="${FORMULA_VALIDATE_LOG_DIR:-/tmp/formula_two_${ROS_DOMAIN_ID}}"
+mkdir -p "$LOG_DIR"
+SIM_LOG="$LOG_DIR/sim.log"
 if [[ "$LOOPBACK" == "true" ]]; then
   echo "starting the loopback car with a rendered depth camera (no Gazebo)..."
   # The loopback publishes /start_signal_detector/go itself, go_after seconds
   # after it starts -- its stand-in for the signal turning green.  Late
   # enough that the driver is up and waiting for it.
-  spawn python3 ros_loopback.py --ros-args -p config:="$CONFIG" -p go_after:=25.0 >"$SIM_LOG" 2>&1
+  spawn python3 ros_loopback.py --ros-args -p config:="$CONFIG" -p go_after:=25.0 \
+       -p start_along:="$START_ALONG" -p start_lateral:="$START_LATERAL" \
+       -p start_heading_deg:="$START_HEADING" -p world_scale:="$WORLD_SCALE" \
+       >"$SIM_LOG" 2>&1
   SIM_TIME=false
 else
   echo "starting the Speed Course (laps=$LAPS, rendered ZED on)..."
@@ -163,6 +189,7 @@ else
        >"$SIM_LOG" 2>&1
   SIM_TIME=true
 fi
+SIM_PID=${PIDS[-1]}
 
 if [[ "$WEB" == "true" ]]; then
   echo -n "waiting for the viewer websocket on :9002"
@@ -181,14 +208,40 @@ if [[ "$WEB" == "true" ]]; then
   fi
 fi
 
-wait_topic() {  # topic, label, seconds
+startup_failure() {
+  ! kill -0 "$SIM_PID" 2>/dev/null ||
+    grep -Eq '\[ERROR\] \[(gazebo-1|sim_vehicle_node-[0-9]+)\]: process has died' "$SIM_LOG"
+}
+
+report_startup_failure() {
+  if ! kill -0 "$SIM_PID" 2>/dev/null; then
+    echo "  simulator launch exited before the sensor stream started."
+  else
+    echo "  Gazebo or the simulated vehicle exited before the sensor stream started."
+  fi
+  grep -E '\[ERROR\]|Segmentation fault|Traceback|Exception' "$SIM_LOG" | tail -8 || true
+  echo "  simulator log: $SIM_LOG"
+}
+
+wait_topic() {  # topic, label, wall-clock seconds
+  local deadline=$((SECONDS + $3))
   echo -n "waiting for $2"
-  for _ in $(seq "$3"); do
-    if timeout 5 ros2 topic echo "$1" --once --field header >/dev/null 2>&1; then echo " ok"; return 0; fi
-    echo -n "."; sleep 1
+  while (( SECONDS < deadline )); do
+    if startup_failure; then echo; report_startup_failure; return 1; fi
+    if timeout 3 ros2 topic echo "$1" --once --field header >/dev/null 2>&1; then
+      echo " ok"; return 0
+    fi
+    echo -n "."
+    sleep 1
   done
   echo
-  echo "  no $2 on $1 after $3 s -- see $SIM_LOG"
+  echo "  no $2 on $1 after $3 s (wall clock)."
+  if startup_failure; then
+    report_startup_failure
+  else
+    echo "  simulator log: $SIM_LOG"
+    tail -15 "$SIM_LOG"
+  fi
   return 1
 }
 wait_topic /zed/zed_node/pose "the pose stream" 60 || exit 1
@@ -197,22 +250,24 @@ if [[ "$pubs" != 1 ]]; then
   echo "/zed/zed_node/pose has ${pubs:-?} publishers, not 1 -- two simulators on one domain.  Aborting."
   exit 1
 fi
-if [[ "$DRIVER" == "policy" ]]; then
+if [[ "$DRIVER" == "policy" || "$DRIVER" == "mpc" ]]; then
   # The rendered camera takes longer to come up than the pose, and the driver
   # will (correctly) refuse to move until it does.  Say so here rather than
   # leave a car sitting on the line looking like a policy that will not go.
   wait_topic /zed/zed_node/depth/depth_registered "the depth image" 90 || exit 1
 fi
 
-MONITOR_OUT=/tmp/formula_two_monitor.json
+MONITOR_OUT="$LOG_DIR/monitor.json"
 rm -f "$MONITOR_OUT"
 spawn python3 run_monitor.py --out "$MONITOR_OUT" --config "$CONFIG" \
-      --ros-args -p use_sim_time:="$SIM_TIME" >/tmp/formula_two_monitor.log 2>&1
+      --world-scale "$WORLD_SCALE" \
+      --ros-args -p use_sim_time:="$SIM_TIME" >"$LOG_DIR/monitor.log" 2>&1
 
-DRIVER_LOG=/tmp/formula_two_driver.log
+DRIVER_LOG="$LOG_DIR/driver.log"
 LAUNCH_ARGS=(policy:="$POLICY" config:="$CONFIG" driver:="$DRIVER" laps:="$LAPS"
              rviz:="$RVIZ" speed_scale:="$SPEED" use_sim_time:="$SIM_TIME"
-             depth_fallback:="$FALLBACK")
+             depth_fallback:="$FALLBACK" python:="$PYTHON" record:=false
+             pose_is_camera:=false)
 if [[ "$CHECK" != "0" ]]; then
   spawn ros2 launch "$PWD/formula_two.launch.py" "${LAUNCH_ARGS[@]}" >"$DRIVER_LOG" 2>&1
 else
@@ -279,9 +334,10 @@ else
 fi
 
 verdict() {
-  python3 - "$MONITOR_OUT" "$DRIVER_LOG" "$LAPS" <<'EOF'
-import json, re, sys
-mon_path, log_path, laps = sys.argv[1], sys.argv[2], int(sys.argv[3])
+  python3 - "$MONITOR_OUT" "$DRIVER_LOG" "$LAPS" "$DRIVER" "$CONTINUOUS" <<'EOF'
+import csv, json, math, re, sys
+from pathlib import Path
+mon_path, log_path, laps, driver, continuous = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4], sys.argv[5] == "true"
 log = open(log_path, errors="replace").read()
 try:
     m = json.load(open(mon_path))
@@ -307,8 +363,32 @@ if m.get("max_abs_roll_deg", 0) > 30:
     print(f"  ROLLED OVER    max |roll| {m['max_abs_roll_deg']:.0f} deg -- tripped by a bale")
 if m.get("pose_jumps", 0) or m.get("clock_reversals", 0):
     print(f"  CONTAMINATED   {m.get('pose_jumps', 0)} pose jumps, {m.get('clock_reversals', 0)} clock reversals -- two simulators; this run proves nothing")
-ok = (bool(finished) and stopped and not lost and clr is not None and contact == 0
-      and not m.get("pose_jumps", 0) and not m.get("clock_reversals", 0))
+if continuous:
+    trace = Path(mon_path).with_suffix(".trace.csv")
+    rows = list(csv.DictReader(trace.open())) if trace.exists() else []
+    total = 0.0
+    recent = 0.0
+    recent3 = 0.0
+    end = float(rows[-1]["t"]) if rows else 0.0
+    for before, after in zip(rows, rows[1:]):
+        step = math.hypot(float(after["x"]) - float(before["x"]),
+                          float(after["y"]) - float(before["y"]))
+        if step < 1.0:
+            total += step
+            if float(after["t"]) >= end - 10.0:
+                recent += step
+            if float(after["t"]) >= end - 3.0:
+                recent3 += step
+    print(f"  travel         {total:.1f} m total, {recent:.1f} m in last 10 s")
+    ok = (total >= 10.0 and recent >= 2.0 and recent3 >= 0.5 and not lost and
+          "pose is stale" not in log and
+          clr is not None and contact == 0 and m.get("grazing_samples", 0) == 0 and
+          not m.get("pose_jumps", 0) and not m.get("clock_reversals", 0))
+    sys.exit(0 if ok else 1)
+ok = (bool(finished) and stopped and "TIMED OUT" not in log and not lost
+      and clr is not None and contact == 0
+      and not m.get("pose_jumps", 0) and not m.get("clock_reversals", 0)
+      and (driver != "mpc" or m.get("grazing_samples", 0) == 0))
 sys.exit(0 if ok else 1)
 EOF
 }
@@ -318,7 +398,7 @@ if [[ "$CHECK" != "0" ]]; then
   echo "running to a verdict (up to ${CHECK}s).  driver log: $DRIVER_LOG"
   deadline=$((SECONDS + CHECK))
   while (( SECONDS < deadline )); do
-    grep -q "STOPPED" "$DRIVER_LOG" 2>/dev/null && break
+    if [[ "$CONTINUOUS" != true ]] && grep -q "STOPPED" "$DRIVER_LOG" 2>/dev/null; then break; fi
     sleep 2
   done
   sleep 2  # one more monitor write
@@ -326,7 +406,11 @@ if [[ "$CHECK" != "0" ]]; then
   if verdict; then
     echo
     where=$([[ "$LOOPBACK" == "true" ]] && echo "on the loopback car" || echo "in Gazebo")
-    echo "PASS -- $LAPS laps and a stop $where, no contact, depth never lost."
+    if [[ "$CONTINUOUS" == true ]]; then
+      echo "PASS -- continuous corridor driving $where, moving at end, no contact or grazing, depth never lost."
+    else
+      echo "PASS -- $LAPS laps and a stop $where, no contact$([[ "$DRIVER" == mpc ]] && echo ", no grazing"), depth never lost."
+    fi
     exit 0
   fi
   echo

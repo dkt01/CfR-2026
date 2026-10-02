@@ -169,6 +169,17 @@ def git_sha():
     return ""
 
 
+def camera_mount():
+    try:
+        sys.path.insert(0, str(SCRIPT_DIR))
+        import camera_extrinsics
+
+        mount = camera_extrinsics.load_mount()
+        return mount.as_dict() if mount else None
+    except Exception as err:  # noqa: BLE001 -- never lose a run over metadata
+        return {"error": str(err)}
+
+
 def sha256(path: Path):
     digest = hashlib.sha256()
     with open(path, "rb") as handle:
@@ -850,6 +861,9 @@ def main():
             "compress": args.compress,
         },
         "free_gb_at_start": round(free_gb, 1),
+        # The mount the drivers project depth from (they log it too), so the
+        # Run Lab can check it against this run's own floor and pose.
+        "camera_mount": camera_mount(),
         **shipped,
     }
     meta_path = run_dir / "metadata.yaml"

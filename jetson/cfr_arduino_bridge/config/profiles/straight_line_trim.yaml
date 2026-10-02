@@ -1,0 +1,54 @@
+# Steering trim checkout - a fast, frequent complement to B1 (steer_authority),
+# not a replacement for it.
+#
+# B1 (steer_authority_fast) fits a line through several commands and reports
+# where it crosses zero angle as steering.center_offset - see analyze.py's
+# analyze_steer_authority.  That fit is the right way to find the SLOPE of the
+# steering map, but it takes a 26 m bubble and ~3 minutes, which is too much to
+# run before every session just to check the trim has not walked (a knocked
+# servo horn, a linkage that has worked loose).
+#
+# This profile measures one point instead: command 0, held long enough at a
+# steady speed to read a clean yaw rate. analyze.py's analyze_straight_line
+# converts the angle bias it finds into a command-space offset using the SLOPE
+# B1 already measured (vehicle.yaml's effective_angle_table), rather than
+# re-fitting a slope from a single point, which is not information a single
+# point can supply. Re-run steer_authority_fast (or figure_eight_calib) if the
+# slope itself might have moved, e.g. after any linkage work - this profile can
+# only ever be as good as the last measured slope.
+#
+# 1 m/s specifically: this is close to the tachometer's reliable floor and the
+# ZED's noise floor (see steer_authority_fast.yaml's own note on why the
+# original steering-authority run failed at 0.6 m/s - both speed sensors are
+# useless right around here). ALWAYS analyze this profile with
+# --speed-source wheel_rpm explicitly; do not trust the `auto` default at this
+# speed. Faster would clear both noise floors, but the point of this checkout
+# is to be exactly what the car does when a policy trims a near-straight line
+# at low speed, and that regime is worth checking on its own terms rather than
+# escaping into a speed the policy is less often near.
+name: straight_line_trim
+description: 10 m dead straight at 1 m/s, for a fast steering.center_offset re-check.
+
+gains:
+  speed_trace: true
+
+limits:
+  # 10 m out, 10 m back; the bubble only needs to cover the outbound leg plus
+  # slop for the return not landing exactly on the start.
+  max_distance: 13.0
+  max_duration: 60.0
+  max_speed: 1.2
+
+steps:
+  - {hold: 3.0, steering: 0.0, velocity: 0.0, label: settle}
+  # 11 s at 1 m/s clears 10 m with a second to spare for the speed-slew ramp
+  # at the start, which analyze_straight_line's tail-based steady_state
+  # already excludes from the fit.
+  - {hold: 11.0, steering: 0.0, velocity: 1.0, label: straight_10m}
+  - {hold: 3.0, steering: 0.0, velocity: 0.0, label: settle}
+
+return:
+  mode: reverse_to_start
+  speed: 1.0
+  tolerance: 1.0
+  timeout: 30.0

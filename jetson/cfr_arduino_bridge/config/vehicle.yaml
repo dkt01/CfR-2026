@@ -355,9 +355,11 @@ steering:
   # constant - so sim and car agree with each other by construction while both
   # may be wrong about reality.
   max_angle_left:
-    value: 0.512
+    value: 0.421037
+    run: /home/tejam/git/CfR-2026/runs/19700101T000556Z_figure_eight_calib
+    measured_utc: '2026-09-30'
     units: rad
-    provenance: estimated
+    provenance: measured
     experiment: B1
     note: >
       The left end of effective_angle_table, which is what the runtime
@@ -370,21 +372,30 @@ steering:
       measurement of the real car: the table's +/-1.0 rows are extrapolated.
       scripts/check_steering_consistency.py keeps the two in step.
   max_angle_right:
-    value: 0.382
+    value: 0.374785
+    run: /home/tejam/git/CfR-2026/runs/19700101T000556Z_figure_eight_calib
+    measured_utc: '2026-09-30'
     units: rad
-    provenance: estimated
+    provenance: measured
     experiment: B1
     note: >
       The right end of effective_angle_table.  Real Ackermann linkages are
       rarely symmetric and this one is not: 34% less lock than the left.
       Measure both ends on the car.
   center_offset:
-    value: 0.0
+    value: -0.039
+    run: /home/tejam/git/CfR-2026/runs/20261002T005449Z_straight_line_trim
+    measured_utc: '2026-10-02'
     units: normalized steering command
-    provenance: guess
+    provenance: measured
     experiment: A6
     note: >
-      Command value that produces zero road-wheel angle.  Note the firmware's
+      Command value that produces zero road-wheel angle.  From the gyro's
+      heading over ZED distance on the straight (11.2 deg left over 3.7 m,
+      trim 0), not the report's -0.031: that divides by tachometer speed,
+      which read 1.7x the ZED's.  Agrees with the 9/30 straights (-0.035 to
+      -0.041).  Converted through the default 0.447 rad/command slope.
+      Note the firmware's
       auto-mode centre is 1504 us, not 1500: PctToPulseLength(255 - 127) is
       (128 - 127) * 4 + 1500.
   backlash:
@@ -487,17 +498,18 @@ steering:
   #   ends.  Interpolated by sim_vehicle_node, which is why the asymmetry now
   #   reaches the simulator at all.
   effective_angle_table:
-    provenance: mixed
+    provenance: measured
     experiment: B1/B2
-    run: 'Session B/C 2026-09-18'
     units: [normalized, rad]
     rows:
-      - [-1.0, -0.382]
-      - [-0.5, -0.191]
-      - [0.0, 0.0]
-      - [0.5, 0.256]
-      - [1.0, 0.512]
-
+      - [-1, -0.37479]
+      - [-0.6, -0.23964]
+      - [-0.25, -0.0828]
+      - [0.25, 0.14706]
+      - [0.6, 0.31757]
+      - [1, 0.42104]
+    run: /home/tejam/git/CfR-2026/runs/19700101T000556Z_figure_eight_calib
+    measured_utc: '2026-09-30'
 longitudinal:
   # Coastdown fit: m dv/dt = -(f0 + f1 v + f2 v^2).  These replace the
   # forward/reverse coast deceleration pair in arduino_bridge.yaml, which the
@@ -586,9 +598,11 @@ longitudinal:
 
 lateral:
   min_turn_radius:
-    value: 0.577
+    value: 0.723511
+    run: /home/tejam/git/CfR-2026/runs/19700101T000556Z_figure_eight_calib
+    measured_utc: '2026-09-30'
     units: m
-    provenance: estimated
+    provenance: measured
     experiment: B1
     note: >
       wheelbase / tan(max_angle_left), i.e. entirely derived from the steering
@@ -623,6 +637,96 @@ lateral:
       the bound and with foam tires on asphalt.  To measure it properly the
       skidpad has to be pushed until the car actually breaks away.
       See 'Session B/C 2026-09-18' and docs/characterization-results.md.
+      The 2026-09-30 figure-8 (aborted) peaked at 0.33 g, a weaker lower
+      bound still, and apply_vehicle_patch wrote it here; reverted, because
+      generate_vehicle_model.py sets Gazebo's tire friction from this value.
+
+camera_mount:
+  # Where the ZED sits, as the pose of its camera_link -- the bottom 1/4"
+  # mounting hole, which is the point /zed/zed_node/pose reports -- in the
+  # vehicle frame above (ground under the WHEELBASE MIDPOINT, not the rear
+  # axle).  Taping from the rear axle is easier: subtract half the wheelbase
+  # (0.162 m) from x, or pass --from rear-axle to calibrate_camera.py.
+  #
+  # Depth is registered to the LEFT LENS, not to camera_link, so everything
+  # that back-projects depth uses depth origin = mount + R * lens_offset.
+  # camera_extrinsics.py is the one implementation of that; the formula
+  # drivers, record_run.py and the Run Lab all go through it, and
+  # propagate_camera.py writes the result into the Gazebo sensor.
+  #
+  # Measure with scripts/launchCalibration.sh on the car (floor plane + IMU,
+  # optionally targets), then apply_vehicle_patch.py <run> and
+  # propagate_camera.py.  Until then these are the Gazebo model's numbers.
+  x:
+    value: 0.315
+    units: m
+    provenance: guess
+    experiment: A4
+    note: Lens x copied from the Gazebo visual; lens_offset_x is ~0.
+  y:
+    value: 0.0
+    units: m
+    provenance: guess
+    experiment: A4
+    note: Centered on the car by eye.  Needs targets (--target) to measure.
+  z:
+    value: 0.125515
+    run: /home/tejam/git/CfR-2026/runs/20261002T003859Z_camera_calib
+    measured_utc: '2026-10-02'
+    units: m
+    provenance: measured
+    experiment: A4
+    note: The Gazebo lens height 0.20 less lens_offset_z.
+  roll:
+    value: 0.00256106
+    run: /home/tejam/git/CfR-2026/runs/20261002T003859Z_camera_calib
+    measured_utc: '2026-10-02'
+    units: rad
+    provenance: measured
+    experiment: A4
+  pitch:
+    value: -0.0109631
+    run: /home/tejam/git/CfR-2026/runs/20261002T003859Z_camera_calib
+    measured_utc: '2026-10-02'
+    units: rad
+    provenance: measured
+    experiment: A4
+    note: >
+      + nose down.  1 deg of error puts flat ground at r * tan(1 deg) above the
+      floor, inside formulaThree's 0.07 m height band from ~4 m out.
+  yaw:
+    value: 0.0
+    units: rad
+    provenance: guess
+    experiment: A4
+    note: + left.  Needs two targets, or the lever-arm fit from a drive.
+  lens_offset_x:
+    value: -0.01
+    run: /home/tejam/git/CfR-2026/runs/20261002T003859Z_camera_calib
+    measured_utc: '2026-10-02'
+    units: m
+    provenance: measured
+    experiment: factory
+    note: >
+      camera_link -> left_camera_frame, in the camera's own frame.  Factory
+      geometry from the wrapper's URDF; calibrate_camera.py reads it from the
+      live TF and records it here.
+  lens_offset_y:
+    value: 0.06
+    run: /home/tejam/git/CfR-2026/runs/20261002T003859Z_camera_calib
+    measured_utc: '2026-10-02'
+    units: m
+    provenance: measured
+    experiment: factory
+    note: Half the ZED 2i's 0.12 m baseline.
+  lens_offset_z:
+    value: 0.015
+    run: /home/tejam/git/CfR-2026/runs/20261002T003859Z_camera_calib
+    measured_utc: '2026-10-02'
+    units: m
+    provenance: measured
+    experiment: factory
+    note: Half the 0.03 m body height.
 
 sensors:
   # B0 zed_static, 305 s parked.  READ THE CAVEAT: these describe the ZED AT

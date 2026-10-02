@@ -1,0 +1,91 @@
+# B3b - yaw response to a steering step, at the commands the policy uses.
+#
+# THIS PROFILE EXISTS BECAUSE `step_steer` WAS TOO COARSE IN TWO WAYS AT ONCE.
+#
+# Wrong commands.  It steps to +/-0.50 because that was the half-lock point the
+# steering map needed.  The policy does not drive there; it trims a centerline
+# prior by a few tenths, and the lag that matters is the one at the command it
+# actually issues.  A first-order lag fitted at 0.50 and applied at 0.25 is
+# fitted through tan() and the steering limit at one end and read off at the
+# other.
+#
+# Wrong resolution.  Its yaw-rate time constant came back 1.76 s, roughly nine
+# times the truth, and section 4 of characterization-results.md threw it out:
+# the response was over before the second independent camera sample arrived.
+# telemetry.csv could not show that, because it repeats the last odometry
+# message onto every 50 Hz row.  The runner now also writes pose.csv and
+# imu.csv one row per message, and prints the rate it got when the run ends.
+#
+# So this profile trades breadth for resolution on purpose.  One speed, four
+# commands, each done twice.  ONE STEP CAPTURED PROPERLY IS WORTH SIX THAT ARE
+# NOT, and the run is short enough that repeating it costs nothing.
+#
+# The speed is 2.5 m/s because that is hairpin approach speed - where both the
+# scripted baseline and two trained policies beached, and where plant.py's
+# yaw_response_tau was fitted in Gazebo.  Fit the car at the operating point,
+# not at a round number.
+name: step_steer_fine
+description: Steering steps at +/-0.25 and +/-0.35, 2.5 m/s, twice each.
+
+gains:
+  speed_trace: true
+
+limits:
+  max_distance: 24.0
+  max_duration: 120.0
+  max_speed: 3.0
+
+# Timing.  Both holds are set by the lag being measured, not by eye.
+#
+# 2.4 s of step, because the fit takes its steady yaw rate from the LAST 0.4 s
+# of the hold and that window has to be settled.  With the 0.19 s dead time and
+# a 0.34 s lag, 5 time constants land at 1.9 s - so a 2.3 s hold is the
+# minimum, and at 1.4 s the "steady" value is still 6% low and drags the fitted
+# lag down with it.  2.4 s also survives the lag being half again larger than
+# the Gazebo number, which is the case this run exists to rule in or out.
+#
+# 2.0 s of recovery, by the same arithmetic in reverse: the yaw rate has to be
+# back at zero and the wheels back at centre before the next step, or it is not
+# a step from a known state.
+#
+# THE STEPS ALL TURN THE SAME WAY WITHIN A HALF.  That is not an oversight and
+# it is the only reason this fits in a car park.  An alternating slalom leaves
+# the car pointing where it started, so every recovery leg adds to the same
+# heading and the run walks 58 m downrange before it is finished.  Turning the
+# same way makes the four steps and their recoveries a closed polygon: at
+# 2.5 m/s these commands are 80-110 degrees of yaw each, so four of them come
+# back past 360 and the car ends up near where it began.  Left half first, then
+# right, because the two sides are different numbers and must not be averaged.
+steps:
+  - {hold: 3.0, steering: 0.0, velocity: 0.0, label: settle}
+  # Long enough to be at speed with the steering settled and the speed loop out
+  # of its 2.0 m/s^2 slew before the first step.
+  - {hold: 3.5, steering: 0.0, velocity: 2.5, label: straight_2p5}
+  - {hold: 2.4, steering: 0.25, velocity: 2.5, label: step_L025_a}
+  - {hold: 2.0, steering: 0.0, velocity: 2.5, label: recover}
+  - {hold: 2.4, steering: 0.35, velocity: 2.5, label: step_L035_a}
+  - {hold: 2.0, steering: 0.0, velocity: 2.5, label: recover}
+  # Second pass at each command.  The per-trace spread is the honest error bar
+  # on the fitted lag - fit_yaw_lag.py reports it, and one pass cannot.
+  - {hold: 2.4, steering: 0.25, velocity: 2.5, label: step_L025_b}
+  - {hold: 2.0, steering: 0.0, velocity: 2.5, label: recover}
+  - {hold: 2.4, steering: 0.35, velocity: 2.5, label: step_L035_b}
+  - {hold: 2.0, steering: 0.0, velocity: 2.5, label: recover}
+  # Right half.  Same four steps, other direction.
+  - {hold: 2.4, steering: -0.25, velocity: 2.5, label: step_R025_a}
+  - {hold: 2.0, steering: 0.0, velocity: 2.5, label: recover}
+  - {hold: 2.4, steering: -0.35, velocity: 2.5, label: step_R035_a}
+  - {hold: 2.0, steering: 0.0, velocity: 2.5, label: recover}
+  - {hold: 2.4, steering: -0.25, velocity: 2.5, label: step_R025_b}
+  - {hold: 2.0, steering: 0.0, velocity: 2.5, label: recover}
+  - {hold: 2.4, steering: -0.35, velocity: 2.5, label: step_R035_b}
+  - {hold: 2.0, steering: 0.0, velocity: 2.5, label: recover}
+  # THE CAR HAS NO BRAKES.  A commanded zero from 2.5 m/s coasts about 3.5 m
+  # before it is at rest, and that ground is inside the bubble too.
+  - {hold: 5.0, steering: 0.0, velocity: 0.0, label: settle}
+
+return:
+  mode: reverse_to_start
+  speed: 1.5
+  tolerance: 2.0
+  timeout: 60.0

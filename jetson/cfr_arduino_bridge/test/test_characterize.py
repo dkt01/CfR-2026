@@ -416,6 +416,95 @@ def _guess_keys(loaded):
     }
 
 
+class TestStraightLine(unittest.TestCase):
+    """analyze_straight_line: gyro yaw rate, and the trim added back."""
+
+    HEADER = (
+        "t_ros,t_elapsed,phase,step_index,step_label,step_phase,cmd_steering,"
+        "cmd_velocity,speed,odom_valid,odom_x,odom_y,odom_yaw,odom_wz"
+    )
+
+    def setUp(self):
+        self.directory = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.directory)
+
+    def _write(self, yaw_rate, gyro_bias, odom_wz, trim, imu=True):
+        steps = [
+            (0, "settle", 3.0, 0.0),
+            (1, "straight_10m", 11.0, 1.0),
+            (2, "settle", 3.0, 0.0),
+        ]
+        telemetry, gyro, t = [], [], 0.0
+        for index, label, hold, speed in steps:
+            end = t + hold
+            while t < end:
+                moving = label == "straight_10m"
+                telemetry.append(
+                    f"{t:.3f},{t:.3f},running,{index},{label},hold,0.0,{speed},{speed},1,"
+                    f"0,0,0,{odom_wz if moving else 0.0}"
+                )
+                t += 0.02
+            while gyro and gyro[-1][0] < end - 0.005 or not gyro:
+                tg = (gyro[-1][0] + 0.005) if gyro else 0.0
+                rate = (yaw_rate if label == "straight_10m" else 0.0) + gyro_bias
+                gyro.append(
+                    (
+                        tg,
+                        f"{tg:.4f},{tg:.4f},running,{index},{label},0.0,{speed},{rate},0,0",
+                    )
+                )
+        with open(
+            os.path.join(self.directory, "telemetry.csv"), "w", encoding="utf-8"
+        ) as handle:
+            handle.write(self.HEADER + "\n" + "\n".join(telemetry) + "\n")
+        if imu:
+            with open(
+                os.path.join(self.directory, "imu.csv"), "w", encoding="utf-8"
+            ) as handle:
+                handle.write(
+                    "t_msg,t_ros,phase,step_index,step_label,cmd_steering,cmd_velocity,wz,ax,ay\n"
+                )
+                handle.write("\n".join(line for _, line in gyro) + "\n")
+        with open(
+            os.path.join(self.directory, "metadata.yaml"), "w", encoding="utf-8"
+        ) as handle:
+            handle.write(
+                "profile: straight_line_trim\nresult: ok\nwheelbase: 0.324\n"
+                "bridge_parameters:\n  /arduino_bridge:\n    ros__parameters:\n"
+                f"      steering_trim: {trim}\n"
+            )
+
+    def _offset(self):
+        from characterize import analyze
+
+        run = runs.load(self.directory)
+        result = analyze.analyze_straight_line(run, {"speed_source": "wheel_rpm"})
+        return result["vehicle"]["steering.center_offset"], result["summary"]
+
+    def test_gyro_not_odometry_and_trim_added_back(self):
+        """Odometry reads a third of the true rate, as on 2026-09-30; the gyro
+        carries a bias the parked settle steps must remove; and the run was
+        driven with a trim, which the answer must include."""
+        yaw_rate, trim, slope = 0.04, -0.075, 0.447
+        self._write(yaw_rate, gyro_bias=0.003, odom_wz=yaw_rate / 3, trim=trim)
+        offset, _ = self._offset()
+        expected = trim - math.atan(0.324 * yaw_rate / 1.0) / slope
+        self.assertAlmostEqual(offset, expected, places=4)
+
+    def test_correct_trim_reports_itself_not_zero(self):
+        """A car that goes straight with trim applied measures zero residual,
+        and the patch must keep the trim rather than reset it to 0."""
+        self._write(0.0, gyro_bias=0.0, odom_wz=0.0, trim=-0.075)
+        offset, _ = self._offset()
+        self.assertAlmostEqual(offset, -0.075, places=6)
+
+    def test_falls_back_to_odometry_without_imu_csv(self):
+        self._write(0.04, gyro_bias=0.0, odom_wz=0.02, trim=0.0, imu=False)
+        offset, summary = self._offset()
+        self.assertAlmostEqual(offset, -math.atan(0.324 * 0.02) / 0.447, places=4)
+        self.assertTrue(any("ZED odom_wz" in line for line in summary))
+
+
 class TestVehiclePatch(unittest.TestCase):
     def setUp(self):
         sys.path.insert(

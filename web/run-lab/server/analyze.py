@@ -39,11 +39,12 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import bagio  # noqa: E402
+import camera_check  # noqa: E402
 import course as course_mod  # noqa: E402
 import depthview  # noqa: E402
 import rerun_export  # noqa: E402
 
-VERSION = 8  # bump when outputs change shape; the UI flags older runs to re-process
+VERSION = 9  # bump when outputs change shape; the UI flags older runs to re-process
 GRID_HZ = 20.0
 ZED = "/zed/zed_node"
 GRAZE = 0.12  # m; the training reward's graze band
@@ -521,6 +522,13 @@ def process(run_dir: Path, callback=None, clouds=True, images=True):
             result["summary"]["perception"].update(
                 depthview.write_depth(bag, run_dir, streams, tb, recording, progress)
             )
+        progress(0.9, "checking the camera mount")
+        checked, rows = camera_check.run(bag, streams, metadata, tb.sim, tb, run_dir)
+        result["summary"]["perception"].update(checked)
+        for row in rows:
+            ok = row.pop("ok")
+            row["severity"] = "good" if ok else "warn"
+            result["summary"]["verdicts"]["worked" if ok else "failed"].append(row)
 
     summary = result["summary"]
     summary["bag"] = bag_info
@@ -2057,7 +2065,9 @@ def tegrastats(run_dir):
 # ================================================================== clouds
 
 CLOUD_TOPICS = [ZED + "/point_cloud/cloud_registered"]
-SIM_CAMERA = (0.315, 0.0, 0.20)  # sensors_world.py: the rendered ZED's mount
+# The rendered ZED's lens: propagate_camera.py puts it at vehicle.yaml's
+# depth origin, so that, not a copy, is where the simulated cloud starts.
+SIM_CAMERA = tuple(camera_check.ce.load_mount().depth_origin())
 
 
 def write_clouds(

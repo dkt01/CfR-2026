@@ -6,7 +6,7 @@
 # the car -- see SKILL.md for why that step stays manual/confirmed.
 #
 # Usage:
-#   deploy.sh sync [--host HOST] [--test] [--dry-run]
+#   deploy.sh sync [--host HOST] [--fsz] [--test] [--dry-run]
 #   deploy.sh launch-cmd [launch.sh args...]
 
 set -euo pipefail
@@ -21,6 +21,7 @@ cmd_sync() {
     while [ $# -gt 0 ]; do
         case "$1" in
             --host) host="$2"; shift 2 ;;
+            --fsz) extra+=(--fsz); shift ;;
             --test) do_test=true; shift ;;
             --dry-run) extra+=(--dry-run); shift ;;
             *) echo "unknown argument: $1" >&2; exit 1 ;;
@@ -72,7 +73,7 @@ case "${1:-}" in
     sync) shift; cmd_sync "$@" ;;
     launch-cmd) shift; cmd_launch_cmd "$@" ;;
     *)
-        echo "usage: deploy.sh sync [--host HOST] [--test] [--dry-run]" >&2
+        echo "usage: deploy.sh sync [--host HOST] [--fsz] [--test] [--dry-run]" >&2
         echo "       deploy.sh launch-cmd [launch.sh args...]" >&2
         exit 1
         ;;

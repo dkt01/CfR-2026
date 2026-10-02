@@ -1,0 +1,114 @@
+# B1b - steering authority, re-run where the sensors work.
+#
+# THE ORIGINAL RUN IS THE MOST LOAD-BEARING FAILED MEASUREMENT IN THE CAMPAIGN.
+# Every steering command in the system goes through the map it was supposed to
+# produce, and section 6 of characterization-results.md lists what came back
+# instead: a non-monotonic table in which full right lock reads LESS angle than
+# half right, and `max_angle_left` / `max_angle_right` still tagged as guesses
+# while the runtime steers by 0.512 / 0.382 rad endpoints that are nothing but
+# a straight line drawn through the half-lock values and doubled.
+#
+# It failed for one reason.  It ran at 0.6 m/s, which is the single speed at
+# which BOTH speed sensors are useless: the ZED is noise-dominated below about
+# 0.5 m/s and the tachometer reads exactly zero in half its samples below 0.6.
+# delta_eff = atan(L * yaw_rate / v) divides by that speed, so every row was
+# wrong by whatever the speed channel invented.
+#
+# WHAT CHANGED HERE
+#
+# 1. 1.5 m/s, not 0.6.  Above the tachometer's reliable floor (~1 m/s) and well
+#    clear of the ZED's noise floor, while still slow enough that the tires stay
+#    inside their linear range and the arc radius is the kinematic one.
+#
+# 2. A 2.0 m/s pass, but ONLY at commands that stay off the grip limit.  The
+#    measured lower bound on lateral grip is 0.55 g.  At 2.0 m/s the measured
+#    full left lock implies a 0.578 m radius, which is 0.70 g - past the bound,
+#    so the car would run wide and this would measure the tires rather than the
+#    linkage.  Full lock therefore gets 1.5 m/s (0.40 g) and the 2.0 m/s pass
+#    is restricted to |command| <= 0.60.  A steering map taken at the slide
+#    limit is a grip measurement wearing a steering map's label.
+#
+# 3. Six commands a side instead of three, bunched toward the top.  The
+#    endpoints are the entire point, and the open question is where the linkage
+#    actually stops - the simulated car reaches its limit by 0.80 and the top
+#    22% of command does nothing at all.  0.60 / 0.75 / 0.85 / 1.00 is dense
+#    enough to see that happen on the real car rather than infer it.
+#
+# 4. Left and right alternate instead of being run in blocks.  The asymmetry
+#    IS the headline number, and blocks put ten minutes of pack sag between the
+#    two sides of it.
+#
+# 5. The arcs run BACK TO BACK, with no gap between them.  The obvious thing
+#    is to stop the car between arcs, and it is wrong: the car has no brakes,
+#    so a commanded zero coasts 1.4 m in whatever direction it was last
+#    pointing, and since every arc closes a full circle it comes out pointing
+#    the way it went in.  Seventeen of those coasts line up and walk the car
+#    24 m downrange for no measurement at all.  Straight rolling gaps are worse
+#    still.  Running the arcs continuously keeps the whole session inside a
+#    26 m bubble instead of 40 m.
+#
+# Radius still comes from telemetry (R = v / yaw_rate), so nothing is marked on
+# the ground.
+name: steer_authority_fast
+description: Arcs at six commands a side, 1.5 m/s, plus a 2.0 m/s pass under the grip limit.
+
+gains:
+  speed_trace: true
+
+limits:
+  # Sized against the PESSIMISTIC steering map, not the measured one.  If full
+  # lock is really the 0.40 rad still in vehicle.yaml then command 0.25 is a
+  # 3.2 m circle that does not quite close in its hold, and the session peaks
+  # 23 m from the start; at the measured table it peaks at 17 m.  26 m covers
+  # whichever turns out to be true, which is the point of running this at all.
+  max_distance: 26.0
+  max_duration: 260.0
+  max_speed: 2.2
+
+# EVERY ARC CLOSES AT LEAST ONE FULL CIRCLE, and the holds are sized for the
+# PESSIMISTIC radius rather than the measured one - because the radius is the
+# thing being measured and cannot be assumed while sizing the run that measures
+# it.  At the configured 0.40 rad full lock (the `guess` still in vehicle.yaml)
+# command 0.25 describes a 3.2 m circle and needs 13.5 s at 1.5 m/s; at the
+# measured table it needs 10.5 s.  14 s covers both, so the arc closes either
+# way.  That matters twice over: a closed circle leaves the car where it
+# started, which is what keeps the bubble at 18 m instead of 30, and a full
+# revolution averages a crowned or gritty patch of asphalt out of the answer
+# instead of letting it read as steering authority.
+steps:
+  - {hold: 3.0, steering: 0.0, velocity: 0.0, label: settle}
+  - {hold: 5.0, steering: 0.0, velocity: 1.5, label: straight_reference}
+
+  - {hold: 14.0, steering: 0.25, velocity: 1.5, label: left_025}
+  - {hold: 14.0, steering: -0.25, velocity: 1.5, label: right_025}
+  - {hold: 10.0, steering: 0.45, velocity: 1.5, label: left_045}
+  - {hold: 10.0, steering: -0.45, velocity: 1.5, label: right_045}
+  - {hold: 10.0, steering: 0.60, velocity: 1.5, label: left_060}
+  - {hold: 10.0, steering: -0.60, velocity: 1.5, label: right_060}
+  # The top end, where the answer is.  If 0.85 and 1.00 come back equal, the
+  # linkage is already against its stop at 0.85 and the last 15% of command is
+  # dead - which is what the simulated car does and what nothing has ever
+  # confirmed on the real one.
+  - {hold: 10.0, steering: 0.75, velocity: 1.5, label: left_075}
+  - {hold: 10.0, steering: -0.75, velocity: 1.5, label: right_075}
+  - {hold: 10.0, steering: 0.85, velocity: 1.5, label: left_085}
+  - {hold: 10.0, steering: -0.85, velocity: 1.5, label: right_085}
+  - {hold: 10.0, steering: 1.00, velocity: 1.5, label: left_full}
+  - {hold: 10.0, steering: -1.00, velocity: 1.5, label: right_full}
+
+  # Back to centre and to rest once, halfway, so the second half starts from a
+  # known state and the pack voltage either side of it is comparable.
+  - {hold: 4.0, steering: 0.0, velocity: 0.0, label: settle}
+
+  # The 2.0 m/s pass.  Its job is not the map - it is to say whether the map
+  # MOVES with speed at the commands the policy uses.  If these four rows sit
+  # on the 1.5 m/s line, the map is a map; if they sit below it, what is being
+  # measured is understeer and belongs in the skidpad's gradient instead.
+  - {hold: 11.0, steering: 0.25, velocity: 2.0, label: left_025_v2}
+  - {hold: 11.0, steering: -0.25, velocity: 2.0, label: right_025_v2}
+  - {hold: 8.0, steering: 0.60, velocity: 2.0, label: left_060_v2}
+  - {hold: 8.0, steering: -0.60, velocity: 2.0, label: right_060_v2}
+  - {hold: 5.0, steering: 0.0, velocity: 0.0, label: settle}
+
+return:
+  mode: none

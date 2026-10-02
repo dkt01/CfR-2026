@@ -6,6 +6,8 @@ import { mountTimeline, setRange, setPlaying } from "./playhead.js";
 import { jobs } from "./jobs.js";
 
 import carPage from "./pages/car.js";
+import calibrationPage from "./pages/calibration.js";
+import zedTunePage from "./pages/zedTune.js";
 import runsPage from "./pages/runs.js";
 import overviewPage from "./pages/overview.js";
 import trackPage from "./pages/track.js";
@@ -54,6 +56,8 @@ function parseRoute() {
     const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
     if (parts[0] === "run" && parts[1]) return { page: "run", run: parts[1], tab: parts[2] || "overview" };
     if (parts[0] === "car") return { page: "car" };
+    if (parts[0] === "calibration") return { page: "calibration" };
+    if (parts[0] === "zed") return { page: "zed" };
     return { page: "runs" };
 }
 
@@ -81,6 +85,8 @@ function renderSidebar() {
         h("div", { class: "brand" }, h("div", { class: "brand-mark" }, "CfR"), h("div", {}, h("div", { class: "brand-name" }, "CfR Log Playback"), h("div", { class: "brand-sub" }, "logs · analysis · replay"))),
         h("div", { class: "nav-section" }, "Data"),
         item("#/car", "Car (Jetson)", "usb", r.page === "car"),
+        item("#/calibration", "Calibration", "wheel", r.page === "calibration"),
+        item("#/zed", "ZED exposure & ROI", "cube", r.page === "zed"),
         item("#/runs", "Runs", "runs", r.page === "runs", state.runs.length),
         r.page === "run"
             ? [
@@ -154,6 +160,18 @@ async function render() {
         timeline.hidden = true;
         renderTopbar([h("h1", {}, "Car (Jetson)"), h("span", { class: "spacer" })]);
         state.cleanup = await carPage(page, { go, refreshRuns });
+        return;
+    }
+    if (r.page === "calibration") {
+        timeline.hidden = true;
+        renderTopbar([h("h1", {}, "Calibration"), h("span", { class: "spacer" })]);
+        state.cleanup = await calibrationPage(page);
+        return;
+    }
+    if (r.page === "zed") {
+        timeline.hidden = true;
+        renderTopbar([h("h1", {}, "ZED exposure & ROI"), h("span", { class: "spacer" })]);
+        state.cleanup = await zedTunePage(page);
         return;
     }
     if (r.page === "runs") {
