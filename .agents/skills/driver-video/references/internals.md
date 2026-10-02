@@ -23,6 +23,12 @@
   from the car pose with smoothed yaw and z. A camera fixed to the car hides
   pitch and roll, because the car stays still in frame and the world tilts.
   The ZED view is body-fixed on purpose, as on the car.
+- **Segmentation view.** `--segmentation` classifies an organized RGB-D cloud
+  with `cloud_segmentation.py`, which calls the same compiled library as the
+  ROS segmenter. Obstacle Gazebo mode subscribes to the car's noisy registered
+  cloud. Speed Gazebo mode and replay switch the filming ZED camera to RGB-D
+  and bridge its point cloud. This extra sensor runs only when requested. The
+  image keeps pixel correspondence with the cloud; unknown points are dark.
 
 ## Replay mechanics
 

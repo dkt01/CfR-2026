@@ -146,10 +146,12 @@ def rpy_of(q):
     return roll, pitch, yaw
 
 
-def camera_sdf(name, topic, width, height, hfov, hz, pitch=0.0, far=40.0, near=0.1):
+def camera_sdf(
+    name, topic, width, height, hfov, hz, pitch=0.0, far=40.0, near=0.1, rgbd=False
+):
     return (
         f'<sdf version="1.9"><model name="{name}"><static>true</static><link name="link">'
-        f'<sensor name="{name}" type="camera"><pose>0 0 0 0 {pitch} 0</pose>'
+        f'<sensor name="{name}" type="{"rgbd_camera" if rgbd else "camera"}"><pose>0 0 0 0 {pitch} 0</pose>'
         f"<always_on>1</always_on><update_rate>{hz}</update_rate><topic>{topic}</topic>"
         f"<camera><horizontal_fov>{hfov}</horizontal_fov>"
         f"<image><width>{width}</width><height>{height}</height><format>R8G8B8</format></image>"
@@ -157,8 +159,8 @@ def camera_sdf(name, topic, width, height, hfov, hz, pitch=0.0, far=40.0, near=0
     )
 
 
-def ghost_sdf(course, hz):
-    """The car's visuals only, static, carrying a ZED-matched RGB camera."""
+def ghost_sdf(course, hz, segmentation=False):
+    """The car's visuals only, static, carrying a ZED-matched camera."""
     root = ET.parse(
         REPO / "jetson/cfr_arduino_bridge/worlds" / COURSES[course]["sdf"]
     ).getroot()
@@ -172,7 +174,7 @@ def ghost_sdf(course, hz):
         if link.get("name") == "chassis":
             x, y, z = ZED_OFFSET
             body += (
-                f'<sensor name="zedview" type="camera"><pose>{x} {y} {z} 0 0 0</pose>'
+                f'<sensor name="zedview" type="{"rgbd_camera" if segmentation else "camera"}"><pose>{x} {y} {z} 0 0 0</pose>'
                 f"<always_on>1</always_on><update_rate>{hz}</update_rate><topic>/video/zed</topic>"
                 "<camera><horizontal_fov>1.91986</horizontal_fov>"
                 "<image><width>640</width><height>360</height><format>R8G8B8</format></image>"
@@ -199,7 +201,7 @@ def make_node(args):
         SetEntityPose,
         SpawnEntity,
     )
-    from sensor_msgs.msg import Image
+    from sensor_msgs.msg import Image, PointCloud2
     from std_msgs.msg import Bool
 
     from cfr_interfaces.msg import DriveCommand, HoopStatus, LapCount
@@ -221,18 +223,30 @@ def make_node(args):
             # Reliable, not sensor-data QoS: a best-effort 1.5 MB image is
             # fragmented and dropped under load, and in replay each pose is
             # rendered exactly once, so a drop would stall the film.
-            for k in ("chase", "zed", "map"):
+            for k in ("chase", "map"):
                 self.stamp[k] = -1.0
                 self.create_subscription(
                     Image, f"/video/{k}", lambda m, k=k: self.on_img(k, m), 10
                 )
-            if getattr(args, "zed_topic", None):
-                self.stamp["zed"] = -1.0
+            self.stamp["zed"] = -1.0
+            zed_topic = getattr(args, "zed_topic", "") or (
+                "/video/zed/image" if args.segmentation else "/video/zed"
+            )
+            self.create_subscription(
+                Image,
+                zed_topic,
+                lambda m: self.on_img("zed", m),
+                qos_profile_sensor_data if getattr(args, "zed_topic", "") else 10,
+            )
+            self.cloud = None
+            if args.segmentation:
                 self.create_subscription(
-                    Image,
-                    args.zed_topic,
-                    lambda m: self.on_img("zed", m),
-                    qos_profile_sensor_data,
+                    PointCloud2,
+                    "/zed/zed_node/point_cloud/cloud_registered"
+                    if getattr(args, "zed_topic", "")
+                    else "/video/zed/points",
+                    lambda m: setattr(self, "cloud", m),
+                    1,
                 )
             self.pose = None
             self.speed = 0.0
@@ -407,6 +421,57 @@ def to_bgr(msg):
     return cv2.cvtColor(a, cv2.COLOR_RGB2BGR) if msg.encoding == "rgb8" else a.copy()
 
 
+def segmentation_view(msg, pitch, roll):
+    """Classify the organized RGB-D cloud with the car's compiled segmenter."""
+    import sys
+
+    module_dir = str(REPO / "jetson/cfr_arduino_bridge/src")
+    if module_dir not in sys.path:
+        sys.path.insert(0, module_dir)
+    import cloud_segmentation as seg
+
+    if msg.height < 2:
+        raise ValueError("segmentation view needs an organized point cloud")
+    fields = {field.name: field for field in msg.fields}
+    order = ">" if msg.is_bigendian else "<"
+    shape = (msg.height, msg.width)
+    strides = (msg.row_step, msg.point_step)
+
+    def field(name, dtype):
+        return np.ndarray(
+            shape,
+            dtype=order + dtype,
+            buffer=msg.data,
+            offset=fields[name].offset,
+            strides=strides,
+        )
+
+    xyz = np.stack([field(name, "f4") for name in "xyz"], axis=-1)
+    color_name = next((name for name in ("rgb", "rgba") if name in fields), None)
+    rgb = field(color_name, "u4").reshape(-1) if color_name else None
+    labels = seg.segment(xyz.reshape(-1, 3), pitch, roll, rgb=rgb).labels.reshape(shape)
+    # BGR values match cloud_segmentation_node.cpp's class colors.
+    palette = np.array(
+        [(96, 128, 96), (40, 50, 230), (240, 60, 240), (230, 220, 40), (255, 110, 70)],
+        dtype=np.uint8,
+    )
+    out = np.full((*shape, 3), 24, dtype=np.uint8)
+    known = labels < len(palette)
+    out[known] = palette[labels[known]]
+    return out
+
+
+def latest_segmentation(node, pose, cache):
+    cloud = node.cloud
+    if cloud is None:
+        return None
+    stamp = (cloud.header.stamp.sec, cloud.header.stamp.nanosec)
+    if cache["stamp"] != stamp:
+        cache["image"] = segmentation_view(cloud, pose[4], pose[5])
+        cache["stamp"] = stamp
+    return cache["image"]
+
+
 # ------------------------------------------------------------------ minimap
 
 
@@ -475,22 +540,23 @@ class Minimap:
 
 
 class Compositor:
-    def __init__(self, out, title, subtitle, note, minimap):
+    def __init__(self, out, title, subtitle, note, minimap, segmentation=False):
         self.out = Path(out)
         (self.out / "frames").mkdir(parents=True, exist_ok=True)
         self.title, self.subtitle, self.note = title, subtitle, note
         self.map = minimap
+        self.segmentation = segmentation
         self.trail = []
         self.n = 0
         self.durations = []
 
-    def frame(self, chase, zed, pose, lines, banner="", duration=None):
+    def frame(self, chase, zed, pose, lines, banner="", duration=None, segmented=None):
         import cv2
 
-        c = np.full((H, W, 3), 24, np.uint8)
+        c = np.full((H, W + (320 if self.segmentation else 0), 3), 24, np.uint8)
         c[:540, :960] = cv2.resize(chase, (960, 540))
         if zed is not None:
-            c[:180, 960:] = cv2.resize(zed, (320, 180))
+            c[:180, 960:1280] = cv2.resize(zed, (320, 180))
             cv2.putText(
                 c,
                 "ZED view",
@@ -501,6 +567,39 @@ class Compositor:
                 1,
                 cv2.LINE_AA,
             )
+        if self.segmentation:
+            if segmented is not None:
+                c[:180, 1280:1600] = cv2.resize(segmented, (320, 180))
+            cv2.putText(
+                c,
+                "Point cloud segmentation",
+                (1286, 172),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.42,
+                (255, 255, 255),
+                1,
+                cv2.LINE_AA,
+            )
+            legend = (
+                ("ground", (96, 128, 96)),
+                ("obstacle", (40, 50, 230)),
+                ("hoop", (240, 60, 240)),
+                ("car wash", (230, 220, 40)),
+                ("overhead", (255, 110, 70)),
+            )
+            for i, (label, color) in enumerate(legend):
+                y = 212 + 28 * i
+                cv2.rectangle(c, (1290, y - 11), (1306, y + 5), color, -1)
+                cv2.putText(
+                    c,
+                    label,
+                    (1316, y + 3),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.52,
+                    (255, 255, 255),
+                    1,
+                    cv2.LINE_AA,
+                )
         mp = self.map.small.copy()
         if pose is not None:
             self.trail.append(self.map.px(pose[0], pose[1]))
@@ -720,7 +819,15 @@ def run_gazebo(args):
         n.spawn(
             "zedcam",
             camera_sdf(
-                "zedcam", "/video/zed", 640, 360, 1.91986, args.hz, near=0.2, far=20
+                "zedcam",
+                "/video/zed",
+                640,
+                360,
+                1.91986,
+                args.hz,
+                near=0.2,
+                far=20,
+                rgbd=args.segmentation,
             ),
         )
     # From here the capture drives the clock.  Moving the cameras while the
@@ -754,7 +861,10 @@ def run_gazebo(args):
         while n.now() < end:
             step()
 
-    comp = Compositor(args.out, args.title, args.subtitle, args.note, mm)
+    comp = Compositor(
+        args.out, args.title, args.subtitle, args.note, mm, args.segmentation
+    )
+    seg_cache = {"stamp": None, "image": None}
     stamps, rec = [], {"on": False, "t_go": None, "status": ""}
     maxv = [0.0]
 
@@ -773,7 +883,10 @@ def run_gazebo(args):
         if p:
             lines.append(p)
         zed = to_bgr(n.img["zed"]) if "zed" in n.img else None
-        comp.frame(to_bgr(msg), zed, n.pose, lines, rec["status"])
+        segmented = (
+            latest_segmentation(n, n.pose, seg_cache) if args.segmentation else None
+        )
+        comp.frame(to_bgr(msg), zed, n.pose, lines, rec["status"], segmented=segmented)
         stamps.append(msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9)
 
     orig = n.on_img
@@ -790,6 +903,13 @@ def run_gazebo(args):
         step()
     else:
         raise RuntimeError("the chase camera never rendered")
+    if args.segmentation and n.cloud is None:
+        for _ in range(int(5.0 / step_s)):
+            step()
+            if n.cloud is not None:
+                break
+        else:
+            raise RuntimeError("the ZED point cloud never arrived")
 
     rec.update(on=True, t_go=n.now(), status="waiting for the start")
     advance(1.5)
@@ -880,14 +1000,17 @@ def run_replay(args):
     mm = Minimap(n, args.course, paused=True)
     x, y, z, yaw, pitch, roll = pose[0]
     log(
-        f"ghost: {n.spawn('ghost', ghost_sdf(args.course, hz), x, y, z, roll, pitch, yaw)}"
+        f"ghost: {n.spawn('ghost', ghost_sdf(args.course, hz, args.segmentation), x, y, z, roll, pitch, yaw)}"
     )
     back, up = COURSES[args.course]["chase"]
     follow = Follow(back, up)
     log(
         f"chasecam: {n.spawn('chasecam', camera_sdf('chasecam', '/video/chase', 960, 540, 1.25, hz, pitch=0.42), *follow.update(pose[0], 0))}"
     )
-    comp = Compositor(args.out, args.title, args.subtitle, args.note, mm)
+    comp = Compositor(
+        args.out, args.title, args.subtitle, args.note, mm, args.segmentation
+    )
+    seg_cache = {"stamp": None, "image": None}
     total = len(t) if not args.limit else min(args.limit, len(t))
     label, ptotal, vlabel = (
         meta["progress_label"],
@@ -901,11 +1024,25 @@ def run_replay(args):
         n.set_pose("ghost", x, y, z, roll, pitch, yaw)
         n.set_pose("chasecam", *follow.update(pose[i], dt if k > -5 else 0))
         before = n.stamp["chase"]
+        cloud_before = n.cloud.header.stamp if n.cloud is not None else None
         n.control(steps=steps)
         for _ in range(6):
-            if n.wait_until(lambda: n.stamp["chase"] > before, 8.0):
+            if n.wait_until(
+                lambda: (
+                    n.stamp["chase"] > before
+                    and (
+                        not args.segmentation
+                        or (
+                            n.cloud is not None and n.cloud.header.stamp != cloud_before
+                        )
+                    )
+                ),
+                8.0,
+            ):
                 break
             n.control(steps=steps)  # a dropped frame: render this pose again
+        else:
+            raise RuntimeError("the chase camera or ZED point cloud stopped rendering")
         for _ in range(3):
             rclpy.spin_once(n, timeout_sec=0.0)
         if k < 0:
@@ -925,7 +1062,18 @@ def run_replay(args):
                 else f"{meta.get('outcome', 'ended').upper()} at {meta['time']:.1f} s"
             )
         zed = to_bgr(n.img["zed"]) if "zed" in n.img else None
-        comp.frame(to_bgr(n.img["chase"]), zed, pose[i], lines, banner, duration=dt)
+        segmented = (
+            latest_segmentation(n, pose[i], seg_cache) if args.segmentation else None
+        )
+        comp.frame(
+            to_bgr(n.img["chase"]),
+            zed,
+            pose[i],
+            lines,
+            banner,
+            duration=dt,
+            segmented=segmented,
+        )
         if k % 50 == 0:
             rate = (k + 1) / max(time.monotonic() - tick, 1e-6)
             print(
@@ -953,6 +1101,11 @@ def main():
     for name in ("gazebo", "replay"):
         p = sub.add_parser(name)
         p.add_argument("--course", choices=COURSES, required=True)
+        p.add_argument(
+            "--segmentation",
+            action="store_true",
+            help="show the classified ZED point cloud",
+        )
         p.add_argument("--out", required=True)
         p.add_argument("--title", default="")
         p.add_argument("--subtitle", default="")
