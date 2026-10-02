@@ -383,14 +383,19 @@ steering:
       rarely symmetric and this one is not: 34% less lock than the left.
       Measure both ends on the car.
   center_offset:
-    value: 0.00
-    run: /home/tejam/git/CfR-2026/runs/19700101T000556Z_figure_eight_calib
-    measured_utc: '2026-09-30'
+    value: -0.039
+    run: /home/tejam/git/CfR-2026/runs/20261002T005449Z_straight_line_trim
+    measured_utc: '2026-10-02'
     units: normalized steering command
     provenance: measured
     experiment: A6
     note: >
-      Command value that produces zero road-wheel angle.  Note the firmware's
+      Command value that produces zero road-wheel angle.  From the gyro's
+      heading over ZED distance on the straight (11.2 deg left over 3.7 m,
+      trim 0), not the report's -0.031: that divides by tachometer speed,
+      which read 1.7x the ZED's.  Agrees with the 9/30 straights (-0.035 to
+      -0.041).  Converted through the default 0.447 rad/command slope.
+      Note the firmware's
       auto-mode centre is 1504 us, not 1500: PctToPulseLength(255 - 127) is
       (128 - 127) * 4 + 1500.
   backlash:

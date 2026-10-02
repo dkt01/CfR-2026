@@ -42,7 +42,7 @@ arduino_bridge:
     # steering here, once, so RL drivers, the characterization runner and
     # teleop all get the correction without each needing its own copy -- and
     # never during the AUTO_ARMED handshake, which holds a hard neutral.
-    steering_trim: 0.0
+    steering_trim: -0.039
     speed_slew_rate: 2.0    # m/s per second, both directions
 
     # Flip if the servo or drive is wired opposite to the assumed convention.
@@ -92,7 +92,7 @@ cmd_vel_to_drive:
     # The measured command -> angle table, inverted by the node so a desired
     # angle becomes the command that actually produces it.  Keep in step with
     # sim_vehicle's copy and vehicle.yaml steering.effective_angle_table.
-    steering_command_points: [-1.0, -0.6, -0.25, 0.25, 0.6, 1.0]
+    steering_command_points: [-0.961, -0.561, -0.211, 0.289, 0.639, 1.039]
     steering_angle_points: [-0.37479, -0.23964, -0.0828, 0.14706, 0.31757, 0.42104]
     min_speed_for_steering: 0.3    # floor speed for the bicycle model
     cmd_timeout: 0.3
@@ -137,7 +137,7 @@ sim_vehicle:
     # ~34% at matched command; the +/-1.0 ends are extrapolated, not measured
     # (steer_authority ran too slowly to be usable).  Keep in step with
     # vehicle.yaml steering.effective_angle_table.
-    steering_command_points: [-1.0, -0.6, -0.25, 0.25, 0.6, 1.0]
+    steering_command_points: [-0.961, -0.561, -0.211, 0.289, 0.639, 1.039]
     steering_angle_points: [-0.37479, -0.23964, -0.0828, 0.14706, 0.31757, 0.42104]
     # Simulated tachometer.  It used to report a hard-coded rpm = 0, so a sim
     # run logged an empty speed channel while the car logged ~1000 distinct

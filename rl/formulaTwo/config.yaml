@@ -83,11 +83,20 @@ plant:
   max_accel: 3.0
   brake_decel: 0.0          # THE CAR HAS NO BRAKES.
   wheelbase: 0.324
-  understeer_gradient: 0.007
-  tire_scrub: 1.10
-  yaw_response_tau: 0.34
-  steering_command_points: [-1.0, -0.5, 0.0, 0.5, 1.0]
-  steering_angle_points: [-0.382, -0.191, 0.0, 0.256, 0.512]
+  # 2026-10-01: the steering table is the real car's EFFECTIVE angle (from
+  # yaw rate / speed on the figure-8), so scrub and understeer are already
+  # inside it.  Applying the Gazebo-fitted 1.10 / 0.007 on top turned the
+  # model ~15% wider than the car.  Real-car figure-8 understeer was ~0
+  # (-0.006 / +0.006 at commands 0.35 / 0.55).
+  understeer_gradient: 0.0
+  tire_scrub: 1.0         # see understeer_gradient above
+  # 2026-10-01: 0.07, re-fitted on sim time at real-time factor 1.0.  The old
+  # 0.34 came from measure_step_steer.py stamping with the WALL clock on a
+  # loaded machine: the same Gazebo fits 0.80 at RTF 0.4.  Gazebo only --
+  # the real car's turn-in lag is still unmeasured.
+  yaw_response_tau: 0.07
+  steering_command_points: [-0.961, -0.561, -0.211, 0.289, 0.639, 1.039]
+  steering_angle_points: [-0.37479, -0.23964, -0.0828, 0.14706, 0.31757, 0.42104]
   steering_tau: 0.05
   steering_slew: 6.16
   # NEW.  Lateral grip, as a cap on the lateral acceleration the tires can
@@ -111,11 +120,14 @@ env:
   lookahead_m: [0.5, 1.0, 2.0, 3.0, 4.5, 6.0, 8.0, 10.0, 13.0, 16.0]
   steer_residual: 0.5
   steer_prior:
+    # 2026-10-01: sweep_prior.py --plant 0.19,0.05,0.07 (the config plant;
+    # the default 0.75 s chassis lag is probably the wall-clock artifact).
+    # +0.146 m nominal clearance, 41% field; the old gains no longer finish.
     k_lateral: 0.8
     k_heading: 0.4
     speed_floor: 1.2
-    horizon_s: 0.35
-    lead_scale: 0.50
+    horizon_s: 0.2
+    lead_scale: 0.25
     k_rate: 0.08
   yaw_rate_filter: 0.4
   speed_rate_filter: 0.25
@@ -212,7 +224,7 @@ randomize:
   steer_asymmetry: [0.85, 1.15, 1.0]
   steer_offset: [-0.035, 0.035, 0.0]
   steer_limit: [0.38, 0.55, 0.512]
-  understeer: [0.0, 0.02, 0.007]
+  understeer: [0.0, 0.01, 0.0]
   scrub_scale: [0.90, 1.15, 1.0]
   yaw_tau_scale: [0.6, 1.6, 1.0]
   steering_tau: [0.04, 0.08, 0.05]

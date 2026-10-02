@@ -91,13 +91,18 @@ plant:
   max_accel: 3.0            # m/s^2
   brake_decel: 0.0          # THE CAR HAS NO BRAKES.  Do not raise this.
   wheelbase: 0.324
-  understeer_gradient: 0.007
+  # 2026-10-01: the steering table is the real car's EFFECTIVE angle (from
+  # yaw rate / speed on the figure-8), so scrub and understeer are already
+  # inside it.  Applying the Gazebo-fitted 1.10 / 0.007 on top turned the
+  # model ~15% wider than the car.  Real-car figure-8 understeer was ~0
+  # (-0.006 / +0.006 at commands 0.35 / 0.55).
+  understeer_gradient: 0.0
   # Median of measure_turn_radius.py's sweep (2026-09-21, ten commands at
   # 1.5-3.0 m/s, on open ground beside the course): the simulated car turns a
   # uniform 1.10x the radius wheelbase/understeer alone predicts, flat across
   # both directions and every speed tested (1.04-1.15 across the sweep).
   # Applied as a second multiplier on the effective wheelbase in plant.py.
-  tire_scrub: 1.10
+  tire_scrub: 1.0         # see understeer_gradient above
   # HOW LONG THE CAR TAKES TO START ROTATING once the wheels are turned.
   # Fitted by fit_yaw_lag.py to measure_step_steer.py's Gazebo traces
   # (2026-09-22): a first-order lag between the kinematic yaw rate the wheel
@@ -105,12 +110,16 @@ plant:
   # model turns in about a metre of travel too early -- on a 0.92 m corridor,
   # the whole corridor -- which is why every previous policy beached ENTERING
   # a hairpin while cornering correctly once settled.
-  yaw_response_tau: 0.34    # s, FITTED to 10 Gazebo step-steer traces
+  # 2026-10-01: 0.07, re-fitted on sim time at real-time factor 1.0.  The old
+  # 0.34 came from measure_step_steer.py stamping with the WALL clock on a
+  # loaded machine: the same Gazebo fits 0.80 at RTF 0.4.  Gazebo only --
+  # the real car's turn-in lag is still unmeasured.
+  yaw_response_tau: 0.07
   # Measured effective steering angle vs normalized command.  Asymmetric by
   # ~34%; this is why the policy commands DriveCommand.steering directly
   # instead of a Twist -- cmd_vel_to_drive assumes a symmetric +/-0.40 rad.
-  steering_command_points: [-1.0, -0.5, 0.0, 0.5, 1.0]
-  steering_angle_points: [-0.382, -0.191, 0.0, 0.256, 0.512]
+  steering_command_points: [-0.961, -0.561, -0.211, 0.289, 0.639, 1.039]
+  steering_angle_points: [-0.37479, -0.23964, -0.0828, 0.14706, 0.31757, 0.42104]
   steering_tau: 0.05        # s, servo first-order lag
   # Road-wheel slew CEILING, from the 2075R datasheet (0.17 s per 60 deg =
   # 6.16 rad/s at the servo shaft).  Was 8.7, which had the road wheel slewing
@@ -153,13 +162,17 @@ env:
   # alone completes two clean laps on the nominal car; see steer_prior() in
   # observation.py for why feedforward on its own does not.
   steer_prior:
+    # 2026-10-01: re-swept (--speed-scale 1.10) for the real-car steering
+    # table, tire_scrub 1.0 and yaw_response_tau 0.07.  29 of 576 settings
+    # finish the nominal car (9 at tau 0.34); this one 60.95 s, +0.051 m, 6%
+    # field -- the same field rate the old gains had on the old plant.
     # Re-tuned after plant.yaw_response_tau went in -- sweep_prior.py, 225
     # settings, 2026-09-22.  The old (0.8, 0.2, 0.24 s, no lead, no damping)
     # saturated the steering lock to lock in the first chicane and beached at
     # 21 m, which is where this same scripted driver has always beached in
     # Gazebo.  13 of the 225 get two clean laps; this is the best of them.
     k_lateral: 0.8
-    k_heading: 0.4
+    k_heading: 0.2
     speed_floor: 1.2          # m/s, floor in the Stanley denominator
     # How far ahead the prior evaluates itself.  It used to be derived as
     # command_dead_time + steering_tau (0.24 s) on the assumption that the
@@ -167,7 +180,7 @@ env:
     # They are not: plant.yaw_response_tau adds 0.34 s of chassis on top, and
     # the total is what the feedback has to see past.  Swept against the
     # scripted driver -- see the table in README's "Known gap".
-    horizon_s: 0.35
+    horizon_s: 0.25
     # Fraction of the exact lag inversion applied to the feedforward, and a
     # yaw-rate damping gain.  Both exist because of yaw_response_tau.
     #
@@ -194,7 +207,7 @@ env:
     # on the car it was tuned for and helpless on any other.  A prior the
     # policy cannot fall back on is not a floor.  TUNE THE PRIOR AT THE SPEED
     # YOU WANT TO DRIVE.
-    lead_scale: 0.50
+    lead_scale: 0.5
     k_rate: 0.08
   # Yaw rate is differenced from the pose, so it carries the pose noise
   # divided by the control period; this smooths it before the prior uses it.
@@ -389,11 +402,11 @@ randomize:
   # 0.70 double-counted the authority clamp that `steer_limit` already
   # models.  At 0.02 no sampled car is infeasible (p99 radius 1.28 m against
   # the 1.48 m needed) and the randomisation is still ~3x the measured value.
-  understeer: [0.0, 0.02]
+  understeer: [0.0, 0.01]
   # Centred on the measured 1.10, widened past the sweep's own 1.04-1.15:
   # that sweep is ten points on ONE simulated car, not a survey of cars, and
   # the real Slash has never been through this test at all.
-  scrub_scale: [0.90, 1.15]     # multiplies tire_scrub, itself already 1.10
+  scrub_scale: [0.90, 1.15]     # multiplies tire_scrub, now 1.0 (real-car table)
   # Multiplies yaw_response_tau.  Wide, because the fit is to ONE simulated
   # car and turn-in lag is exactly the quantity a different surface, tire
   # pressure or battery state moves -- and because being wrong about it in the
