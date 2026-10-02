@@ -322,6 +322,7 @@ class Planner:
         self.cam_yaw_est = 0.0  # rad the camera is found to point left of true
         self.reverse_count = 0
         self.last_reverse_end = -1e9
+        self.forward_until = -1e9  # not judged stuck again till then
         self.info = {}
         self.now = t
         self.events = []  # (t, why, x, y) of every reversal, for the log
@@ -1600,6 +1601,10 @@ class Planner:
         window = float(k["stuck_s"])
         if t - self.cmd_since < window or t - self.last_reverse_end < window:
             return False
+        if t < self.forward_until:
+            # Just backed off: at a crawl the pose is slow to show the car
+            # moving, and backing off again on that never lets it get going.
+            return False
         past = [h for h in self.history if t - h[0] >= window]
         if not past:
             return False
@@ -1744,6 +1749,7 @@ class Planner:
         if done:
             self.mode = "drive"
             self.last_reverse_end = t
+            self.forward_until = t + float(k["forward_hold_s"])
             self.history.clear()
             self.cmd_since = None
             if moved >= 0.25:

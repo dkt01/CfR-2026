@@ -186,6 +186,8 @@ recovery:
   bump_memory_s: 4.0      # s a thing the car has bumped into unseen is kept
                           # in mind
   reverse_timeout_s: 4.0  # the Arduino takes ~1 s to change direction
+  forward_hold_s: 5.0     # s after backing off that the car keeps driving
+                          # forward before it can be judged stuck again
 
 # --- Scan skewed, or floor read as wall.
 camera:
