@@ -215,12 +215,22 @@ def summarize(records):
     )
 
 
-def lr_schedule(tcfg):
+def lr_schedule(tcfg, done=0, total=None):
+    """learning_rate falling to lr_final_fraction of it over this run.
+
+    On a resume SB3 counts progress from step 0 (remaining = 1 - n/(done +
+    total)), so 2.4M steps on top of 199M would start ~1% from the end, at
+    the final rate: v11 and v12b ran at 1.8e-6 for a configured 3e-5.
+    `done`/`total` rescale it to this run's own steps.
+    """
     lr0 = float(tcfg["learning_rate"])
     final = lr0 * float(tcfg.get("lr_final_fraction", 1.0))
     if final >= lr0:
         return lr0
-    return lambda remaining: final + (lr0 - final) * max(remaining, 0.0)
+    span = (done + total) / total if total else 1.0
+    return lambda remaining: (
+        final + (lr0 - final) * min(max(remaining * span, 0.0), 1.0)
+    )
 
 
 class EvalEnv(ObstacleEnv):
@@ -248,8 +258,21 @@ def main():
     ap.add_argument("--steps", type=int, default=None)
     ap.add_argument("--resume", type=Path, default=None)
     ap.add_argument("--eval-every", type=int, default=None)
+    ap.add_argument(
+        "--checkpoint-every",
+        type=int,
+        default=None,
+        help="save step_<N>k.zip this often, between evals (default: at evals only)",
+    )
     ap.add_argument("--config", type=Path, default=HERE / "config.yaml")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument(
+        "--gazebo",
+        type=int,
+        default=None,
+        help="Gazebo cars beside the numpy batch, one sim container each "
+        "(default: the config's gazebo.instances, else 0)",
+    )
     args = ap.parse_args()
 
     from stable_baselines3 import PPO
@@ -293,11 +316,43 @@ def main():
     model_ = course_model.CourseModel(seeds)
     train_ids = np.arange(len(layouts.TRAIN_SEEDS))
     held_ids = np.arange(len(layouts.TRAIN_SEEDS), len(seeds))
-    n_envs = int(tcfg["n_envs"])
-    train_env = sb3_adapter(
-        ObstacleEnv(cfg, model_, n_envs, train_ids, seed=args.seed),
-        float(tcfg["reward_scale"]),
+    gcfg = cfg.get("gazebo", {})
+    n_gazebo = args.gazebo if args.gazebo is not None else int(gcfg.get("instances", 0))
+    n_envs = (
+        int(gcfg.get("numpy_envs", tcfg["n_envs"])) if n_gazebo else int(tcfg["n_envs"])
     )
+    inner_env = ObstacleEnv(cfg, model_, n_envs, train_ids, seed=args.seed)
+    # Gazebo-paced runs make ~50 steps/s, so an eval's worth of steps is
+    # hours; checkpoints come far more often than the ~10 min full eval.
+    ckpt_every = args.checkpoint_every or int(
+        (gcfg if n_gazebo else tcfg).get("checkpoint_every_steps", 0)
+    )
+    workers = []
+    if n_gazebo:
+        import gazebo_vec
+
+        # Gazebo trains on a spread of the training layouts; its course model
+        # is baked in each container, so fewer layouts start faster.
+        stride = max(1, len(layouts.TRAIN_SEEDS) // int(gcfg.get("layouts", 40)))
+        gz_seeds = layouts.TRAIN_SEEDS[::stride]
+        repo = str(HERE.parents[1])
+        for k in range(n_gazebo):
+            name = f"{gcfg.get('container_prefix', 'cfr-racer-gz')}{k + 1}"
+            print(f"starting Gazebo car {k + 1} in {name}", flush=True)
+            gazebo_vec.ensure_container(name, repo)
+            w = gazebo_vec.GazeboWorker(
+                name,
+                cfg,
+                gz_seeds,
+                args.seed + 1000 * (k + 1),
+                args.dir / f"gazebo_{k + 1}.log",
+                rtf=float(gcfg.get("rtf", 1.0)),
+                domain=41 + k,
+            )
+            w.start()
+            workers.append(w)
+        inner_env = gazebo_vec.MixedEnv(inner_env, workers)
+    train_env = sb3_adapter(inner_env, float(tcfg["reward_scale"]))
     per = int(tcfg["eval_episodes_per_layout"])
     # Every training layout is trained on; the start-box check drives the
     # first ten (layouts.TRAIN_EVAL_SEEDS) so it costs what it did in v5.
@@ -369,9 +424,14 @@ def main():
             if isinstance(was, (int, float)) and was != want:
                 setattr(model, name, type(was)(want))
                 print(f"  {name}: {was} -> {want} (from config)")
-        sched = lr_schedule(tcfg)
+        sched = lr_schedule(tcfg, model.num_timesteps, total)
         model.lr_schedule = sched if callable(sched) else (lambda _: sched)
         print(f"resumed from {args.resume} at {model.num_timesteps:,} steps")
+        start = 1 - model.num_timesteps / (model.num_timesteps + total)
+        print(
+            f"  learning_rate: {model.lr_schedule(start):.2e}"
+            f" -> {model.lr_schedule(0.0):.2e} over this run"
+        )
     else:
         model = Algo(policy_class, train_env, **kwargs)
 
@@ -387,6 +447,8 @@ def main():
     # Stuck starts (env.stuck_start_prob): how many, and how many backed out
     # and drove on at least RECOVERED_M -- the thing v5 is meant to learn.
     rollout_stats = {"ep_rew": [], "outcomes": Counter(), "stuck": [0, 0]}
+    # Gazebo cars' episodes, kept apart: they are the ones this is all for.
+    gazebo_stats = {"runs": []}
 
     def evaluate_now(label):
         def driver(n):
@@ -428,6 +490,45 @@ def main():
                 / max(rollout_stats["stuck"][0], 1),
             ),
         )
+        if workers:
+            runs = gazebo_stats["runs"]
+            box = [r for r in runs if r["start"] == "box"]
+            walls = inner.step_wall[-2000:]
+            record["gazebo"] = dict(
+                episodes=len(runs),
+                steps=int(sum(r["episode"]["l"] for r in runs)),
+                outcomes=dict(Counter(r["outcome"] for r in runs)),
+                ends=dict(
+                    Counter(
+                        f"{r['outcome']}@{r['zone']}"
+                        for r in runs
+                        if r["outcome"] != "finish"
+                    ).most_common(8)
+                ),
+                ep_rew_mean=float(np.mean([r["episode"]["r"] for r in runs]))
+                if runs
+                else None,
+                dist_mean=float(np.mean([r["dist"] for r in runs])) if runs else None,
+                box_runs=len(box),
+                box_finish=float(np.mean([r["outcome"] == "finish" for r in box]))
+                if box
+                else None,
+                box_dist=float(np.mean([r["dist"] for r in box])) if box else None,
+                lap_times=[r["time"] for r in box if r["outcome"] == "finish"],
+                restarts=int(sum(w.restarts for w in workers)),
+                step_s_numpy=float(np.mean([a for a, _ in walls])) if walls else None,
+                step_s=float(np.mean([b for _, b in walls])) if walls else None,
+            )
+            gazebo_stats["runs"] = []
+            g = record["gazebo"]
+            print(
+                f"  [gazebo] {g['episodes']} runs, {g['steps']} steps, "
+                f"mean {g['dist_mean'] or 0:.1f} m; start box {g['box_runs']} runs, "
+                f"finish {100 * (g['box_finish'] or 0):.0f}%, {g['box_dist'] or 0:.1f} m | "
+                f"ends {dict(list(g['ends'].items())[:3])} | step {g['step_s'] or 0:.3f} s "
+                f"(numpy {g['step_s_numpy'] or 0:.3f} s), restarts {g['restarts']}",
+                flush=True,
+            )
         rollout_stats["ep_rew"].clear()
         rollout_stats["outcomes"].clear()
         rollout_stats["stuck"] = [0, 0]
@@ -463,9 +564,64 @@ def main():
         def __init__(self):
             super().__init__()
             self.next_at = None
+            self.next_ckpt = None
+            self.marks = []
+
+        def _on_rollout_end(self):
+            # ETAs in SB3's table, at the median rate of recent rollouts so
+            # one that paid for a 10 min eval does not skew them.
+            self.marks = (self.marks + [(time.time(), self.num_timesteps)])[-9:]
+            rates = [
+                (s1 - s0) / (t1 - t0)
+                for (t0, s0), (t1, s1) in zip(self.marks, self.marks[1:])
+                if t1 > t0
+            ]
+            if not rates:
+                return
+            rate = float(np.median(rates))
+            self.logger.record("eta/steps_per_s", round(rate, 1))
+            now = time.time()
+            live = dict(pid=os.getpid(), time=now, steps=self.num_timesteps, rate=rate)
+            for name, at in (
+                ("checkpoint", self.next_ckpt if ckpt_every else None),
+                ("eval", self.next_at),
+                ("done", target),
+            ):
+                if at is None:
+                    continue
+                live[f"next_{name}"] = at
+                s = max(0.0, (at - self.num_timesteps) / rate)
+                self.logger.record(
+                    f"eta/{name}",
+                    f"{int(s // 3600)}:{int(s % 3600 // 60):02d} "
+                    f"(at {time.strftime('%H:%M', time.localtime(now + s))})",
+                )
+            # history.json only changes per eval; the rl-train tui reads this
+            # between them.  Replaced whole so a reader never sees half a file.
+            tmp = args.dir / "live.json.tmp"
+            tmp.write_text(json.dumps(live))
+            os.replace(tmp, args.dir / "live.json")
 
         def _on_step(self):
             for info in self.locals.get("infos", []):
+                if info and info.get("sim") == "gazebo":
+                    if "episode" in info:
+                        gazebo_stats["runs"].append(
+                            {
+                                k: info[k]
+                                for k in (
+                                    "episode",
+                                    "outcome",
+                                    "zone",
+                                    "dist",
+                                    "time",
+                                    "start",
+                                    "hoops",
+                                    "seed",
+                                )
+                            }
+                        )
+                    continue
                 if info and "episode" in info:
                     rollout_stats["ep_rew"].append(info["episode"]["r"])
                     rollout_stats["outcomes"][info["outcome"]] += 1
@@ -477,10 +633,31 @@ def main():
             if self.num_timesteps >= self.next_at:
                 self.next_at += every
                 evaluate_now(f"{self.num_timesteps / 1e6:5.2f}M")
+            elif ckpt_every:
+                if self.next_ckpt is None:
+                    self.next_ckpt = self.num_timesteps + ckpt_every
+                if self.num_timesteps >= self.next_ckpt:
+                    self.next_ckpt += ckpt_every
+                    model.save(args.dir / "last_model")
+                    model.save(args.dir / f"step_{model.num_timesteps // 1000}k")
+                    runs = gazebo_stats["runs"]
+                    print(
+                        f"  [checkpoint {self.num_timesteps / 1e6:.2f}M] "
+                        f"step_{model.num_timesteps // 1000}k.zip"
+                        + (
+                            f" | gazebo since eval: {len(runs)} runs, "
+                            f"{sum(r['outcome'] == 'finish' for r in runs)} finished, "
+                            f"mean {np.mean([r['dist'] for r in runs]):.1f} m"
+                            if runs
+                            else ""
+                        ),
+                        flush=True,
+                    )
             return True
 
     print(
-        f"training to {target:,} steps in {args.dir}, evaluating every {every:,}",
+        f"training to {target:,} steps in {args.dir}, evaluating every {every:,}"
+        + (f", checkpoints every {ckpt_every:,}" if ckpt_every else ""),
         flush=True,
     )
     evaluate_now("start")
@@ -490,6 +667,8 @@ def main():
         reset_num_timesteps=args.resume is None,
     )
     evaluate_now("final")
+    if workers:
+        inner_env.close()
     print(f"done in {(time.time() - started) / 60:.1f} min", flush=True)
 
 

@@ -64,7 +64,8 @@ def render(run_dir: Path, ui, patience, min_evals, threshold) -> str:
     lines.append("")
 
     age = time.time() - (run_dir / "history.json").stat().st_mtime
-    alive = _alive(last.get("pid"))
+    live = _live(run_dir, last)
+    alive = _alive((live or last).get("pid"))
     finished = (
         any(r.get("steps") == r.get("target") for r in records[-1:])
         and len(records) > 1
@@ -80,6 +81,10 @@ def render(run_dir: Path, ui, patience, min_evals, threshold) -> str:
     lines.append(f"trainer: {state}   last eval {ui.format_age(int(age))} ago")
 
     steps, target = last["steps"], last.get("target") or last["steps"]
+    if live:
+        lines.extend(_live_lines(live, target, alive, ui))
+        lines.append("")
+        return _render_evals(records, lines, ui, patience, min_evals, threshold)
     lines.append(f"steps   {ui.bar(steps / max(target, 1))}  {steps:,} / {target:,}")
     # `wall` restarts at 0 in each trainer process, so a resumed run's rate
     # must come only from the current process's records, not from step 0.
@@ -95,6 +100,60 @@ def render(run_dir: Path, ui, patience, min_evals, threshold) -> str:
             f"rate    {rate:,.0f} steps/s   eta {ui.format_age(int(eta)) if eta else '?'}"
         )
     lines.append("")
+    return _render_evals(records, lines, ui, patience, min_evals, threshold)
+
+
+def _live(run_dir: Path, last):
+    """train.py's per-rollout live.json, if it is newer than the last eval."""
+    try:
+        live = json.loads((run_dir / "live.json").read_text())
+    except (OSError, ValueError):
+        return None
+    return live if live.get("steps", -1) >= last["steps"] else None
+
+
+def _clock(seconds):
+    return f"{int(seconds // 3600)}:{int(seconds % 3600 // 60):02d}"
+
+
+def _live_lines(live, target, alive, ui):
+    """Steps, rate and countdowns from the last rollout, aged to now.
+
+    The trainer writes once a rollout (minutes apart), so the countdowns
+    subtract the time since then; one reading zero while the trainer is
+    alive means it is in that eval or save now.
+    """
+    now = time.time()
+    since = now - live["time"]
+    rate = live["rate"]
+    target = live.get("next_done", target)
+    steps = live["steps"]
+    lines = [
+        f"steps   {ui.bar(steps / max(target, 1))}  {steps:,} / {target:,}  "
+        f"{ui.DIM}(rollout {ui.format_age(int(since))} ago){ui.RESET}",
+        f"rate    {rate:,.1f} steps/s {ui.DIM}(median of recent rollouts){ui.RESET}",
+    ]
+    etas = []
+    for name in ("checkpoint", "eval", "done"):
+        at = live.get(f"next_{name}")
+        if at is None:
+            continue
+        left = (at - steps) / rate - since if rate > 0 else None
+        if left is None:
+            etas.append(f"{name} ?")
+        elif left <= 0:
+            etas.append(
+                f"{name} " + (ui.color("due", ui.YELLOW) if alive else "overdue")
+            )
+        else:
+            clock = time.strftime("%H:%M", time.localtime(now + left))
+            etas.append(f"{name} {ui.BOLD}{_clock(left)}{ui.RESET} ({clock})")
+    lines.append("eta     " + "   ".join(etas))
+    return lines
+
+
+def _render_evals(records, lines, ui, patience, min_evals, threshold):
+    last = records[-1]
 
     def series(key, part):
         return [r[part][key] for r in records if r.get(part)]

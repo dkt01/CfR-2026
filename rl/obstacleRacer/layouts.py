@@ -12,6 +12,7 @@ ever evaluated, so a policy that has memorized its courses
 rather than learned to drive shows up as a gap between the two finish rates.
 v5 trained on ten: it learned those ten Wide Section bale arrangements by
 heart (0-20% through them) and got through the held-out ones 1 time in 111.
+Sixty-four more are only for grade.py's rescore after training.
 
     python3 layouts.py            # (re)write layouts/seed_*.json
     python3 layouts.py --check    # fail if the files disagree with the draw
@@ -44,6 +45,8 @@ TRAIN_EVAL_SEEDS = TRAIN_SEEDS[:10]
 # sign of memorizing.
 HELDOUT_SLOT_SEEDS = [201, 202, 208, 218]  # Gazebo validates on these
 HELDOUT_SEEDS = HELDOUT_SLOT_SEEDS + list(range(5001, 5029))
+# Never trained on or evaluated during training: grade.py's rescore laps.
+GRADE_SEEDS = list(range(5101, 5165))
 
 
 def _draw_module():
@@ -87,7 +90,7 @@ def main() -> int:
     args = parser.parse_args()
     failures = 0
     LAYOUT_DIR.mkdir(exist_ok=True)
-    for seed in TRAIN_SEEDS + HELDOUT_SEEDS:
+    for seed in TRAIN_SEEDS + HELDOUT_SEEDS + GRADE_SEEDS:
         layout = draw(seed)
         path = LAYOUT_DIR / f"seed_{seed}.json"
         text = json.dumps(layout, indent=1) + "\n"
@@ -97,7 +100,13 @@ def main() -> int:
                 failures += 1
             continue
         path.write_bytes(text.encode())
-        role = "train" if seed in TRAIN_SEEDS else "held out"
+        role = (
+            "train"
+            if seed in TRAIN_SEEDS
+            else "held out"
+            if seed in HELDOUT_SEEDS
+            else "grade"
+        )
         print(
             f"seed {seed} ({role}): {len(layout['buckets'])} buckets, "
             f"gap at {layout['gap_bale']}"
