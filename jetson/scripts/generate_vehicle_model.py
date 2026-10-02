@@ -43,6 +43,7 @@ WORLD_SPAWN_POSES = {
 }
 
 GRAVITY = 9.81
+MESH_URI = "model://cfr_arduino_bridge/meshes"
 
 # The block this tool owns, start marker to end marker inclusive.
 # Settling margin above the ground at spawn, shared with teleport_api.py.
@@ -194,9 +195,11 @@ def build_model(vehicle, spawn_pose):
             f"<ode><mu>{mu:.3f}</mu><mu2>{mu:.3f}</mu2><fdir1>0 0 1</fdir1></ode>"
             f"<bullet><friction>{mu:.3f}</friction><friction2>{mu:.3f}</friction2>"
             f"<rolling_friction>0.001</rolling_friction></bullet></friction></surface></collision>"
-            f'<visual name="visual"><geometry><cylinder><radius>{radius:.5f}</radius>'
-            f"<length>{width:.4f}</length></cylinder></geometry>"
-            f"<material><diffuse>0.04 0.04 0.04 1</diffuse></material></visual></link>"
+            # Cosmetic only: the collision above stays the measured cylinder.
+            # The mesh is already in this link's frame, so it spins and steers
+            # with the wheel; prepare_vehicle_mesh.py cuts the four files.
+            f'<visual name="visual"><geometry><mesh><uri>{MESH_URI}/vehicle_wheel_{name}.obj</uri>'
+            f"</mesh></geometry></visual></link>"
         )
 
     def knuckle(name, x, y):
@@ -277,32 +280,11 @@ def build_model(vehicle, spawn_pose):
         f"<surface><friction><ode><mu>{mu:.3f}</mu><mu2>{mu:.3f}</mu2></ode>"
         f"<bullet><friction>{mu:.3f}</friction><friction2>{mu:.3f}</friction2>"
         "</bullet></friction></surface></collision>",
-        f'        <visual name="body"><pose>0 0 {body_h / 2 + radius * 0.6:.4f} 0 0 0</pose>'
-        f"<geometry><box><size>{body_l:.4f} {body_w:.4f} {body_h:.4f}</size></box></geometry>"
-        f"<material><diffuse>0.85 0.08 0.04 1</diffuse></material></visual>",
-        '        <visual name="forward_direction_marker"><pose>0.025 0 0.16 0 1.5708 0</pose>'
-        "<geometry><cone><radius>0.12</radius><length>0.35</length></cone></geometry>"
-        "<material><diffuse>0.05 1 0.08 1</diffuse><emissive>0.02 0.45 0.04 1</emissive></material></visual>",
-        # Cosmetic only, but it is how anyone watching the GUI tells which way
-        # the car points and where its camera looks.
-        '        <visual name="zed2i_mount"><pose>0.25 0 0.155 0 0 0</pose>'
-        "<geometry><box><size>0.06 0.12 0.05</size></box></geometry>"
-        "<material><diffuse>0.20 0.23 0.26 1</diffuse></material></visual>",
-        '        <visual name="zed2i_housing"><pose>0.295 0 0.20 0 0 0</pose>'
-        "<geometry><box><size>0.03025 0.17525 0.04310</size></box></geometry>"
-        "<material><diffuse>0.22 0.31 0.38 1</diffuse><emissive>0.01 0.03 0.05 1</emissive>"
-        "<specular>0.45 0.45 0.45 1</specular></material></visual>",
-        '        <visual name="zed2i_front_panel"><pose>0.311 0 0.20 0 0 0</pose>'
-        "<geometry><box><size>0.002 0.168 0.035</size></box></geometry>"
-        "<material><diffuse>0.03 0.17 0.25 1</diffuse><emissive>0.01 0.05 0.08 1</emissive></material></visual>",
-        '        <visual name="zed2i_left_lens"><pose>0.315 0.06 0.20 0 1.5708 0</pose>'
-        "<geometry><cylinder><radius>0.015</radius><length>0.006</length></cylinder></geometry>"
-        "<material><diffuse>0.08 0.55 0.85 1</diffuse><emissive>0.02 0.16 0.28 1</emissive>"
-        "<specular>0.7 0.7 0.7 1</specular></material></visual>",
-        '        <visual name="zed2i_right_lens"><pose>0.315 -0.06 0.20 0 1.5708 0</pose>'
-        "<geometry><cylinder><radius>0.015</radius><length>0.006</length></cylinder></geometry>"
-        "<material><diffuse>0.08 0.55 0.85 1</diffuse><emissive>0.02 0.16 0.28 1</emissive>"
-        "<specular>0.7 0.7 0.7 1</specular></material></visual>",
+        # The CAD body, ZED 2i included, replaces the old red box, direction cone
+        # and hand-built camera.  Its origin is the axle midpoint, hence one
+        # wheel radius up.  Cosmetic only: the collision box above is unchanged.
+        f'        <visual name="body"><pose>0 0 {radius:.5f} 0 0 0</pose>'
+        f"<geometry><mesh><uri>{MESH_URI}/vehicle_body.obj</uri></mesh></geometry></visual>",
         # simulation.launch.py swaps this marker for the rendered ZED under
         # `sensors:=true`, and raises if it is missing -- so the generated
         # block has to carry it, not just the hand written part of the world.
