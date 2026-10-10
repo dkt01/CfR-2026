@@ -26,11 +26,15 @@ done
 # must not import them (it reads bags with `rosbags`, not rclpy).
 unset PYTHONPATH
 
-if [[ ! -x .venv/bin/python ]]; then
+# Windows (Git Bash) venvs put executables in Scripts/, not bin/.
+venv_python() { [[ -d .venv/Scripts ]] && echo .venv/Scripts/python || echo .venv/bin/python; }
+if [[ ! -f .venv/.installed ]]; then
   echo "setting up the Python environment (once)..."
-  python3 -m venv .venv
-  .venv/bin/pip install -q -r requirements.txt
+  [[ -d .venv ]] || python3 -m venv .venv
+  "$(venv_python)" -m pip install -q -r requirements.txt
+  touch .venv/.installed
 fi
+PYTHON="$PWD/$(venv_python)"
 
 if [[ ! -f frontend/dist/index.html ]]; then
   command -v npm >/dev/null || { echo "npm is needed once to build the UI"; exit 1; }
@@ -40,4 +44,4 @@ fi
 
 echo "Run Lab on http://localhost:${PORT}/"
 cd server
-exec ../.venv/bin/python -m uvicorn app:app --host "$HOST" --port "$PORT" --log-level warning
+exec "$PYTHON" -m uvicorn app:app --host "$HOST" --port "$PORT" --log-level warning
